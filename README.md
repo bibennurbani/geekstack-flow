@@ -16,7 +16,7 @@ A structured AI workflow for planning, coding, reviewing, testing, and shipping 
 - **Generated tool adapters** for Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`), and GitHub Copilot (`.github/copilot-instructions.md` plus per-domain `.instructions.md` files).
 - **Ten `/tcgflow-*` slash commands** for Claude Code (`/tcgflow-init`, `/tcgflow-plan`, `/tcgflow-code`, `/tcgflow-review`, `/tcgflow-ingest`, `/tcgflow-lint`, `/tcgflow-audit`, `/tcgflow-migrate`, `/tcgflow-timesheet-generate`, `/tcgflow-timesheet-submit`) — installed to `~/.claude/skills/` during init.
 - **Multi-project workspace** auto-detection — when init finds 2+ codebases at top level (package.json, *.csproj at top or `src/<proj>/`, Pulumi.yaml, etc.), it populates `config.yaml`'s `projects:` array with per-project stack and test/lint commands.
-- The `.tcgstackflow/` folder is designed as an **Obsidian vault** — open it directly in Obsidian for graph navigation across the wiki, tasks, agents, and skills.
+- The `.tcgstackflow/` folder is designed as an **Obsidian vault** — `init.js` creates a non-hidden symlink (`tcgstackflow/ → .tcgstackflow/`) so Obsidian's vault picker (which hides dotfiles by default) can select it. Open the symlink in Obsidian for graph navigation across the wiki, tasks, agents, and skills.
 - A **weekly Tempo/Jira timesheet flow** as two skills (`generate-timesheet` LOW, `submit-timesheet` HIGH).
 
 ## Install
@@ -71,12 +71,54 @@ geekstackflow init --migrate-from . .
 
 # 4. Open in your AI tool, invoke the planner with the migrate-to-gsf skill:
 #    "Plan a task using the migrate-to-gsf skill for this codebase."
-#    The planner reads .tcgstackflow/.migration-notes/ for the old content,
+#    The planner reads .tcgstackflow/migration-notes/ for the old content,
 #    grills you on classification (workflow vs tech skills, active vs stale
 #    tasks, etc.), and writes TASK details into tasks/active/.
 ```
 
 The four-phase migration pattern (init+adapters / tasks / wiki / decommission) is documented in the `migrate-to-gsf` skill that ships in V1.
+
+## Skills shipped
+
+Two sets — workspace skills used by agents inside a project, plus global slash commands invoked from Claude Code in any directory.
+
+### Workspace skills (`.tcgstackflow/skills/{name}/SKILL.md`)
+
+Ten skills ship in V1, in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills):
+
+| Skill | Used by | Purpose |
+|---|---|---|
+| `grill-task` | planner | Interview the user on ambiguous areas before writing the plan |
+| `plan-task` | planner | Write the two-file task structure + fill subtasks with acceptance criteria |
+| `update-task-log` | coder | Append YAML entry to `TASK {ID}.md` after each meaningful change |
+| `review-diff` | reviewer | Walk diff against acceptance criteria + governance; produce verdict |
+| `ingest` | ingester | Fold a Raw source into the wiki (log-first, new-page approval gate) |
+| `lint-wiki` | ingester / standalone | Periodic wiki health-check — contradictions, orphans, stale claims |
+| `audit-workspace` | ingester / standalone | Cross-check agents ↔ skills ↔ codebase drift |
+| `migrate-to-gsf` | planner / coder | Migrate a project's ad-hoc AI infra onto canonical `.tcgstackflow/` |
+| `generate-timesheet` | user (LOW) | Weekly Tempo draft from task data + inline admin input |
+| `submit-timesheet` | user (HIGH) | Submit worklogs via Atlassian MCP, sequential, with confirmation table |
+
+These are project-scoped — they're versioned with the project and shipped to each `.tcgstackflow/` workspace.
+
+### Global slash commands (`~/.claude/skills/tcgflow-{name}/SKILL.md`)
+
+Ten Claude Code slash commands, prefixed `tcgflow-`, installed globally by `init.js` when you opt in. Each dispatches to a role or skill:
+
+| Command | Dispatches to | When to type it |
+|---|---|---|
+| `/tcgflow-init` | `init.js` installer | "Set up geekstackflow here" |
+| `/tcgflow-migrate` | `migrate-to-gsf` skill (4 phases) | "Migrate this project from .taskRef/ai-mem" |
+| `/tcgflow-plan [ID]` | Planner role + `grill-task` + `plan-task` | "Plan ES-1234", "design …" |
+| `/tcgflow-code [ID]` | Coder role + `update-task-log` | "Implement ES-1234", "start coding" |
+| `/tcgflow-review [ID]` | Reviewer role + `review-diff` | "Review the diff", "is this ready?" |
+| `/tcgflow-ingest [scope]` | Ingester role + `ingest` skill | "Ingest ES-1234", "fold into wiki" |
+| `/tcgflow-lint` | `lint-wiki` skill | "Lint the wiki", "find stale pages" |
+| `/tcgflow-audit` | `audit-workspace` skill | "Audit the workspace", "are skills in sync?" |
+| `/tcgflow-timesheet-generate` | `generate-timesheet` skill (LOW) | "Generate this week's timesheet" |
+| `/tcgflow-timesheet-submit` | `submit-timesheet` skill (HIGH) | "Submit the timesheet to Tempo" |
+
+These are user-scoped — installed once, available in every Claude Code session on your machine.
 
 ## Repository layout
 

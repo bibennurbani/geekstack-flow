@@ -7,13 +7,13 @@ description: Submit the worklogs from a generated timesheet to Jira/Tempo via th
 
 ## When to use
 
-The user typed `/tcgflow-timesheet-submit` or said *"submit the timesheet"*, *"push worklogs to Tempo"*, *"send to Jira"*. A draft timesheet must already exist at `.tcgstackflow/tasks/.weekly/Weekly_Timesheet_*.md` (created by `/tcgflow-timesheet-generate`).
+The user typed `/tcgflow-timesheet-submit` or said *"submit the timesheet"*, *"push worklogs to Tempo"*, *"send to Jira"*. A draft timesheet must already exist at `.tcgstackflow/tasks/weekly/Weekly_Timesheet_*.md` (created by `/tcgflow-timesheet-generate`).
 
 ## What to do
 
 Run the `submit-timesheet` skill (see `.tcgstackflow/skills/submit-timesheet/SKILL.md` for full procedure):
 
-1. **Locate the draft.** Default to the latest file in `.tcgstackflow/tasks/.weekly/`. If multiple, ask the user.
+1. **Locate the draft.** Default to the latest file in `.tcgstackflow/tasks/weekly/`. If multiple, ask the user.
 
 2. **Read config.** `tempo.provider` (default `atlassian-mcp`), `tempo.cloudId`, `tempo.timezone`, `tempo.submission_mode`. **Refuse to submit** if `cloudId` or `admin_key` are empty.
 

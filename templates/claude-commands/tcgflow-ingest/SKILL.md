@@ -34,7 +34,7 @@ You are now in the **Ingester role**. Read `.tcgstackflow/agents/ingester.md` fo
 
 7. **For task ingest:** move `tasks/active/{ID}/` → `tasks/completed/{ID}/`. Update `tasks/README.md`. Set task status to `INGESTED`.
 
-8. **For `raw/` ingest:** move processed files to `raw/.archived/{YYYY-MM-DD}-{topic-slug}/`. Never delete.
+8. **For `raw/` ingest:** move processed files to `raw/archived/{YYYY-MM-DD}-{topic-slug}/`. Never delete.
 
 9. **Finalise the log entry** with actual file lists.
 

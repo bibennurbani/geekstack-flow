@@ -14,7 +14,7 @@ This folder is the project's AI workflow workspace. Any AI coding tool (Claude C
 |---|---|---|
 | `wiki/` | The LLM-wiki — distilled project knowledge in flat Obsidian-style Markdown. The AI's primary context source. | AI maintains; user reviews. |
 | `tasks/` | Task tracking. Each task is exactly two files: `TASK {ID}.md` (log) + `TASK details {ID}.md` (plan). Lifecycle is `active/ → completed/ → archive/`. | AI maintains during work; user starts tasks. |
-| `raw/` | Staging for external files dropped in for ingestion (PDFs, exported docs, screenshots). Files move to `raw/.archived/` after ingest. | User drops in; AI moves to archive. |
+| `raw/` | Staging for external files dropped in for ingestion (PDFs, exported docs, screenshots). Files move to `raw/archived/` after ingest. | User drops in; AI moves to archive. |
 | `prompts/{task-id}/` | Cross-tool handoff prompts. Claude writes a prompt; user pastes it into another AI tool. | AI writes; user moves to other tools. |
 | `agents/` | Four role profiles: `planner`, `coder`, `reviewer`, `ingester`. Tool-agnostic Markdown. | Co-evolved with the project. |
 | `skills/` | Atomic capabilities in Claude Code `SKILL.md` format. Drop-in compatible with mattpocock-style skills. | Templates updated; project may add custom. |
@@ -43,11 +43,22 @@ This whole `.tcgstackflow/` folder is designed as an **Obsidian vault**. Open it
 - Browsable task folders with their two-file pairs
 - The append-only `wiki/log.md` as a timeline
 
-The `.gitignore` in this folder already excludes Obsidian's volatile state files (`workspace.json`, `graph.json`, etc.) while keeping shared config (plugins, hotkeys, themes) trackable.
+A `# === Creative GeekStack Flow ===` block in the **project-root `.gitignore`** (added by `init.js`) excludes Obsidian's volatile state files (`workspace.json`, `graph.json`, etc.) while keeping shared config (plugins, hotkeys, themes) trackable. The `.tcgstackflow/` folder itself ships no dotfiles — see ADR 0017.
 
-**To open:** *Obsidian → "Open folder as vault"* → select `.tcgstackflow/`. First-run prompt asks to trust authors — say yes.
+**Important — Obsidian doesn't show dotfiles in its vault picker.** Use one of these:
 
-If you prefer a tighter scope (wiki only, no tasks/agents/skills in the graph), open `.tcgstackflow/wiki/` instead — but you lose the ability to navigate to task files and agent profiles from inside Obsidian.
+- **Open the symlink** at the project root: `tcgstackflow/` (created by `init.js` by default — points at `.tcgstackflow/`). Visible in any file picker. *Recommended.*
+- **Manually create the symlink** if init didn't (or you said no to the prompt):
+  ```bash
+  cd <project-root>
+  ln -s .tcgstackflow tcgstackflow
+  # Windows: mklink /D tcgstackflow .tcgstackflow   (from elevated cmd)
+  ```
+- **Show hidden in the picker.** On macOS, in the Obsidian "Open folder as vault" dialog, press `Cmd+Shift+.` to toggle hidden-folder visibility, then select `.tcgstackflow/`.
+
+After opening, the first-run prompt asks to trust authors — say yes.
+
+If you prefer a tighter scope (wiki only, no tasks/agents/skills in the graph), open `.tcgstackflow/wiki/` (or `tcgstackflow/wiki/` via the symlink) instead — but you lose the ability to navigate to task files and agent profiles from inside Obsidian.
 
 ## Reference
 

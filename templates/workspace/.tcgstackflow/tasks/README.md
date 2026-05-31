@@ -68,7 +68,7 @@ tasks/
 ├── active/{ID}/                         ← in-progress tasks
 ├── completed/{ID}/                      ← recently completed
 ├── archive/{category}/{ID}/             ← older completed
-└── .weekly/                             ← generated timesheets
+└── weekly/                             ← generated timesheets
 ```
 
 ## Cross-tool handoff prompts

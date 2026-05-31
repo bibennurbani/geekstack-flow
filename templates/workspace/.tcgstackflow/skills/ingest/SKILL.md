@@ -49,7 +49,7 @@ You are folding a Raw source into the wiki. The procedure is **log-first** — t
    - Update `tasks/README.md` — remove from Active table, add to Recently Completed table.
    - Set task status to `INGESTED` in `tasks/completed/{ID}/TASK details {ID}.md` and `TASK {ID}.md`.
 7. **For `raw/` ingest:** move processed files.
-   - `mv raw/* raw/.archived/{YYYY-MM-DD}-{topic-slug}/`
+   - `mv raw/* raw/archived/{YYYY-MM-DD}-{topic-slug}/`
    - Never delete. Re-ingest with new context must remain possible.
 8. **Finalise the `log.md` entry.** Replace the proposed file lists with the actual file lists after changes are applied. Bump the touched pages' frontmatter and `wiki/index.md` if pages were added/removed/renamed.
 9. **Schema doc co-evolution.** If this ingest introduced a new convention (a renamed page, a new agent role, a new skill, a new project-specific governance rule), update `tools/claude/CLAUDE.md` and `tools/codex/AGENTS.md` *in the same ingest*. Don't leave the schema docs out of sync.

@@ -1,6 +1,6 @@
 ---
 name: tcgflow-timesheet-generate
-description: Generate this week's Tempo/Jira timesheet draft from task data plus inline admin-meeting input. Use when the user types `/tcgflow-timesheet-generate` or says "generate this week's timesheet", "draft Friday timesheet", "make worklogs for Tempo". LOW risk — only writes a Markdown file to .tcgstackflow/tasks/.weekly/; does NOT submit. For submission, use /tcgflow-timesheet-submit.
+description: Generate this week's Tempo/Jira timesheet draft from task data plus inline admin-meeting input. Use when the user types `/tcgflow-timesheet-generate` or says "generate this week's timesheet", "draft Friday timesheet", "make worklogs for Tempo". LOW risk — only writes a Markdown file to .tcgstackflow/tasks/weekly/; does NOT submit. For submission, use /tcgflow-timesheet-submit.
 ---
 
 # `/tcgflow-timesheet-generate` — weekly timesheet draft
@@ -31,7 +31,7 @@ Run the `generate-timesheet` skill (see `.tcgstackflow/skills/generate-timesheet
 
 6. **Sugar-coat development descriptions.** Polished, impact-oriented (≤120 chars). Generic descriptions like "Bug fixes - 2h" are **rejected** — surface a warning instead. Admin entries verbatim.
 
-7. **Write the draft** to `.tcgstackflow/tasks/.weekly/Weekly_Timesheet_{Monday-YYYY-MM-DD}.md` with day-by-day breakdown, copy-paste Tempo block, validation checklist (40h/week, 8h/day, ≤4h/chunk), and an empty `## Submission` section (filled in by `/tcgflow-timesheet-submit`).
+7. **Write the draft** to `.tcgstackflow/tasks/weekly/Weekly_Timesheet_{Monday-YYYY-MM-DD}.md` with day-by-day breakdown, copy-paste Tempo block, validation checklist (40h/week, 8h/day, ≤4h/chunk), and an empty `## Submission` section (filled in by `/tcgflow-timesheet-submit`).
 
 8. **Report.** Tell the user the file path, total hours, and that the next step is `/tcgflow-timesheet-submit` when ready.
 

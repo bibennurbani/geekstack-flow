@@ -9,7 +9,7 @@ description: Submit the worklogs from a generated timesheet draft to Jira/Tempo 
 
 Invoke this skill when:
 
-- A draft timesheet exists at `tasks/.weekly/Weekly_Timesheet_{YYYY-MM-DD}.md`.
+- A draft timesheet exists at `tasks/weekly/Weekly_Timesheet_{YYYY-MM-DD}.md`.
 - The user has reviewed the draft and wants to submit.
 - The configured provider's MCP (default Atlassian) is connected and authenticated.
 
@@ -21,7 +21,7 @@ You are reading a draft timesheet and submitting each entry to Tempo/Jira. The s
 
 ### Procedure
 
-1. **Locate the draft.** Default: latest file in `tasks/.weekly/`. If multiple, ask the user.
+1. **Locate the draft.** Default: latest file in `tasks/weekly/`. If multiple, ask the user.
 2. **Read config.** `tempo.provider`, `tempo.cloudId`, `tempo.timezone`, `tempo.submission_mode`. Verify `cloudId` and `admin_key` are non-empty — refuse to submit if they're not.
 3. **Parse the draft.** Extract entries from the day-by-day breakdown (not the copy-paste block — they should match, but the breakdown is the canonical source). For each entry capture:
    - Date
@@ -81,7 +81,7 @@ You are reading a draft timesheet and submitting each entry to Tempo/Jira. The s
    author: 'claude'
    summary: 'Submitted {N} worklogs to Tempo for week of {Monday-Date}'
    files:
-     - tasks/.weekly/Weekly_Timesheet_{Monday-Date}.md
+     - tasks/weekly/Weekly_Timesheet_{Monday-Date}.md
    why: 'weekly timesheet submission'
    validation:
      - 'Worklog IDs captured in confirmation table'
@@ -92,7 +92,7 @@ You are reading a draft timesheet and submitting each entry to Tempo/Jira. The s
 
 User-facing summary:
 
-> Submitted {N} worklogs to Tempo (cloudId: {cloudId}, week of {Monday-Date}). Confirmation table appended to `tasks/.weekly/Weekly_Timesheet_{Monday-Date}.md`.
+> Submitted {N} worklogs to Tempo (cloudId: {cloudId}, week of {Monday-Date}). Confirmation table appended to `tasks/weekly/Weekly_Timesheet_{Monday-Date}.md`.
 > Failures: {0 or list}.
 
 ### Anti-patterns

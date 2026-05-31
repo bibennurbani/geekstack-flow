@@ -82,9 +82,9 @@ Then:
 11. **`mv` actually-active task folders** to `.tcgstackflow/tasks/active/`. Unchanged content.
 12. **`mv` stale "active" folders to `.tcgstackflow/tasks/archive/stale/`.** They were never finished; keep the two files intact for posterity.
 13. **`mv` completed and pre-existing archived tasks** unchanged (`completed/{ID}/` and `archive/{category}/{ID}/`).
-14. **`mv` `.weekly/` contents unchanged.**
+14. **`mv` `weekly/` contents unchanged.**
 15. **Port the old `README.md`'s Active/Completed/Archive tables** into `.tcgstackflow/tasks/README.md`, updating paths.
-16. **Lift Tempo specifics** (cloudId, admin_key, timezone, work_start, daily_hours) from any `WEEKLY_TIMESHEET_INSTRUCTIONS.md.bak` into `.tcgstackflow/config.yaml` under `tempo:`. Set `tempo.enabled: true`. Archive the old detailed instructions file as `.tcgstackflow/tasks/.weekly-OLD-INSTRUCTIONS.md.bak` for reference.
+16. **Lift Tempo specifics** (cloudId, admin_key, timezone, work_start, daily_hours) from any `WEEKLY_TIMESHEET_INSTRUCTIONS.md.bak` into `.tcgstackflow/config.yaml` under `tempo:`. Set `tempo.enabled: true`. Archive the old detailed instructions file as `.tcgstackflow/tasks/weekly-OLD-INSTRUCTIONS.md.bak` for reference.
 
 #### Phase 3 — Wiki ingestion (Ingester role)
 

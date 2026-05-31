@@ -10,7 +10,7 @@ The AI-maintained, token-efficient knowledge base for a project. A single flat d
 **Raw**:
 The source material a Wiki page can be ingested from. Raw exists in two modes:
 - **Implicit Raw** — artifacts that always exist in any project and don't need a folder: the **codebase**, the **active task files**, **archived task folders**, and **MCP outputs** (Jira tickets, Cypress results, Snyk findings, GitHub PRs, Datadog traces).
-- **Explicit Raw** — one-off external material the user drops into the project for ingestion (PDFs, copy-pasted specs, screenshots, exported docs). Lives in `.tcgstackflow/raw/`. After ingestion, files move to `raw/.archived/` rather than being deleted, so re-ingest with new context is possible.
+- **Explicit Raw** — one-off external material the user drops into the project for ingestion (PDFs, copy-pasted specs, screenshots, exported docs). Lives in `.tcgstackflow/raw/`. After ingestion, files move to `raw/archived/` rather than being deleted, so re-ingest with new context is possible.
 _Avoid_: drafts, sources folder, notes.
 
 **Ingestion** (one of three Wiki **Operations** — see also Query, Lint):
@@ -72,7 +72,7 @@ One Markdown file at `.tcgstackflow/governance.md` that defines (1) the four-lev
 The conversational shape an agent uses when proposing a HIGH or CRITICAL action: *Action / Risk / Why / Files affected / Rollback / Approve?* Inline in the chat, not a structured artifact — the user replies with "approved" / "no" / a tweak.
 
 **Timesheet** (and its two skills):
-The weekly Tempo/Jira worklog draft generated from task data, plus inline admin-meeting input from the user. Lives at `.tcgstackflow/tasks/.weekly/Weekly_Timesheet_{YYYY-MM-DD}.md`. Two skills operate on it:
+The weekly Tempo/Jira worklog draft generated from task data, plus inline admin-meeting input from the user. Lives at `.tcgstackflow/tasks/weekly/Weekly_Timesheet_{YYYY-MM-DD}.md`. Two skills operate on it:
 - `generate-timesheet` (LOW) — reads tasks, applies sugar-coating (always on — polished, impact-oriented dev descriptions; admin verbatim), produces the file. Does not submit.
 - `submit-timesheet` (HIGH) — submits worklogs via the configured provider (default Atlassian MCP). Honors `submission_mode: approval | trust` from config — `approval` requires explicit OK per `governance.md`; `trust` is the personal-use convenience mode that matches the author's established calibrated workflow.
 

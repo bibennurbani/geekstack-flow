@@ -6,7 +6,7 @@ Two skills cover the weekly Tempo flow. **All configurable values live in [../co
 
 | Skill | Risk | Does | Calls Tempo? |
 |---|---|---|---|
-| [`generate-timesheet`](../skills/generate-timesheet/SKILL.md) | LOW | Reads task data + inline admin input, writes a draft Markdown file in `.weekly/` | **No** |
+| [`generate-timesheet`](../skills/generate-timesheet/SKILL.md) | LOW | Reads task data + inline admin input, writes a draft Markdown file in `weekly/` | **No** |
 | [`submit-timesheet`](../skills/submit-timesheet/SKILL.md) | HIGH | Reads the generated draft, calls Atlassian MCP `addWorklogToJiraIssue` per entry, appends a confirmation table | **Yes** |
 
 ## Inputs the user provides (inline, when invoking `generate-timesheet`)
@@ -28,7 +28,7 @@ If the admin key has rotated (it changes quarterly), update `tempo.admin_key` in
 
 ## What `generate-timesheet` produces
 
-A file at `.weekly/Weekly_Timesheet_{YYYY-MM-DD}.md` containing:
+A file at `weekly/Weekly_Timesheet_{YYYY-MM-DD}.md` containing:
 
 1. **Day-by-day breakdown** — chronological with `HH:MM - HH:MM` ranges, starting at `work_start` from config.
 2. **Sugar-coated dev descriptions** — polished, impact-oriented (e.g. *"Architect the Schedule List UI component — delivering a responsive, filterable view of all site schedules"*).

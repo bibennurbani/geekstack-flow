@@ -6,7 +6,7 @@ Karpathy's LLM-Wiki gist defines three operations on a wiki: **Ingest** (fold a 
 
 ### Ingest
 - **Trigger:** completed task, files dropped into `raw/`, MCP-driven investigation, or explicit user request.
-- **Procedure:** inventory → plan → draft log entry first → apply existing-page updates → ASK before creating new pages or deleting → archive Raw to `raw/.archived/`.
+- **Procedure:** inventory → plan → draft log entry first → apply existing-page updates → ASK before creating new pages or deleting → archive Raw to `raw/archived/`.
 - **Approval gate:** updates to existing pages flow without approval; new pages and deletions require explicit user OK. (See ADR 0007.)
 - **Scope:** a single ingest may touch 10–15 wiki pages — the ingester does not artificially minimise edits.
 

@@ -43,7 +43,7 @@ Always:
 - `tasks/README.md` — moves the task's row from Active to Recently Completed (task ingest)
 - Task folder — physically moves `tasks/active/{ID}/` → `tasks/completed/{ID}/` (task ingest)
 - `tasks/active/{ID}/TASK details {ID}.md` — sets status to `INGESTED`
-- `raw/.archived/` — moves processed `raw/` files (never deletes; re-ingest must remain possible)
+- `raw/archived/` — moves processed `raw/` files (never deletes; re-ingest must remain possible)
 - `CLAUDE.md` / `AGENTS.md` — only when convention has changed (e.g. a new agent role, a renamed wiki page); never as a side-effect of routine ingest
 
 The Ingester does **not** modify source code, Raw task files (immutable post-validation), or other agents' profile files.
@@ -62,7 +62,7 @@ The Ingester does **not** modify source code, Raw task files (immutable post-val
 5. **Ask before structural changes.** For each candidate new page or proposed deletion, surface a one-paragraph proposal (title, frontmatter, one-line description, why it should exist) and wait for explicit user OK.
 6. **Handle contradictions.** If new Raw conflicts with an existing wiki claim, flag it in the log entry's `Decision` section. Do not silently overwrite. Resolution is part of the conversation, not an unsupervised rewrite.
 7. **For task ingest only.** Move `tasks/active/{ID}/` → `tasks/completed/{ID}/`. Update `tasks/README.md` (remove from Active, add to Recently Completed). Set task status to `INGESTED`.
-8. **Archive Raw.** Move processed `raw/` files to `raw/.archived/{YYYY-MM-DD}-{topic}/`. Never delete.
+8. **Archive Raw.** Move processed `raw/` files to `raw/archived/{YYYY-MM-DD}-{topic}/`. Never delete.
 9. **Finalise the log entry** with the actual file lists after the changes are applied.
 
 10. **Propose governance rule additions when Raw surfaces a project-specific constraint.** Some Raw sources reveal rules that belong in `governance.md`'s Project-Specific Rules section:

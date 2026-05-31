@@ -1,6 +1,6 @@
 ---
 name: generate-timesheet
-description: Generate a weekly Tempo/Jira worklog draft from task files and inline admin-meeting input. Reads `tasks/active/` and `tasks/completed/` for the week, applies sugar-coating to development descriptions (always on — generic descriptions are rejected), inserts admin meetings at user-specified times, writes the draft to `tasks/.weekly/Weekly_Timesheet_{YYYY-MM-DD}.md`. Does NOT submit — that's `submit-timesheet`'s job. LOW risk; runs without approval.
+description: Generate a weekly Tempo/Jira worklog draft from task files and inline admin-meeting input. Reads `tasks/active/` and `tasks/completed/` for the week, applies sugar-coating to development descriptions (always on — generic descriptions are rejected), inserts admin meetings at user-specified times, writes the draft to `tasks/weekly/Weekly_Timesheet_{YYYY-MM-DD}.md`. Does NOT submit — that's `submit-timesheet`'s job. LOW risk; runs without approval.
 ---
 
 # Generate Timesheet
@@ -17,7 +17,7 @@ Invoke this skill when:
 
 ## Instructions
 
-You are producing a Markdown file at `tasks/.weekly/Weekly_Timesheet_{YYYY-MM-DD}.md` containing a chronological day-by-day breakdown plus a copy-paste Tempo block. All configurable values come from `config.yaml` under `tempo:`. **The skill does not call any external service** — it just writes a file.
+You are producing a Markdown file at `tasks/weekly/Weekly_Timesheet_{YYYY-MM-DD}.md` containing a chronological day-by-day breakdown plus a copy-paste Tempo block. All configurable values come from `config.yaml` under `tempo:`. **The skill does not call any external service** — it just writes a file.
 
 ### Procedure
 
@@ -65,7 +65,7 @@ You are producing a Markdown file at `tasks/.weekly/Weekly_Timesheet_{YYYY-MM-DD
 
 A user-facing message:
 
-> Generated `tasks/.weekly/Weekly_Timesheet_2026-05-25.md` — {N} hours across {M} tasks + admin.
+> Generated `tasks/weekly/Weekly_Timesheet_2026-05-25.md` — {N} hours across {M} tasks + admin.
 > Validation: ✅ totals to {daily_hours}h/day, ≤4h/chunk, no generic descriptions.
 > Next: review the draft, then invoke `submit-timesheet` when ready.
 

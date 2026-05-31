@@ -28,13 +28,13 @@ You are operating the `migrate-to-gsf` skill against the current directory. Foll
    ```
    Adjust paths to match what the project actually has (.taskRef/ vs .tasks/, docs/ vs ai-mem/, etc.).
 
-4. **Run `geekstackflow init --migrate-from . .`** — installs the workspace AND collects the old artifacts into `.tcgstackflow/.migration-notes/` for manual review.
+4. **Run `geekstackflow init --migrate-from . .`** — installs the workspace AND collects the old artifacts into `.tcgstackflow/migration-notes/` for manual review.
 
 5. **Adopt Planner role** (`agents/planner.md`) and use `plan-task` to write a `TASK details` file for the migration: subtasks for tasks migration, wiki ingestion, schema-doc rewriting (paths from `.taskRef/` → `.tcgstackflow/tasks/`, etc.), global tech-skill move to `~/.tcgstackflow/skills/`, and the CRITICAL decommission step.
 
 6. **Switch to Coder role** to execute phase by phase. Use `update-task-log` after each meaningful change.
 
-7. **Switch to Ingester role** for Phase 3 (wiki ingestion from the `.migration-notes/` and the `.bak` content). One ingest per source subfolder = one `log.md` entry. Approval gate applies to new pages and deletions.
+7. **Switch to Ingester role** for Phase 3 (wiki ingestion from the `migration-notes/` and the `.bak` content). One ingest per source subfolder = one `log.md` entry. Approval gate applies to new pages and deletions.
 
 8. **Run `audit-workspace` and `lint-wiki`** after Phase 3 to surface drift before decommission.
 
@@ -44,7 +44,7 @@ You are operating the `migrate-to-gsf` skill against the current directory. Foll
 
 ## Notes
 
-- Use `--migrate-from` to collect old content into `.tcgstackflow/.migration-notes/` — that's the source for content-level migration (rewriting `.taskRef/` → `.tcgstackflow/tasks/` paths in Copilot adapters, lifting Tempo config into `config.yaml`, etc.).
+- Use `--migrate-from` to collect old content into `.tcgstackflow/migration-notes/` — that's the source for content-level migration (rewriting `.taskRef/` → `.tcgstackflow/tasks/` paths in Copilot adapters, lifting Tempo config into `config.yaml`, etc.).
 - Stale "active" tasks (status says active but not actually being worked on) go to `archive/stale/`, not back into `active/`.
 - Tech skills (Vue, Pinia, .NET best-practices, etc.) move to `~/.tcgstackflow/skills/` globally; workflow skills stay project-local. ADR 0012.
 - Per-project test/lint commands populate from the multi-project auto-detection during init.

@@ -6,11 +6,11 @@ A real working structure observed in the wild has its tasks folder (`.taskRef/`)
 
 - Task workspace lives at `.tcgstackflow/tasks/` (sibling to `wiki/`), not under `wiki/`.
 - Each task has exactly **two files** (`TASK {ID}.md` + `TASK details {ID}.md`) — no per-subtask file splits. (See CONTEXT.md "Two-file rule".)
-- Task folder structure mirrors the observed real-world lifecycle: `active/{ID}/`, `completed/{ID}/`, `archive/{category}/{ID}/`, and `.weekly/` for generated timesheets.
+- Task folder structure mirrors the observed real-world lifecycle: `active/{ID}/`, `completed/{ID}/`, `archive/{category}/{ID}/`, and `weekly/` for generated timesheets.
 - `tasks/README.md` is the running task index — table of Active / Recently Completed / Archive, updated whenever a task moves between folders.
 
 ## Consequences
 
 - The ingest skill reads from `tasks/completed/{ID}/` (and optionally `archive/`) but never modifies the task files themselves.
-- Tempo timesheet generation lives at `tasks/WEEKLY_TIMESHEET_INSTRUCTIONS.md` and writes drafts to `tasks/.weekly/` — keeps the Tempo concern co-located with task data, off the wiki entirely.
+- Tempo timesheet generation lives at `tasks/WEEKLY_TIMESHEET_INSTRUCTIONS.md` and writes drafts to `tasks/weekly/` — keeps the Tempo concern co-located with task data, off the wiki entirely.
 - Wiki has no `task-history.md` page; the source of truth for task history is the task folders + `log.md` ingest entries pointing back at them.

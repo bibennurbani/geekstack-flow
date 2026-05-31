@@ -13,7 +13,7 @@ Usage:
   node init.js [target]                       Initialise .tcgstackflow/ in the target dir (default: cwd)
   node init.js --help                         Show this help
   node init.js --force [target]               Overwrite existing .tcgstackflow/
-  node init.js --migrate-from <old> [target]  Collect old AI infra into .migration-notes/ for review
+  node init.js --migrate-from <old> [target]  Collect old AI infra into migration-notes/ for review
 
 What this does:
   1. Copies templates/workspace/.tcgstackflow/ into the target project
@@ -24,7 +24,7 @@ What this does:
   6. Substitutes {{project-name}} and {{cloud-id}} placeholders with answers from the prompts
   7. With --migrate-from <path>: collects known old artifacts from <path> (e.g. CLAUDE.md.bak,
      ai-mem.bak/claude/settings.local.json, .github/copilot-instructions.md.bak) into
-     .tcgstackflow/.migration-notes/ as .original files for the user to review and merge manually.
+     .tcgstackflow/migration-notes/ as .original files for the user to review and merge manually.
      Pattern matches the migrate-to-gsf skill; assumes you've already 'mv'd live files to .bak siblings.
 
 It does NOT:
@@ -74,7 +74,7 @@ const SKIP_DIRS = new Set([
   '.git', '.vscode', '.idea', '.cache', '.turbo', '.next', '.nuxt',
   'node_modules', 'dist', 'build', 'coverage', 'out', 'target',
   '.taskRef', '.tcgstackflow', 'ai-mem', 'docs', 'examples',
-  '.tcgstackflow-migration', '.weekly', '.github', '.husky',
+  '.tcgstackflow-migration', 'weekly', '.github', '.husky',
 ]);
 
 function slugify(name) {
@@ -380,6 +380,7 @@ async function main() {
   const enableClaudeCommands = enableClaude
     ? await askYesNo('Install /tcgflow-* slash commands into ~/.claude/skills/?', true)
     : false;
+  const createObsidianSymlink = await askYesNo('Create non-hidden symlink (tcgstackflow → .tcgstackflow) for Obsidian vault?', true);
 
   // --- copy workspace template ---
   if (fs.existsSync(workspaceDest)) {
@@ -474,9 +475,9 @@ async function main() {
     }
   }
 
-  // --- migrate-from: collect old AI infra into .migration-notes/ for review ---
+  // --- migrate-from: collect old AI infra into migration-notes/ for review ---
   if (args.migrateFrom) {
-    const notesDir = path.join(workspaceDest, '.migration-notes');
+    const notesDir = path.join(workspaceDest, 'migration-notes');
     fs.mkdirSync(notesDir, { recursive: true });
     // Known old-AI-infra artifacts; covers common ad-hoc layouts (`.taskRef/`, `ai-mem/`, etc.).
     const candidates = [
@@ -529,6 +530,48 @@ async function main() {
     console.log(`  ✓ ~/.tcgstackflow/ (global memory + skills home)`);
   } else {
     console.log(`  ~ ~/.tcgstackflow/ already exists — left untouched`);
+  }
+
+  // --- write/append .gitignore at project root for geekstack-flow concerns ---
+  // (The workspace itself ships no .gitignore — we keep .tcgstackflow/ free of dotfiles.)
+  const rootGitignorePath = path.join(target, '.gitignore');
+  const gitignoreMarker = '# === Creative GeekStack Flow ===';
+  const gitignoreBlock = [
+    gitignoreMarker,
+    '# Obsidian — auto-generated state files (keep shared config tracked)',
+    '.tcgstackflow/.obsidian/workspace.json',
+    '.tcgstackflow/.obsidian/workspace-mobile.json',
+    '.tcgstackflow/.obsidian/cache',
+    '.tcgstackflow/.obsidian/graph.json',
+    '# Migration scratch (regeneratable by init.js --migrate-from)',
+    '.tcgstackflow/migration-notes/',
+    '# Obsidian-friendly non-hidden symlink — uncomment if you don\'t want to track it.',
+    '# /tcgstackflow',
+    '# === end Creative GeekStack Flow ===',
+    '',
+  ].join('\n');
+  const existingGitignore = fs.existsSync(rootGitignorePath) ? fs.readFileSync(rootGitignorePath, 'utf8') : '';
+  if (!existingGitignore.includes(gitignoreMarker)) {
+    const prefix = existingGitignore && !existingGitignore.endsWith('\n') ? '\n' : '';
+    fs.writeFileSync(rootGitignorePath, existingGitignore + prefix + (existingGitignore ? '\n' : '') + gitignoreBlock);
+    console.log(`  ✓ appended geekstack-flow block to ${path.relative(target, rootGitignorePath)}`);
+  }
+
+  // --- create Obsidian-friendly non-hidden symlink ---
+  // Obsidian's vault picker hides dotfiles by default; a non-hidden symlink at
+  // tcgstackflow/ pointing to .tcgstackflow/ lets users select it in the picker.
+  if (createObsidianSymlink) {
+    const symlinkPath = path.join(target, 'tcgstackflow');
+    if (fs.existsSync(symlinkPath) || fs.lstatSync(symlinkPath, { throwIfNoEntry: false })) {
+      console.log(`  ~ tcgstackflow/ already exists — Obsidian symlink not created (delete it first if you want to recreate)`);
+    } else {
+      try {
+        fs.symlinkSync('.tcgstackflow', symlinkPath, 'dir');
+        console.log(`  ✓ tcgstackflow → .tcgstackflow (Obsidian vault — open the non-hidden symlink in Obsidian)`);
+      } catch (err) {
+        console.log(`  ~ couldn't create symlink (${err.code}). On Windows: run 'mklink /D tcgstackflow .tcgstackflow' from elevated cmd.`);
+      }
+    }
   }
 
   // --- install /tcgflow-* slash commands to ~/.claude/skills/ ---
