@@ -32,11 +32,20 @@ Planner creates                Ingester moves          User periodically
 
 ## Archive
 
-Older completed tasks, grouped by category for findability:
+Older completed and abandoned tasks, grouped by category for findability. Categories grow organically — common ones the Ingester or user create:
 
 | Category | Tasks | Location |
 |---|---|---|
-| _(empty — user moves folders here periodically)_ | | |
+| _(empty — user/Ingester moves folders here as the project evolves)_ | | |
+
+**Common archive categories** (use what fits, invent more as needed):
+
+| Category | When to use |
+|---|---|
+| `stale/` | Tasks that lived in `active/` but were never finished and are no longer being worked on. Keep the two files intact for posterity. |
+| `{feature-area}/` | Older completed tasks grouped by feature (e.g. `scheduler/`, `ag-grid/`, `auth/`, `payments/`). |
+| `misc/` | Catch-all for completed tasks that don't fit a feature area. |
+| `spike/` | Exploratory or research-only tasks that didn't produce shipped code. |
 
 ## Statuses
 

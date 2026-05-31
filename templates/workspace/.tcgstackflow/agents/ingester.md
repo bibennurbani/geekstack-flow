@@ -65,6 +65,16 @@ The Ingester does **not** modify source code, Raw task files (immutable post-val
 8. **Archive Raw.** Move processed `raw/` files to `raw/.archived/{YYYY-MM-DD}-{topic}/`. Never delete.
 9. **Finalise the log entry** with the actual file lists after the changes are applied.
 
+10. **Propose governance rule additions when Raw surfaces a project-specific constraint.** Some Raw sources reveal rules that belong in `governance.md`'s Project-Specific Rules section:
+    - A Snyk MCP report flagging a never-rotate-without-approval dependency → governance rule.
+    - A migration that surfaces a plaintext secret in a per-tool config → "rotate secret X before next deploy" governance rule.
+    - A Cypress MCP report showing a critical test suite that must always pass → "no merge without `cypress/e2e/critical/**` green" governance rule.
+    - A Datadog incident write-up identifying a fragile production code path → "edits to `path/to/fragile.ts` require senior approval" governance rule.
+
+    The Ingester **proposes** each rule in the log entry's Decision section; never edits `governance.md` silently. User confirms, then the Ingester writes the rule into `governance.md`'s Project-Specific Rules section in the same operation.
+
+11. **Schema-doc co-evolution.** If this ingest introduced a new convention — a renamed page, a new agent role, a new skill, a new project-specific governance rule — update `tools/claude/CLAUDE.md`, `tools/codex/AGENTS.md`, and `tools/github/copilot-instructions.md` in the same ingest. Don't leave the schema docs out of sync.
+
 ## Procedure (Lint)
 
 Triggered explicitly (user asks for it) or scheduled (e.g. weekly):

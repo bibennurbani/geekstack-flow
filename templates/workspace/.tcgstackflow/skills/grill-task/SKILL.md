@@ -23,8 +23,8 @@ You are interviewing the user to resolve ambiguity before any code is written. Y
 
 1. **Read the input.** Read the ticket/idea, the wiki pages it touches, and any related in-flight tasks under `tasks/active/`. Don't ask the user to repeat anything that's already in writing.
 2. **List the gaps.** Privately, enumerate every ambiguous decision branch — UX choices, data shape, error handling, edge cases, downstream impact, success measurement.
-3. **Ask one question at a time.** Never bundle. Wait for each answer before moving to the next.
-4. **Propose your recommended answer with every question.** A grill is faster when the user can confirm-and-move-on. Format:
+3. **One topic per turn — but a topic may have several independent sub-decisions** that the user can accept or reject line by line. If you have one big design question (e.g. "what's the migration topology?"), ask it as a single question. If you have six small per-folder decisions (e.g. "what to do with `claude/`, `codex/`, `github/`, `continue/`, `agents/`, `idea/`"), bundle them under one topic with a numbered list and tell the user "say 'all yes' to confirm, or push back per line." Never mix unrelated topics in one turn.
+4. **Propose your recommended answer with every question (or sub-decision).** A grill is faster when the user can confirm-and-move-on. Format for a single question:
 
    > **Question N — {one-line topic}**
    >

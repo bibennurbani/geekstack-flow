@@ -43,6 +43,8 @@ Under `.tcgstackflow/skills/`. Same eight starter skills as Claude — the forma
 | `review-diff` | reviewer | Walk diff against acceptance + governance |
 | `ingest` | ingester | Fold a Raw source into the wiki |
 | `lint-wiki` | ingester | Periodic health-check of the wiki |
+| `audit-workspace` | ingester | Cross-check agents ↔ skills ↔ codebase drift |
+| `migrate-to-gsf` | planner / coder | Migrate existing project onto canonical layout |
 | `generate-timesheet` | user (LOW) | Weekly Tempo draft |
 | `submit-timesheet` | user (HIGH) | Submit worklogs via Atlassian MCP |
 

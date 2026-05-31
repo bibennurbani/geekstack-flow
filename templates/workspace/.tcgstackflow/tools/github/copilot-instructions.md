@@ -69,7 +69,7 @@ These complement — they do not duplicate — the agent profiles in `.tcgstackf
 
 Two locations:
 
-- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Eight ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `ingest`, `lint-wiki`, `generate-timesheet`, `submit-timesheet`).
+- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Ten ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `generate-timesheet`, `submit-timesheet`).
 - **Tech skills** live at `~/.tcgstackflow/skills/` — global library, cross-project. Vue, Vuetify, Pinia, Cypress, .NET, Pulumi, Auth0, etc. Install with `cd ~/.tcgstackflow/skills && npx skills add <owner/repo@skill>`.
 
 Both locations are readable to Copilot. Tech-skill content is referenced from project guidance but not duplicated into the project.

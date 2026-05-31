@@ -39,3 +39,7 @@ The AI tools the user works with, how they configure them, and which roles each 
 - `author:` field in task log YAML entries records which tool did the work — values: `claude`, `codex`, `copilot`, `antigravity`, `human`.
 - Manual handoff prompts written to `.tcgstackflow/prompts/{task-id}/{target-tool}-{intent}.md`.
 - The same agent profiles in `.tcgstackflow/agents/` are read by every tool — no per-tool agent variants.
+
+## Known compatibility notes
+
+- **Claude Code `Workflow` tool + `agentType: 'Explore'` + structured-output `schema` does NOT compose.** Subagents finish without calling StructuredOutput (observed in GSF-001 session, 2026-05-31 — six agents, 1108ms duration, zero StructuredOutput calls). Workaround: drop `agentType: 'Explore'` and use the default workflow subagent, or drop the `schema` and parse free-form text manually. Inline parallel reads via `Bash`/`Read` are the cheaper alternative for one-shot inventories.

@@ -10,21 +10,29 @@ const os = require('os');
 const HELP = `Creative GeekStack Flow — init
 
 Usage:
-  node init.js [target]              Initialise .tcgstackflow/ in the target dir (default: cwd)
-  node init.js --help                Show this help
-  node init.js --force [target]      Overwrite existing .tcgstackflow/
+  node init.js [target]                       Initialise .tcgstackflow/ in the target dir (default: cwd)
+  node init.js --help                         Show this help
+  node init.js --force [target]               Overwrite existing .tcgstackflow/
+  node init.js --migrate-from <old> [target]  Collect old AI infra into .migration-notes/ for review
 
 What this does:
   1. Copies templates/workspace/.tcgstackflow/ into the target project
   2. Copies tools/claude/CLAUDE.md to the project root (if Claude Code enabled)
   3. Copies tools/codex/AGENTS.md to the project root (if Codex enabled)
-  4. Initialises ~/.tcgstackflow/ (memory + global skills home) if not present
-  5. Substitutes {{project-name}} and {{cloud-id}} placeholders with answers from the prompts
+  4. Copies tools/github/copilot-instructions.md + instructions/ to .github/ (if GitHub Copilot enabled)
+  5. Initialises ~/.tcgstackflow/ (memory + global skills home) if not present
+  6. Substitutes {{project-name}} and {{cloud-id}} placeholders with answers from the prompts
+  7. With --migrate-from <path>: collects known old artifacts from <path> (e.g. CLAUDE.md.bak,
+     ai-mem.bak/claude/settings.local.json, .github/copilot-instructions.md.bak) into
+     .tcgstackflow/.migration-notes/ as .original files for the user to review and merge manually.
+     Pattern matches the migrate-to-gsf skill; assumes you've already 'mv'd live files to .bak siblings.
 
 It does NOT:
   - Install dependencies
   - Push to git
   - Touch source code outside the files listed above
+  - Automatically merge old AI config content (--migrate-from collects, does not merge — see the
+    migrate-to-gsf skill for the manual merge step)
 `;
 
 const SCRIPT_DIR = __dirname;
@@ -32,12 +40,18 @@ const WORKSPACE_TEMPLATE = path.join(SCRIPT_DIR, 'templates/workspace/.tcgstackf
 const GLOBAL_TEMPLATE = path.join(SCRIPT_DIR, 'templates/global/.tcgstackflow');
 
 function parseArgs(argv) {
-  const args = { force: false, help: false, target: process.cwd() };
+  const args = { force: false, help: false, migrateFrom: null, target: process.cwd() };
   const positional = [];
-  for (const a of argv.slice(2)) {
+  const raw = argv.slice(2);
+  for (let i = 0; i < raw.length; i++) {
+    const a = raw[i];
     if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--force') args.force = true;
-    else positional.push(a);
+    else if (a === '--migrate-from') {
+      i++;
+      if (i >= raw.length) throw new Error('--migrate-from requires a path argument');
+      args.migrateFrom = path.resolve(raw[i]);
+    } else positional.push(a);
   }
   if (positional.length) args.target = path.resolve(positional[0]);
   return args;
@@ -224,6 +238,54 @@ async function main() {
         }
         console.log(`  ✓ ${path.relative(target, instructionsDestDir)}/`);
       }
+    }
+  }
+
+  // --- migrate-from: collect old AI infra into .migration-notes/ for review ---
+  if (args.migrateFrom) {
+    const notesDir = path.join(workspaceDest, '.migration-notes');
+    fs.mkdirSync(notesDir, { recursive: true });
+    // Known old-AI-infra artifacts; covers INX-style layout plus common variations.
+    const candidates = [
+      'CLAUDE.md.bak',
+      'AGENTS.md.bak',
+      '.github/copilot-instructions.md.bak',
+      'ai-mem.bak/claude/settings.local.json',
+      'ai-mem.bak/codex/config.toml',
+      'ai-mem.bak/github/copilot-instructions.md',
+      '.taskRef.bak/README.md',
+      '.taskRef.bak/WEEKLY_TIMESHEET_INSTRUCTIONS.md',
+    ];
+    let copied = 0;
+    for (const rel of candidates) {
+      const src = path.join(args.migrateFrom, rel);
+      if (fs.existsSync(src)) {
+        const flat = rel.replace(/\//g, '__') + '.original';
+        fs.copyFileSync(src, path.join(notesDir, flat));
+        copied++;
+      }
+    }
+    // Also: per-domain Copilot instructions
+    const instructionsBak = path.join(args.migrateFrom, '.github/instructions.bak');
+    if (fs.existsSync(instructionsBak)) {
+      const destInstructionsDir = path.join(notesDir, '.github__instructions.bak');
+      fs.mkdirSync(destInstructionsDir, { recursive: true });
+      for (const entry of fs.readdirSync(instructionsBak, { withFileTypes: true })) {
+        if (entry.isFile()) {
+          fs.copyFileSync(
+            path.join(instructionsBak, entry.name),
+            path.join(destInstructionsDir, entry.name)
+          );
+          copied++;
+        }
+      }
+    }
+    if (copied) {
+      console.log(`  ✓ ${copied} old artifacts collected at ${path.relative(target, notesDir)}/`);
+      console.log(`    Review each .original file and merge content into the canonical templates manually.`);
+      console.log(`    The migrate-to-gsf skill describes the path-rewriting needed (.taskRef/ → .tcgstackflow/tasks/, etc.).`);
+    } else {
+      console.log(`  ~ --migrate-from set but no known artifacts found under ${args.migrateFrom}`);
     }
   }
 

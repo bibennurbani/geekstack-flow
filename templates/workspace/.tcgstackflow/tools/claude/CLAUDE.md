@@ -25,7 +25,7 @@ Each profile lists which files it reads, which it writes, which skills it uses, 
 
 ## Skills available
 
-Under `.tcgstackflow/skills/`. Eight starter skills ship with V1:
+Under `.tcgstackflow/skills/`. Ten starter skills ship with V1:
 
 | Skill | Role | Purpose |
 |---|---|---|
@@ -35,6 +35,8 @@ Under `.tcgstackflow/skills/`. Eight starter skills ship with V1:
 | [`review-diff`](../../skills/review-diff/SKILL.md) | reviewer | Walk diff against acceptance + governance |
 | [`ingest`](../../skills/ingest/SKILL.md) | ingester | Fold a Raw source into the wiki, log-first |
 | [`lint-wiki`](../../skills/lint-wiki/SKILL.md) | ingester | Periodic health-check of the wiki |
+| [`audit-workspace`](../../skills/audit-workspace/SKILL.md) | ingester / standalone | Cross-check agents ↔ skills ↔ codebase drift |
+| [`migrate-to-gsf`](../../skills/migrate-to-gsf/SKILL.md) | planner / coder | Migrate an existing project's ad-hoc AI infra onto canonical `.tcgstackflow/` |
 | [`generate-timesheet`](../../skills/generate-timesheet/SKILL.md) | user (LOW) | Weekly Tempo draft from task data |
 | [`submit-timesheet`](../../skills/submit-timesheet/SKILL.md) | user (HIGH) | Submit worklogs via Atlassian MCP |
 

@@ -22,6 +22,9 @@ A user-driven question answered *from* the Wiki rather than from raw retrieval. 
 **Lint** (Wiki Operation):
 A periodic health-check of the Wiki itself. Detects contradictions between pages, stale claims newer Raw has superseded, orphan pages with no inbound links, important concepts missing their own page, and missing cross-references. Triggered on demand or as a ritual (e.g. weekly). Lint never silently rewrites — it produces a report and proposes fixes, gated by the same new-page / deletion approval rule as Ingestion. Produces a `## [YYYY-MM-DD] lint | {scope}` entry in `log.md`.
 
+**Audit** (Workspace Operation):
+A health-check of `.tcgstackflow/` *outside* the wiki — agents, skills, tools, and codebase alignment. Detects broken agent→skill references, skills placed in the wrong library (project-local vs global per ADR 0012), skill content stale vs codebase tech versions, missing skills for present tech, and SKILL.md frontmatter problems. Run alongside `Lint` for full workspace coverage. Produces a `## [YYYY-MM-DD] audit | workspace` entry in `log.md`. Like Lint, never silently rewrites — surfaces a report; fixes route through `ingest` (for wiki/governance), shell (for file moves), or `npx skills add` (for skill installs). Lives in the `audit-workspace` skill.
+
 **Wiki operations log** (or **`log.md`**):
 An append-only chronological record of every Operation (Ingest, Query result filed back, Lint, Restructure) done to the Wiki. Each entry uses the **locked prefix** `## [YYYY-MM-DD] {operation} | {title}` so that `grep "^## \[" log.md | tail -N` returns the last N operations as a clean timeline (per Karpathy's recipe). Each entry names the Context, the Created/Modified/Deleted file lists, and the Decision. The log is the Wiki's history-of-itself and is treated as a first-class page, not a side file.
 
