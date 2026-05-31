@@ -41,8 +41,10 @@ The Coder does **not** write to `wiki/`, `tasks/README.md` (that's Ingester at c
    - If files differ from the plan, note it in the log entry — don't silently expand scope.
    - Make the change.
    - Write or update tests so the acceptance criterion is checkable.
-   - Run the relevant test/lint suite.
-   - Append a YAML entry: `summary`, `files`, `why`, `validation`, optional `tags`.
+   - **Pick the right test/lint suite.** Check `config.yaml`:
+     - If `workspace_kind: single`, use the project's `package_manager` and standard test/lint scripts.
+     - If `workspace_kind: multi-project`, match the working files' paths to a `projects[].path` entry and use *that* sub-project's `test` and `lint` commands. If files span multiple sub-projects, run each sub-project's commands separately.
+   - Append a YAML entry: `summary`, `files`, `why`, `validation`, optional `tags`. For multi-project workspaces, include `project: {name}` so the timesheet sugar-coater and reviewer know which sub-project the work targets.
    - Update the subtask status in the details file.
 4. **Surface HIGH/CRITICAL actions** as permission requests per `governance.md` *before* taking them. Record the user's approval (or rejection) verbatim in the log.
 5. **When all subtasks are Done**, set the top-level status to `IN_REVIEW` and append a final log entry summarising files changed, commands run, and any open concerns.

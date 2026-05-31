@@ -4,8 +4,28 @@
 project:
   name: ""                          # filled by init
   type: existing                    # existing | new
-  primary_stack: ""                 # e.g. "Next.js 16 + Prisma + Postgres"
-  package_manager: pnpm             # pnpm | npm | yarn | bun
+  workspace_kind: single            # 'single' | 'multi-project' — init detects and sets
+  primary_stack: ""                 # used when workspace_kind == 'single'
+  package_manager: pnpm             # used when workspace_kind == 'single'
+
+# Multi-project workspaces (workspace_kind: multi-project) — init auto-detects sub-projects
+# by scanning top-level directories for project signal files (package.json, *.csproj,
+# Pulumi.yaml, Cargo.toml, pyproject.toml, go.mod, Gemfile, pom.xml, composer.json).
+# Edit names, stacks, or commands after init as needed.
+projects: []
+# Example entries (will be filled by init for multi-project workspaces):
+#   - name: api
+#     path: EnvironmentSampling.Api
+#     stack: ".NET 10 + Marten + PostgreSQL"
+#     package_manager: dotnet
+#     test: "dotnet test"
+#     lint: "dotnet format --verify-no-changes"
+#   - name: spa
+#     path: EnvironmentSampling.Spa
+#     stack: "Vue 3 + Vuetify 3"
+#     package_manager: pnpm
+#     test: "pnpm test:unit"
+#     lint: "pnpm lint"
 
 memory:
   mode: local-first                 # local wins on conflict with global

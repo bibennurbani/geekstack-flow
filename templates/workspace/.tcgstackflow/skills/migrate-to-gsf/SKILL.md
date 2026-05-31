@@ -37,6 +37,8 @@ Phase 4 — Decommission (CRITICAL: requires recorded approval)
 
 #### Pre-flight (Planner role)
 
+0. **Detect workspace kind.** Scan top-level directories for project signal files (`package.json`, `*.csproj`/`*.sln`, `Pulumi.yaml`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `Gemfile`, `pom.xml`, `composer.json`). If 2+ directories qualify, this is a **multi-project workspace** — `init.js` will auto-populate `config.yaml`'s `projects:` array during step 8 below. Note any sub-projects that share conventions (e.g. all the SPAs use Vue 3 + Vuetify) versus ones that diverge (e.g. one Pulumi IaC project mixed in) — these inform per-domain Copilot instructions and per-project test/lint commands.
+
 1. **Inventory the existing AI infrastructure.** List every file/folder that overlaps with the canonical layout:
    - Tasks (likely `.taskRef/`, `.tasks/`, or similar)
    - Wiki/docs (likely `ai-mem/docsRef/`, `docs/`, or similar)

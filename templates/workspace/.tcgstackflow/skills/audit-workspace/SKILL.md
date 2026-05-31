@@ -93,6 +93,17 @@ An agent's `Reads:` or `Writes:` section refers to a path that doesn't exist (e.
 
 **Severity:** `major` — re-run `init.js --force` or manually regenerate.
 
+#### 9. Multi-project drift
+
+For workspaces with `workspace_kind: multi-project`:
+
+- **Sub-project at root not in `config.yaml`** — a top-level directory contains project signals (`package.json`, `*.csproj`, `Pulumi.yaml`, etc.) but is not declared under `projects:`. Likely added after init and never recorded.
+- **`config.yaml` entry points at a missing path** — a `projects[].path` references a directory that no longer exists.
+- **Task references a project not in `config.yaml`** — a `TASK details {ID}.md` subtask's `**Project:** {name}` value doesn't match any `projects[].name`. Likely a typo or a project that was renamed/removed.
+- **Wiki page tagged with an unknown project** — a wiki page's frontmatter `project: {name}` doesn't match any declared project.
+
+**Severity:** `major` for missing-from-config; `nit` for orphan task/wiki references.
+
 ### Output
 
 Short user-facing summary:

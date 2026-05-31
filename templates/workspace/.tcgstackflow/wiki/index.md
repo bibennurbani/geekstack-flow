@@ -40,5 +40,6 @@ _(Created when relevant: `[[deployment]]`, `[[db-backup]]`, `[[development]]`.)_
 
 - Pages use Obsidian-style `[[wikilinks]]` (without `.md`).
 - Frontmatter: `title`, `tags`, `aliases`, `priority` (`P0`/`P1`/`P2`), `created`, `updated`, `status`.
+- **For multi-project workspaces:** wiki pages that belong to a specific sub-project carry an optional `project: {name}` frontmatter field matching a `projects[].name` from `config.yaml`. Top-level pages (this index, `log.md`, `domain.md`) leave `project` unset because they span the whole workspace.
 - New pages and deletions go through the Ingester's approval gate (see [governance.md](../governance.md) + ADR 0007 in `adr/`).
 - The Ingester updates this index whenever pages are added, renamed, or removed.

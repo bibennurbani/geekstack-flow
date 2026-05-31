@@ -68,6 +68,221 @@ function copyDirSync(src, dest) {
   }
 }
 
+// --- Multi-project detection ---
+
+const SKIP_DIRS = new Set([
+  '.git', '.vscode', '.idea', '.cache', '.turbo', '.next', '.nuxt',
+  'node_modules', 'dist', 'build', 'coverage', 'out', 'target',
+  '.taskRef', '.tcgstackflow', 'ai-mem', 'docs', 'examples',
+  '.tcgstackflow-migration', '.weekly', '.github', '.husky',
+]);
+
+function slugify(name) {
+  return name.toLowerCase().replace(/[._\s]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function listDir(dir) {
+  try { return fs.readdirSync(dir, { withFileTypes: true }); }
+  catch { return []; }
+}
+
+function hasFile(dir, filename) {
+  return fs.existsSync(path.join(dir, filename));
+}
+
+function hasGlob(dir, suffix) {
+  return listDir(dir).some(e => e.isFile() && e.name.endsWith(suffix));
+}
+
+function readJSON(filePath) {
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); }
+  catch { return null; }
+}
+
+function analyseProject(subPath, dirName) {
+  // Detection priorities, designed for real-world layouts:
+  //   1. Pulumi (most specific — overrides JS even though Pulumi uses package.json)
+  //   2. JS/TS (any package.json — wins over .sln, because `.sln` is often just VS scaffolding
+  //      for a frontend project; the substantive code is still JS/TS)
+  //   3. .NET (.csproj at top OR inside a `src/` subdir, where ASP.NET Core projects often live)
+  //   4. Other ecosystems (Rust, Python, Go, Ruby, Java, PHP)
+
+  // 1. Pulumi
+  if (hasFile(subPath, 'Pulumi.yaml') || hasFile(subPath, 'Pulumi.yml')) {
+    // If the dir also has @pulumi/* deps in package.json, surface the JS detail; else generic Pulumi
+    if (hasFile(subPath, 'package.json')) {
+      const pkg = readJSON(path.join(subPath, 'package.json')) || {};
+      const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+      if (deps['@pulumi/pulumi']) {
+        return {
+          name: slugify(dirName),
+          path: dirName,
+          stack: 'Pulumi IaC (TypeScript)',
+          package_manager: hasFile(subPath, 'pnpm-lock.yaml') ? 'pnpm' : 'npm',
+          test: 'pnpm test',
+          lint: 'pnpm lint',
+        };
+      }
+    }
+    return {
+      name: slugify(dirName),
+      path: dirName,
+      stack: 'Pulumi IaC',
+      package_manager: 'pnpm',
+      test: 'pnpm test',
+      lint: 'pnpm lint',
+    };
+  }
+
+  // 2. JS/TS — package.json wins over .sln (which is often VS scaffolding for a Vue/React frontend)
+  if (hasFile(subPath, 'package.json')) {
+    const pkg = readJSON(path.join(subPath, 'package.json')) || {};
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    const scripts = pkg.scripts || {};
+
+    let stack = 'Node.js + TypeScript';
+    if (deps['@ionic/vue']) stack = 'Ionic + Vue 3 + Capacitor';
+    else if (deps['@ionic/react']) stack = 'Ionic + React + Capacitor';
+    else if (deps['next']) stack = 'Next.js';
+    else if (deps['nuxt']) stack = 'Nuxt';
+    else if (deps['vue']) stack = 'Vue 3 + TypeScript';
+    else if (deps['react']) stack = 'React + TypeScript';
+    else if (deps['@pulumi/pulumi']) stack = 'Pulumi + TypeScript';
+    else if (deps['nestjs'] || deps['@nestjs/core']) stack = 'NestJS';
+
+    let pm = 'pnpm';
+    if (hasFile(subPath, 'pnpm-lock.yaml')) pm = 'pnpm';
+    else if (hasFile(subPath, 'yarn.lock')) pm = 'yarn';
+    else if (hasFile(subPath, 'bun.lockb') || hasFile(subPath, 'bun.lock')) pm = 'bun';
+    else if (hasFile(subPath, 'package-lock.json')) pm = 'npm';
+
+    const test = scripts['test:unit'] ? `${pm} test:unit`
+               : scripts['test'] ? `${pm} test`
+               : '';
+    const lint = scripts['lint'] ? `${pm} lint` : '';
+
+    return { name: slugify(dirName), path: dirName, stack, package_manager: pm, test, lint };
+  }
+
+  // 3. .NET — check top level, `src/`, AND `src/<project>/` (the canonical ASP.NET Core
+  //    workspace layout puts each project in its own folder under src/).
+  const srcPath = path.join(subPath, 'src');
+  const hasSrc = fs.existsSync(srcPath);
+  const dotnetTopLevel = hasGlob(subPath, '.csproj') || hasGlob(subPath, '.sln') || hasGlob(subPath, '.fsproj');
+  let dotnetInSrc = false;
+  if (hasSrc) {
+    if (hasGlob(srcPath, '.csproj') || hasGlob(srcPath, '.fsproj') || hasGlob(srcPath, '.sln')) {
+      dotnetInSrc = true;
+    } else {
+      for (const entry of listDir(srcPath)) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+        const projDir = path.join(srcPath, entry.name);
+        if (hasGlob(projDir, '.csproj') || hasGlob(projDir, '.fsproj')) {
+          dotnetInSrc = true;
+          break;
+        }
+      }
+    }
+  }
+  if (dotnetTopLevel || dotnetInSrc) {
+    return {
+      name: slugify(dirName),
+      path: dirName,
+      stack: '.NET',
+      package_manager: 'dotnet',
+      test: 'dotnet test',
+      lint: 'dotnet format --verify-no-changes',
+    };
+  }
+
+  // 4. Rust
+  if (hasFile(subPath, 'Cargo.toml')) {
+    return {
+      name: slugify(dirName),
+      path: dirName,
+      stack: 'Rust',
+      package_manager: 'cargo',
+      test: 'cargo test',
+      lint: 'cargo clippy -- -D warnings',
+    };
+  }
+
+  // Python
+  if (hasFile(subPath, 'pyproject.toml') || hasFile(subPath, 'setup.py') || hasFile(subPath, 'requirements.txt')) {
+    const usesPoetry = hasFile(subPath, 'poetry.lock');
+    return {
+      name: slugify(dirName),
+      path: dirName,
+      stack: 'Python',
+      package_manager: usesPoetry ? 'poetry' : 'pip',
+      test: usesPoetry ? 'poetry run pytest' : 'pytest',
+      lint: '',
+    };
+  }
+
+  // Go
+  if (hasFile(subPath, 'go.mod')) {
+    return {
+      name: slugify(dirName),
+      path: dirName,
+      stack: 'Go',
+      package_manager: 'go',
+      test: 'go test ./...',
+      lint: 'go vet ./...',
+    };
+  }
+
+  // Ruby
+  if (hasFile(subPath, 'Gemfile')) {
+    return { name: slugify(dirName), path: dirName, stack: 'Ruby', package_manager: 'bundler' };
+  }
+
+  // Java/Kotlin
+  if (hasFile(subPath, 'pom.xml')) {
+    return { name: slugify(dirName), path: dirName, stack: 'Java (Maven)', package_manager: 'mvn', test: 'mvn test' };
+  }
+  if (hasFile(subPath, 'build.gradle') || hasFile(subPath, 'build.gradle.kts')) {
+    return { name: slugify(dirName), path: dirName, stack: 'Java/Kotlin (Gradle)', package_manager: 'gradle', test: 'gradle test' };
+  }
+
+  // PHP
+  if (hasFile(subPath, 'composer.json')) {
+    return { name: slugify(dirName), path: dirName, stack: 'PHP', package_manager: 'composer' };
+  }
+
+  return null; // not a recognised project
+}
+
+function detectProjects(targetDir) {
+  const projects = [];
+  for (const entry of listDir(targetDir)) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+    if (SKIP_DIRS.has(entry.name)) continue;
+    if (entry.name.endsWith('.bak')) continue;
+    if (entry.name.endsWith('.worktrees')) continue;
+    const subPath = path.join(targetDir, entry.name);
+    const project = analyseProject(subPath, entry.name);
+    if (project) projects.push(project);
+  }
+  return projects;
+}
+
+function renderProjectsYaml(projects) {
+  return projects.map((p) => {
+    const lines = [
+      `  - name: ${p.name}`,
+      `    path: ${p.path}`,
+      `    stack: "${p.stack}"`,
+      `    package_manager: ${p.package_manager}`,
+    ];
+    if (p.test) lines.push(`    test: "${p.test}"`);
+    if (p.lint) lines.push(`    lint: "${p.lint}"`);
+    return lines.join('\n');
+  }).join('\n');
+}
+
 function substitutePlaceholders(filePath, vars) {
   let content = fs.readFileSync(filePath, 'utf8');
   let changed = false;
@@ -198,6 +413,21 @@ async function main() {
     fs.writeFileSync(configPath, yaml);
   }
 
+  // --- detect multi-project layout ---
+  const detected = detectProjects(target);
+  if (detected.length >= 2) {
+    let yaml = fs.readFileSync(configPath, 'utf8');
+    yaml = yaml.replace(/workspace_kind: single/, 'workspace_kind: multi-project');
+    yaml = yaml.replace(/projects: \[\]/, `projects:\n${renderProjectsYaml(detected)}`);
+    fs.writeFileSync(configPath, yaml);
+    console.log(`  ✓ detected ${detected.length} sub-projects, written to config.yaml:`);
+    for (const p of detected) {
+      console.log(`     - ${p.name.padEnd(24)} (${p.path}) — ${p.stack}`);
+    }
+  } else if (detected.length === 1) {
+    console.log(`  ~ single sub-project detected (${detected[0].path}) — workspace_kind stays 'single'`);
+  }
+
   // --- propagate tool adapters to project root ---
   if (enableClaude) {
     const claudeSrc = path.join(workspaceDest, 'tools/claude/CLAUDE.md');
@@ -315,7 +545,12 @@ async function main() {
   console.log('');
 }
 
-main().catch((err) => {
-  console.error(`\nError: ${err.message}`);
-  process.exit(1);
-});
+// Expose detection helpers so they can be unit-tested without running the full installer.
+module.exports = { detectProjects, analyseProject, slugify, renderProjectsYaml, SKIP_DIRS };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`\nError: ${err.message}`);
+    process.exit(1);
+  });
+}

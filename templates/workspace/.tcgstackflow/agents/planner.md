@@ -82,11 +82,20 @@ The Planner hands off to the **Coder** when:
 
 ## Subtasks
 
-- {ID}-FE-1 — {subtask title} — {status: Todo|In Progress|Done} — {size: S/M/L or hours}
+- {ID}-{LANE}-1 — {subtask title} — {status: Todo|In Progress|Done} — {size: S/M/L or hours}
+  - **Project:** {project-name}   <!-- multi-project workspaces only; match a `projects[].name` from config.yaml -->
   - **Acceptance:** {one-line condition that must hold for this subtask to be Done}
   - **Files:** {comma-separated paths}
 
-- {ID}-FE-2 — ...
+- {ID}-{LANE}-2 — ...
+
+<!--
+Lanes: FE (frontend), BE (backend), DB (database/migrations), INFRA (CI/CD/IaC),
+       TEST (tests-only), DOCS (docs-only). Free-form — pick what fits.
+For multi-project workspaces, set Project per subtask so the coder picks the right
+test/lint commands and the timesheet records work against the correct sub-project.
+-->
+
 
 ## Open Questions
 {Anything the Planner couldn't resolve during grilling. Coder must resolve before starting that subtask.}
