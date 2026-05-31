@@ -25,8 +25,8 @@ governance:
 tools:
   claude: true
   codex: false
-  github: false                     # GitHub Copilot — writes .github/copilot-instructions.md + instructions/
-  antigravity: false                # IDE-bound; not supported in V1
+  copilot: false
+  antigravity: false
 
 tempo:
   enabled: false                    # flip to true once cloudId is set

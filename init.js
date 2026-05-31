@@ -115,6 +115,17 @@ async function main() {
     process.exit(1);
   }
 
+  // Safety: refuse to clobber existing CLAUDE.md or AGENTS.md at project root.
+  const conflictingRootFiles = ['CLAUDE.md', 'AGENTS.md']
+    .map((f) => path.join(target, f))
+    .filter((p) => fs.existsSync(p));
+  if (conflictingRootFiles.length && !args.force) {
+    console.error('Existing AI tool instruction files found at project root:');
+    for (const p of conflictingRootFiles) console.error(`  - ${path.relative(target, p)}`);
+    console.error('\nBack them up (e.g. `mv CLAUDE.md CLAUDE.md.bak`) then re-run, or use --force to overwrite.');
+    process.exit(1);
+  }
+
   if (!fs.existsSync(target)) {
     fs.mkdirSync(target, { recursive: true });
   }
@@ -136,6 +147,7 @@ async function main() {
 
   const enableClaude = await askYesNo('Enable Claude Code (write CLAUDE.md)?', true);
   const enableCodex = await askYesNo('Enable Codex (write AGENTS.md)?', false);
+  const enableGithub = await askYesNo('Enable GitHub Copilot (write .github/copilot-instructions.md)?', false);
 
   // --- copy workspace template ---
   if (fs.existsSync(workspaceDest)) {
@@ -168,6 +180,7 @@ async function main() {
     yaml = yaml.replace(/enabled: false/, `enabled: ${enableTempo}`);
     yaml = yaml.replace(/claude: true/, `claude: ${enableClaude}`);
     yaml = yaml.replace(/codex: false/, `codex: ${enableCodex}`);
+    yaml = yaml.replace(/github: false/, `github: ${enableGithub}`);
     fs.writeFileSync(configPath, yaml);
   }
 
@@ -188,6 +201,31 @@ async function main() {
       console.log(`  ✓ ${path.relative(target, codexDest)}`);
     }
   }
+  if (enableGithub) {
+    const githubSrcDir = path.join(workspaceDest, 'tools/github');
+    const githubInstructionsSrc = path.join(githubSrcDir, 'copilot-instructions.md');
+    const githubInstructionsDest = path.join(target, '.github/copilot-instructions.md');
+    if (fs.existsSync(githubInstructionsSrc)) {
+      fs.mkdirSync(path.dirname(githubInstructionsDest), { recursive: true });
+      fs.copyFileSync(githubInstructionsSrc, githubInstructionsDest);
+      console.log(`  ✓ ${path.relative(target, githubInstructionsDest)}`);
+      // Copy any per-domain *.instructions.md files
+      const instructionsSrcDir = path.join(githubSrcDir, 'instructions');
+      if (fs.existsSync(instructionsSrcDir)) {
+        const instructionsDestDir = path.join(target, '.github/instructions');
+        fs.mkdirSync(instructionsDestDir, { recursive: true });
+        for (const entry of fs.readdirSync(instructionsSrcDir, { withFileTypes: true })) {
+          if (entry.isFile() && entry.name.endsWith('.instructions.md')) {
+            fs.copyFileSync(
+              path.join(instructionsSrcDir, entry.name),
+              path.join(instructionsDestDir, entry.name)
+            );
+          }
+        }
+        console.log(`  ✓ ${path.relative(target, instructionsDestDir)}/`);
+      }
+    }
+  }
 
   // --- initialise ~/.tcgstackflow/ if not present ---
   const globalDest = path.join(os.homedir(), '.tcgstackflow');
@@ -203,6 +241,7 @@ async function main() {
   console.log(`  ${path.join(target, '.tcgstackflow/')}`);
   if (enableClaude) console.log(`  ${path.join(target, 'CLAUDE.md')}`);
   if (enableCodex) console.log(`  ${path.join(target, 'AGENTS.md')}`);
+  if (enableGithub) console.log(`  ${path.join(target, '.github/copilot-instructions.md')}`);
 
   console.log('\nNext steps:');
   console.log('  1. Open the project in your AI tool — it reads CLAUDE.md / AGENTS.md.');
