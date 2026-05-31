@@ -34,6 +34,21 @@ This folder is the project's AI workflow workspace. Any AI coding tool (Claude C
 
 Cross-project preferences live at `~/.tcgstackflow/memory/` and are referenced from each AI tool's global config. Local wiki always wins on conflict.
 
+## Obsidian vault
+
+This whole `.tcgstackflow/` folder is designed as an **Obsidian vault**. Open it in Obsidian to get:
+
+- Graph view of the LLM-wiki (pages + `[[wikilinks]]`)
+- Readable agent profiles, governance, skills documentation
+- Browsable task folders with their two-file pairs
+- The append-only `wiki/log.md` as a timeline
+
+The `.gitignore` in this folder already excludes Obsidian's volatile state files (`workspace.json`, `graph.json`, etc.) while keeping shared config (plugins, hotkeys, themes) trackable.
+
+**To open:** *Obsidian → "Open folder as vault"* → select `.tcgstackflow/`. First-run prompt asks to trust authors — say yes.
+
+If you prefer a tighter scope (wiki only, no tasks/agents/skills in the graph), open `.tcgstackflow/wiki/` instead — but you lose the ability to navigate to task files and agent profiles from inside Obsidian.
+
 ## Reference
 
 The wiki pattern is based on Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Search and re-rank is provided by [qmd](https://github.com/tobi/qmd), wired as an MCP if you've enabled it.

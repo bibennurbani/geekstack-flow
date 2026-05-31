@@ -14,7 +14,23 @@ A structured AI workflow for planning, coding, reviewing, testing, and shipping 
 - **Ten starter skills** in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills).
 - **Governance** — risk levels, permission-request recipe, project rules.
 - **Generated tool adapters** for Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`), and GitHub Copilot (`.github/copilot-instructions.md` plus per-domain `.instructions.md` files).
+- **Ten `/tcgflow-*` slash commands** for Claude Code (`/tcgflow-init`, `/tcgflow-plan`, `/tcgflow-code`, `/tcgflow-review`, `/tcgflow-ingest`, `/tcgflow-lint`, `/tcgflow-audit`, `/tcgflow-migrate`, `/tcgflow-timesheet-generate`, `/tcgflow-timesheet-submit`) — installed to `~/.claude/skills/` during init.
+- **Multi-project workspace** auto-detection — when init finds 2+ codebases at top level (package.json, *.csproj at top or `src/<proj>/`, Pulumi.yaml, etc.), it populates `config.yaml`'s `projects:` array with per-project stack and test/lint commands.
+- The `.tcgstackflow/` folder is designed as an **Obsidian vault** — open it directly in Obsidian for graph navigation across the wiki, tasks, agents, and skills.
 - A **weekly Tempo/Jira timesheet flow** as two skills (`generate-timesheet` LOW, `submit-timesheet` HIGH).
+
+## Install
+
+```bash
+# Global install — recommended once published to npm.
+npm install -g geekstackflow
+
+# Or from a local clone (until then):
+git clone https://github.com/TheCreativeGeeks/geekstack-flow.git
+cd geekstack-flow && npm link
+```
+
+After install, two binaries are available: `geekstackflow` and `tcgflow` (same script).
 
 ## Quick start
 
@@ -24,7 +40,8 @@ V1 ships a small Node script (no dependencies, no npm install) that scaffolds th
 
 ```bash
 cd /path/to/your/project
-node /path/to/geekstack-flow/init.js .
+geekstackflow init .         # or: tcgflow init .
+# (or `node /path/to/geekstack-flow/init.js .` if not globally installed)
 ```
 
 You'll be prompted for: project name, stack, package manager, Tempo (optional), and which tool adapters to write (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`). The script writes `.tcgstackflow/` plus whichever root files you enabled, and initialises `~/.tcgstackflow/` (global memory and skill library home) on first run.
@@ -50,7 +67,7 @@ mv .github/copilot-instructions.md .github/copilot-instructions.md.bak
 mv .github/instructions .github/instructions.bak
 
 # 3. Init with --migrate-from to collect the old content for review.
-node /path/to/geekstack-flow/init.js --migrate-from . .
+geekstackflow init --migrate-from . .
 
 # 4. Open in your AI tool, invoke the planner with the migrate-to-gsf skill:
 #    "Plan a task using the migrate-to-gsf skill for this codebase."
@@ -66,9 +83,13 @@ The four-phase migration pattern (init+adapters / tasks / wiki / decommission) i
 ```
 geekstack-flow/                 # ← this repo
 ├── README.md                   # this file
+├── LICENSE                     # MIT
+├── CONTRIBUTING.md             # how to extend the tool
+├── CHANGELOG.md                # release notes
+├── package.json                # bin: { geekstackflow, tcgflow }
 ├── CONTEXT.md                  # project glossary (terms the design uses)
 ├── docs/
-│   └── adr/                    # architecture decisions (0001–0014)
+│   └── adr/                    # architecture decisions (0001–0016)
 ├── templates/
 │   └── workspace/
 │       └── .tcgstackflow/      # the workspace that gets copied into target projects

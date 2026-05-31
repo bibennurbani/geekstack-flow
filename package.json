@@ -1,0 +1,53 @@
+{
+  "name": "geekstackflow",
+  "version": "0.1.0",
+  "description": "A structured AI workflow for planning, coding, reviewing, testing, and shipping software. Karpathy-style LLM wiki, two-file task tracking, four agent roles, ten starter skills, multi-tool portable (Claude Code, Codex, GitHub Copilot), multi-project workspace aware.",
+  "bin": {
+    "geekstackflow": "./init.js",
+    "tcgflow": "./init.js"
+  },
+  "files": [
+    "init.js",
+    "templates/",
+    "docs/",
+    "CONTEXT.md",
+    "README.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "smoke": "node init.js --help && echo '✓ init.js is parseable'"
+  },
+  "keywords": [
+    "ai",
+    "workflow",
+    "llm",
+    "wiki",
+    "karpathy",
+    "claude-code",
+    "codex",
+    "github-copilot",
+    "agentic",
+    "skills",
+    "task-tracking",
+    "tempo",
+    "obsidian"
+  ],
+  "author": "The Creative Geeks (Biben Nurbani Hasan) <biben.h@quartexsoftware.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheCreativeGeeks/geekstack-flow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TheCreativeGeeks/geekstack-flow/issues"
+  },
+  "homepage": "https://github.com/TheCreativeGeeks/geekstack-flow#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}

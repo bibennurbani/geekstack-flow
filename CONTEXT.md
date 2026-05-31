@@ -5,7 +5,7 @@ A workflow scaffolding system that gives AI coding tools project-specific memory
 ## Language
 
 **LLM-wiki** (or **Wiki**):
-The AI-maintained, token-efficient knowledge base for a project. A single flat directory of Obsidian-flavored Markdown pages with frontmatter, heavy wikilinks, and a Map-of-Content `index.md` at the root. Lives under `.tcgstackflow/wiki/`. There is **no separate `raw/` subfolder** — see Raw. _Avoid_: docs, knowledge base, notes.
+The AI-maintained, token-efficient knowledge base for a project. A single flat directory of Obsidian-flavored Markdown pages with frontmatter, heavy wikilinks, and a Map-of-Content `index.md` at the root. Lives under `.tcgstackflow/wiki/`. There is **no separate `raw/` subfolder** — see Raw. The entire `.tcgstackflow/` folder is designed to be opened as an Obsidian vault; volatile state files are gitignored, shared config (plugins, hotkeys, themes) stays tracked. _Avoid_: docs, knowledge base, notes.
 
 **Raw**:
 The source material a Wiki page can be ingested from. Raw exists in two modes:

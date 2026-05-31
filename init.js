@@ -377,6 +377,9 @@ async function main() {
   const enableClaude = await askYesNo('Enable Claude Code (write CLAUDE.md)?', true);
   const enableCodex = await askYesNo('Enable Codex (write AGENTS.md)?', false);
   const enableGithub = await askYesNo('Enable GitHub Copilot (write .github/copilot-instructions.md)?', false);
+  const enableClaudeCommands = enableClaude
+    ? await askYesNo('Install /tcgflow-* slash commands into ~/.claude/skills/?', true)
+    : false;
 
   // --- copy workspace template ---
   if (fs.existsSync(workspaceDest)) {
@@ -528,6 +531,34 @@ async function main() {
     console.log(`  ~ ~/.tcgstackflow/ already exists — left untouched`);
   }
 
+  // --- install /tcgflow-* slash commands to ~/.claude/skills/ ---
+  if (enableClaudeCommands) {
+    const commandsSrc = path.join(SCRIPT_DIR, 'templates/claude-commands');
+    const claudeSkillsDest = path.join(os.homedir(), '.claude/skills');
+    if (fs.existsSync(commandsSrc)) {
+      fs.mkdirSync(claudeSkillsDest, { recursive: true });
+      let installed = 0;
+      for (const entry of fs.readdirSync(commandsSrc, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (!entry.name.startsWith('tcgflow-')) continue;
+        const cmdSrc = path.join(commandsSrc, entry.name);
+        const cmdDest = path.join(claudeSkillsDest, entry.name);
+        if (fs.existsSync(cmdDest) && !args.force) {
+          // Skip — already installed; user can re-run with --force to overwrite
+          continue;
+        }
+        if (fs.existsSync(cmdDest)) fs.rmSync(cmdDest, { recursive: true, force: true });
+        copyDirSync(cmdSrc, cmdDest);
+        installed++;
+      }
+      if (installed > 0) {
+        console.log(`  ✓ installed ${installed} /tcgflow-* slash command(s) to ~/.claude/skills/`);
+      } else {
+        console.log(`  ~ all /tcgflow-* slash commands already present (use --force to overwrite)`);
+      }
+    }
+  }
+
   // --- summary ---
   console.log('\nWorkspace initialised:');
   console.log(`  ${path.join(target, '.tcgstackflow/')}`);
@@ -538,7 +569,12 @@ async function main() {
   console.log('\nNext steps:');
   console.log('  1. Open the project in your AI tool — it reads CLAUDE.md / AGENTS.md.');
   console.log('  2. Edit .tcgstackflow/governance.md project-rules section as needed.');
-  console.log('  3. First task: invoke the planner ("plan a project-overview ingest task").');
+  if (enableClaudeCommands) {
+    console.log('  3. Try a slash command in Claude Code: /tcgflow-plan, /tcgflow-lint, /tcgflow-audit, etc.');
+    console.log('  4. First task: /tcgflow-plan (planner agent will grill you and write tasks/active/{ID}/).');
+  } else {
+    console.log('  3. First task: invoke the planner ("plan a project-overview ingest task").');
+  }
   if (enableTempo) {
     console.log(`  4. Tempo enabled. cloudId: ${cloudId}, admin key: ${adminKey}, mode: ${submissionMode}.`);
   }
