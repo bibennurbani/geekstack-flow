@@ -8,18 +8,25 @@ A workflow scaffolding system that gives AI coding tools project-specific memory
 The AI-maintained, token-efficient knowledge base for a project. A single flat directory of Obsidian-flavored Markdown pages with frontmatter, heavy wikilinks, and a Map-of-Content `index.md` at the root. Lives under `.tcgstackflow/wiki/`. There is **no separate `raw/` subfolder** — see Raw. _Avoid_: docs, knowledge base, notes.
 
 **Raw**:
-The source material a Wiki page can be ingested from. Raw is **not a folder of pre-written notes** — it is whatever already produces facts about the project. Concretely, Raw sources include:
-- the **codebase itself** (read-only ground truth);
-- the **active task files** (work-in-progress notes generated while completing a task) and **archived task folders** (re-ingestable history);
-- **MCP outputs** — Jira tickets/comments, Cypress test results, Snyk findings, GitHub PRs, Datadog traces, etc.
-When a task completes (or an MCP-driven investigation finishes), its artifacts become Raw from which the Wiki is updated.
+The source material a Wiki page can be ingested from. Raw exists in two modes:
+- **Implicit Raw** — artifacts that always exist in any project and don't need a folder: the **codebase**, the **active task files**, **archived task folders**, and **MCP outputs** (Jira tickets, Cypress results, Snyk findings, GitHub PRs, Datadog traces).
+- **Explicit Raw** — one-off external material the user drops into the project for ingestion (PDFs, copy-pasted specs, screenshots, exported docs). Lives in `.tcgstackflow/raw/`. After ingestion, files move to `raw/.archived/` rather than being deleted, so re-ingest with new context is possible.
 _Avoid_: drafts, sources folder, notes.
 
-**Ingestion**:
-The act of folding a Raw source (a completed task, a code-scan result, an external doc) into the Wiki — updating relevant pages, flagging contradictions, recording when pages were last verified. Currently triggered manually by the author; auto-ingestion is a future goal. Each ingest is recorded as an entry in `wiki/log.md`. _Avoid_: import, sync.
+**Ingestion** (one of three Wiki **Operations** — see also Query, Lint):
+The act of folding a Raw source (a completed task, a code-scan result, an external doc, an MCP fetch) into the Wiki — updating relevant pages (a single ingest may touch 10–15 pages), proposing new pages for approval, flagging contradictions, recording when pages were last verified. Currently triggered manually; auto-ingestion is a future goal. Each ingest produces one entry in `wiki/log.md` using the locked log-entry prefix `## [YYYY-MM-DD] ingest | {title}`. _Avoid_: import, sync.
+
+**Query** (Wiki Operation):
+A user-driven question answered *from* the Wiki rather than from raw retrieval. The AI reads `index.md` first to find relevant pages, then drills in. A query may itself produce a wiki-worthy artifact (a comparison, an analysis, a synthesis) — if so, that result is filed back into the Wiki as a new page during the same session.
+
+**Lint** (Wiki Operation):
+A periodic health-check of the Wiki itself. Detects contradictions between pages, stale claims newer Raw has superseded, orphan pages with no inbound links, important concepts missing their own page, and missing cross-references. Triggered on demand or as a ritual (e.g. weekly). Lint never silently rewrites — it produces a report and proposes fixes, gated by the same new-page / deletion approval rule as Ingestion. Produces a `## [YYYY-MM-DD] lint | {scope}` entry in `log.md`.
 
 **Wiki operations log** (or **`log.md`**):
-An append-only chronological record of every ingest or restructure done to the Wiki. Each entry names the context, what was created/modified/deleted, and the decision. This is the Wiki's history of itself and is treated as a first-class page, not a side file.
+An append-only chronological record of every Operation (Ingest, Query result filed back, Lint, Restructure) done to the Wiki. Each entry uses the **locked prefix** `## [YYYY-MM-DD] {operation} | {title}` so that `grep "^## \[" log.md | tail -N` returns the last N operations as a clean timeline (per Karpathy's recipe). Each entry names the Context, the Created/Modified/Deleted file lists, and the Decision. The log is the Wiki's history-of-itself and is treated as a first-class page, not a side file.
+
+**Schema doc**:
+The configuration file that tells an AI tool how this Wiki is structured and how to operate on it (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex and similar). Schema docs are **living artifacts** that co-evolve with the project — when conventions change, the Ingester (or the user) updates them. Not lock-in. Generated from the canonical agents and wiki structure, never hand-edited beyond project-specific overrides.
 
 **Task details**:
 The planning document for a unit of work. One per task, lives at `tasks/active/{ID}/TASK details {ID}.md`. Contains overview, subtasks (flat list with ID — status — size), acceptance criteria per subtask, files touched. Created before code is written.
@@ -48,6 +55,28 @@ A role profile — "who I am and which skills I use." One Markdown file per role
 
 **Tool adapter**:
 A thin per-tool shim under `.tcgstackflow/tools/{tool}/` that points the AI tool at the canonical skills and agents, plus any tool-specific glue (e.g. `.claude/skills/` symlink for Claude Code, `AGENTS.md` for Codex, `.github/copilot-instructions.md` for GitHub Copilot). Tool adapters are **generated**, never hand-written, so the canonical content lives in exactly one place.
+
+**Governance** (or **`governance.md`**):
+One Markdown file at `.tcgstackflow/governance.md` that defines (1) the four-level risk taxonomy (LOW / MEDIUM / HIGH / CRITICAL), (2) the permission-request recipe agents follow for HIGH and CRITICAL actions, and (3) project-specific rules edited per project. Read by every agent on session start; enforced informally — by the AI following the doc, not by a separate runtime gate.
+
+**Risk levels** (from governance.md):
+- **LOW** — read/search/draft. Proceed without approval.
+- **MEDIUM** — edit source, run tests, draft commit. Proceed and log.
+- **HIGH** — install deps, push, open PR, edit auth-sensitive code, update external tickets. Request permission first.
+- **CRITICAL** — production deploy, destructive DB op, force push, rotate secrets, modify CI/CD. Request permission AND propose a rollback plan.
+
+**Permission request** (recipe, not a form):
+The conversational shape an agent uses when proposing a HIGH or CRITICAL action: *Action / Risk / Why / Files affected / Rollback / Approve?* Inline in the chat, not a structured artifact — the user replies with "approved" / "no" / a tweak.
+
+**Timesheet** (and its two skills):
+The weekly Tempo/Jira worklog draft generated from task data, plus inline admin-meeting input from the user. Lives at `.tcgstackflow/tasks/.weekly/Weekly_Timesheet_{YYYY-MM-DD}.md`. Two skills operate on it:
+- `generate-timesheet` (LOW) — reads tasks, applies sugar-coating (always on — polished, impact-oriented dev descriptions; admin verbatim), produces the file. Does not submit.
+- `submit-timesheet` (HIGH) — submits worklogs via the configured provider (default Atlassian MCP). Honors `submission_mode: approval | trust` from config — `approval` requires explicit OK per `governance.md`; `trust` is the personal-use convenience mode that matches existing INX practice.
+
+**Local memory** vs **Global memory**:
+- **Local memory** is the project-specific Wiki at `.tcgstackflow/wiki/` — facts about *this* project.
+- **Global memory** is cross-project, cross-tool preferences and knowledge at `~/.tcgstackflow/memory/` — `preferences.md` (package manager, code style, test framework), `workflow-conventions.md` (how the user likes to work), `domain-knowledge.md` (reusable cross-client domain notes), `tools.md` (which AI tools and how).
+Each tool adapter references the global memory from the tool's own config location (e.g. `~/.claude/CLAUDE.md` says "Read `~/.tcgstackflow/memory/*.md`"). One canonical home; many references. Local memory always takes priority over global when they conflict.
 
 ## Flagged ambiguities
 - **"Karpathy method"** is referenced as the ingestion technique. In this project it means: flat directory of atomic Markdown pages, Obsidian frontmatter (title, tags, aliases, priority, created, updated, status), heavy `[[wikilinks]]`, and a Map-of-Content `index.md` as the entry point. Confirmed against an existing working example (`SaeDigital/run-by-strength/docs/`).

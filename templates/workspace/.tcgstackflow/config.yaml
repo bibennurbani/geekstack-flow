@@ -1,0 +1,55 @@
+# Creative GeekStack Flow — project config
+# The init script fills these defaults; edit as the project evolves.
+
+project:
+  name: ""                          # filled by init
+  type: existing                    # existing | new
+  primary_stack: ""                 # e.g. "Next.js 16 + Prisma + Postgres"
+  package_manager: pnpm             # pnpm | npm | yarn | bun
+
+memory:
+  mode: local-first                 # local wins on conflict with global
+  local_wiki: .tcgstackflow/wiki
+  raw_staging: .tcgstackflow/raw
+  global_memory: ~/.tcgstackflow/memory
+
+skills:
+  local_path: .tcgstackflow/skills
+  global_path: ~/.tcgstackflow/skills
+  strategy: symlink                 # symlink | copy
+
+governance:
+  mode: strict                      # strict | relaxed
+  permissions_file: .tcgstackflow/governance.md
+
+tools:
+  claude: true
+  codex: false
+  copilot: false
+  antigravity: false
+
+tempo:
+  enabled: false                    # flip to true once cloudId is set
+  provider: atlassian-mcp
+  cloudId: ""                       # per-client; e.g. "9e2bd083-d1ed-490d-9206-bebb7f899881"
+  admin_key: ""                     # quarterly key; e.g. "ADMIN-86"
+  timezone: "+0800"                 # ISO offset
+  work_start: "07:00"               # or "08:00"
+  daily_hours: 8
+  weekly_hours: 40
+  preferred_chunk: "2-3h"
+  max_chunk: "4h"
+  submission_mode: approval         # approval | trust — default approval for safety
+
+mcp:
+  write_requires_approval: true
+  recommended:                      # init can offer to wire these up
+    - atlassian                     # Jira/Tempo worklog submission
+    - qmd                           # local wiki search/re-rank
+    - github                        # PR + issue operations
+    - filesystem                    # file ops in sandboxed mode
+  optional:
+    - snyk                          # security/dependency findings
+    - cypress                       # E2E results
+    - datadog                       # production monitoring
+    - sentry
