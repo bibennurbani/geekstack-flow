@@ -1,6 +1,6 @@
 ---
 name: migrate-to-gsf
-description: Migrate an existing project from ad-hoc AI infrastructure (`.taskRef/`, `ai-mem/`, hand-written `CLAUDE.md`/`AGENTS.md`, scattered Copilot instructions) onto the canonical Creative GeekStack Flow `.tcgstackflow/` layout. Clean cutover with `.bak` backups. Four phases — Init+adapters / Tasks migration / Wiki ingestion / Decommission — plus a cross-cutting move of tech skills from project-local to global. The CRITICAL deletion step requires explicit recorded approval. Pattern extracted from the GSF-001 INX migration.
+description: Migrate an existing project from ad-hoc AI infrastructure (a `.taskRef/`-style tasks folder, an `ai-mem/`-style memory folder, hand-written `CLAUDE.md`/`AGENTS.md`, scattered Copilot instructions) onto the canonical Creative GeekStack Flow `.tcgstackflow/` layout. Clean cutover with `.bak` backups. Four phases — Init+adapters / Tasks migration / Wiki ingestion / Decommission — plus a cross-cutting move of tech skills from project-local to global. The CRITICAL deletion step requires explicit recorded approval.
 ---
 
 # Migrate to Creative GeekStack Flow
@@ -55,13 +55,15 @@ Phase 4 — Decommission (CRITICAL: requires recorded approval)
 For each artifact that overlaps with canonical V1 paths:
 
 ```
-INX/.taskRef/         → INX/.taskRef.bak/
-INX/ai-mem/           → INX/ai-mem.bak/
-INX/CLAUDE.md         → INX/CLAUDE.md.bak
-INX/AGENTS.md         → INX/AGENTS.md.bak
-INX/.github/copilot-instructions.md → INX/.github/copilot-instructions.md.bak
-INX/.github/instructions/ → INX/.github/instructions.bak/
+<project>/.taskRef/         → <project>/.taskRef.bak/
+<project>/ai-mem/           → <project>/ai-mem.bak/
+<project>/CLAUDE.md         → <project>/CLAUDE.md.bak
+<project>/AGENTS.md         → <project>/AGENTS.md.bak
+<project>/.github/copilot-instructions.md → <project>/.github/copilot-instructions.md.bak
+<project>/.github/instructions/ → <project>/.github/instructions.bak/
 ```
+
+(Folder names will vary by project — match what the target uses. Common variants: `.taskRef/`, `.tasks/`, `tasks/` for tasks; `ai-mem/`, `.ai/`, `docs/` for memory.)
 
 Then:
 

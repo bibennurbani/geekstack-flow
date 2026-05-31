@@ -11,27 +11,55 @@ A structured AI workflow for planning, coding, reviewing, testing, and shipping 
 - A **flat Obsidian-style wiki** maintained by AI, following [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). qmd-compatible for retrieval.
 - A **task tracking system** with a strict two-file rule (`TASK {ID}.md` + `TASK details {ID}.md`).
 - **Four agent profiles** (`planner`, `coder`, `reviewer`, `ingester`) — tool-agnostic role specs.
-- **Eight starter skills** in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills).
+- **Ten starter skills** in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills).
 - **Governance** — risk levels, permission-request recipe, project rules.
-- **Generated tool adapters** for Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`), and others.
+- **Generated tool adapters** for Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`), and GitHub Copilot (`.github/copilot-instructions.md` plus per-domain `.instructions.md` files).
 - A **weekly Tempo/Jira timesheet flow** as two skills (`generate-timesheet` LOW, `submit-timesheet` HIGH).
 
-## Quick start (V1 — manual)
+## Quick start
 
-V1 ships no CLI yet. To initialise a project today:
+V1 ships a small Node script (no dependencies, no npm install) that scaffolds the workspace and writes per-tool adapters.
+
+### Greenfield project (no prior AI infra)
 
 ```bash
-# 1. From this repo
-cp -R templates/workspace/.tcgstackflow /path/to/your/project/
-cp templates/workspace/.tcgstackflow/tools/claude/CLAUDE.md /path/to/your/project/CLAUDE.md
-cp templates/workspace/.tcgstackflow/tools/codex/AGENTS.md /path/to/your/project/AGENTS.md
-
-# 2. Edit .tcgstackflow/config.yaml in the target — set project name, stack, Tempo config.
-# 3. Open in Claude Code (or your AI tool of choice). It will read CLAUDE.md / AGENTS.md
-#    and operate against the .tcgstackflow/ workspace.
+cd /path/to/your/project
+node /path/to/geekstack-flow/init.js .
 ```
 
-A tiny Node init script (target: ~150 lines) is the next planned build step — see [docs/adr/0001](docs/adr/0001-personal-first-team-usable-oss-ready.md) and the V1 scope summary.
+You'll be prompted for: project name, stack, package manager, Tempo (optional), and which tool adapters to write (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`). The script writes `.tcgstackflow/` plus whichever root files you enabled, and initialises `~/.tcgstackflow/` (global memory and skill library home) on first run.
+
+Open the project in your AI tool of choice. It reads the root adapter file (`CLAUDE.md` / `AGENTS.md`) which points at `.tcgstackflow/`. First task: invoke the planner — *"plan a task to scan this codebase and populate wiki/project-overview.md"*.
+
+### Existing project with prior AI infra (`.taskRef/`, `ai-mem/`, hand-written CLAUDE.md, etc.)
+
+Use the migration flow. Quick form:
+
+```bash
+cd /path/to/existing-project
+
+# 1. Commit any pending git work — gives you a clean rollback point.
+git add -u && git commit -m "WIP snapshot before geekstack-flow migration"
+
+# 2. Back up the old AI infrastructure (rename to .bak siblings).
+mv .taskRef .taskRef.bak
+mv ai-mem ai-mem.bak
+mv CLAUDE.md CLAUDE.md.bak
+mv AGENTS.md AGENTS.md.bak
+mv .github/copilot-instructions.md .github/copilot-instructions.md.bak
+mv .github/instructions .github/instructions.bak
+
+# 3. Init with --migrate-from to collect the old content for review.
+node /path/to/geekstack-flow/init.js --migrate-from . .
+
+# 4. Open in your AI tool, invoke the planner with the migrate-to-gsf skill:
+#    "Plan a task using the migrate-to-gsf skill for this codebase."
+#    The planner reads .tcgstackflow/.migration-notes/ for the old content,
+#    grills you on classification (workflow vs tech skills, active vs stale
+#    tasks, etc.), and writes TASK details into tasks/active/.
+```
+
+The four-phase migration pattern (init+adapters / tasks / wiki / decommission) is documented in the `migrate-to-gsf` skill that ships in V1.
 
 ## Repository layout
 
@@ -40,7 +68,7 @@ geekstack-flow/                 # ← this repo
 ├── README.md                   # this file
 ├── CONTEXT.md                  # project glossary (terms the design uses)
 ├── docs/
-│   └── adr/                    # architecture decisions (0001–0011)
+│   └── adr/                    # architecture decisions (0001–0014)
 ├── templates/
 │   └── workspace/
 │       └── .tcgstackflow/      # the workspace that gets copied into target projects

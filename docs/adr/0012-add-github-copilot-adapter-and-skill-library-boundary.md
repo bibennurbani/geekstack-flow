@@ -1,10 +1,10 @@
 # Add GitHub Copilot tool adapter, per-domain instructions, and global vs project-local skill boundary
 
-The first real migration target (INX) surfaced three V1 gaps that we patch in the same session as the migration task:
+Planning the first real-world migration onto V1 surfaced three V1 gaps that we patch in the same cycle:
 
-1. **GitHub Copilot tool adapter is needed in V1.** INX's `ai-mem/github/` contains a substantial `copilot-instructions.md` + six per-domain `*.instructions.md` files that have no V1 home today.
+1. **GitHub Copilot tool adapter is needed in V1.** Observed real-world projects keep a substantial `copilot-instructions.md` plus per-domain `*.instructions.md` files that have no V1 home today.
 2. **Per-domain instructions are a real Copilot pattern** (`.github/instructions/*.instructions.md`) that the Copilot adapter must support — narrow per-area guidance complementing the top-level instructions file.
-3. **Tech skills live globally, workflow skills live per-project.** INX's `ai-mem/agents/skills/` contains 11 cross-project tech skills (vue, pinia, cypress-author, dotnet-best-practices, etc.) from public sources (antfu/skills, github/awesome-copilot, pulumi/agent-skills). They belong in `~/.tcgstackflow/skills/`, not duplicated into every project's `.tcgstackflow/skills/`.
+3. **Tech skills live globally, workflow skills live per-project.** Real-world ad-hoc setups accumulate cross-project tech skills (Vue, Pinia, Cypress, .NET, Pulumi, Auth0, etc.) from public sources (antfu/skills, github/awesome-copilot, pulumi/agent-skills) inside per-project folders. They belong in `~/.tcgstackflow/skills/` globally, not duplicated into every project's `.tcgstackflow/skills/`.
 
 ## Decisions
 

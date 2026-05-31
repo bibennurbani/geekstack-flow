@@ -74,7 +74,7 @@ The conversational shape an agent uses when proposing a HIGH or CRITICAL action:
 **Timesheet** (and its two skills):
 The weekly Tempo/Jira worklog draft generated from task data, plus inline admin-meeting input from the user. Lives at `.tcgstackflow/tasks/.weekly/Weekly_Timesheet_{YYYY-MM-DD}.md`. Two skills operate on it:
 - `generate-timesheet` (LOW) — reads tasks, applies sugar-coating (always on — polished, impact-oriented dev descriptions; admin verbatim), produces the file. Does not submit.
-- `submit-timesheet` (HIGH) — submits worklogs via the configured provider (default Atlassian MCP). Honors `submission_mode: approval | trust` from config — `approval` requires explicit OK per `governance.md`; `trust` is the personal-use convenience mode that matches existing INX practice.
+- `submit-timesheet` (HIGH) — submits worklogs via the configured provider (default Atlassian MCP). Honors `submission_mode: approval | trust` from config — `approval` requires explicit OK per `governance.md`; `trust` is the personal-use convenience mode that matches the author's established calibrated workflow.
 
 **Local memory** vs **Global memory**:
 - **Local memory** is the project-specific Wiki at `.tcgstackflow/wiki/` — facts about *this* project.

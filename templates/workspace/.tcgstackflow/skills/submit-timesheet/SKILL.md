@@ -51,7 +51,7 @@ You are reading a draft timesheet and submitting each entry to Tempo/Jira. The s
      - `commentBody` = sugar-coated description
      - `contentFormat` = `markdown`
    - Capture the returned Worklog ID.
-   - **One at a time** — never parallelise. The Atlassian API tolerates concurrent writes but the sequential pattern matches the user's existing INX practice and makes failure recovery cleaner.
+   - **One at a time** — never parallelise. The Atlassian API tolerates concurrent writes, but a sequential pattern makes failure recovery cleaner and matches the calibrated workflow this skill ships with.
 6. **Handle failures.** If a submission fails:
    - Stop the sequence.
    - Surface the error inline (which entry, what the API said).

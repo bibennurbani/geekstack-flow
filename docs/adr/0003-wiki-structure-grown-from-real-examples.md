@@ -1,6 +1,6 @@
 # Wiki structure grown from real examples, not from the master-prompt template
 
-The master prompt specified 21 pre-created wiki pages and a `raw/` + `llm-wiki/` split. Inspecting two real working wikis the author already uses (`SaeDigital/run-by-strength/docs/` and `INX/ai-mem/docsRef/`) shows that neither matches that template: both are flat Obsidian-style directories, neither has a `raw/` folder (Raw comes from codebase + task files + MCP outputs), and most of the 21 pre-named pages do not exist in real use. V1 therefore ships with a small starter set of pages plus a domain-driven growth model — new pages are born during ingestion as the project demands them, not pre-created as empty stubs.
+The master prompt specified 21 pre-created wiki pages and a `raw/` + `llm-wiki/` split. Inspecting two real working wikis the author already uses shows that neither matches that template: both are flat Obsidian-style directories, neither has a `raw/` folder (Raw comes from codebase + task files + MCP outputs), and most of the 21 pre-named pages do not exist in real use. V1 therefore ships with a small starter set of pages plus a domain-driven growth model — new pages are born during ingestion as the project demands them, not pre-created as empty stubs.
 
 ## Considered options
 

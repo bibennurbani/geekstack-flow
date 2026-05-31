@@ -245,7 +245,7 @@ async function main() {
   if (args.migrateFrom) {
     const notesDir = path.join(workspaceDest, '.migration-notes');
     fs.mkdirSync(notesDir, { recursive: true });
-    // Known old-AI-infra artifacts; covers INX-style layout plus common variations.
+    // Known old-AI-infra artifacts; covers common ad-hoc layouts (`.taskRef/`, `ai-mem/`, etc.).
     const candidates = [
       'CLAUDE.md.bak',
       'AGENTS.md.bak',

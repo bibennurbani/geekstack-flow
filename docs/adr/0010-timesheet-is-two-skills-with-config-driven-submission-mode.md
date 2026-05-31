@@ -1,6 +1,6 @@
 # Timesheet generation and submission are two separate skills, with config-driven submission mode
 
-INX's working practice generates a Tempo timesheet and submits worklogs to Jira via the Atlassian MCP in one step ("trust mode" — the user has validated this flow over many weeks). The master prompt insists submission should never be automatic. Both are right for different audiences: trust is safe for the author after many weeks of calibration; approval is essential for a teammate adopting this on day one. V1 splits the work into two skills (`generate-timesheet` and `submit-timesheet`) and adds a `submission_mode: approval | trust` config flag (default `approval`) so the same workflow serves both audiences without forking.
+The author's established working practice generates a Tempo timesheet and submits worklogs to Jira via the Atlassian MCP in one step ("trust mode" — validated over many weeks of real use). The master prompt insists submission should never be automatic. Both are right for different audiences: trust is safe for the author after many weeks of calibration; approval is essential for a teammate adopting this on day one. V1 splits the work into two skills (`generate-timesheet` and `submit-timesheet`) and adds a `submission_mode: approval | trust` config flag (default `approval`) so the same workflow serves both audiences without forking.
 
 ## Decisions
 

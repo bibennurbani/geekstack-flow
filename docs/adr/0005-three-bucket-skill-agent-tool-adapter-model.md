@@ -1,6 +1,6 @@
 # Three-bucket model: Skills + Agents + Tool adapters
 
-The master prompt and INX both blur the line between *capability* (how to do X), *role* (who is doing it), and *tool integration* (how each AI tool sees them) — INX nests skills under agents and duplicates content across `claude/`, `codex/`, `github/`, `continue/`. V1 separates these into three peer buckets with one canonical source for each:
+Both the master prompt and ad-hoc real-world workspaces blur the line between *capability* (how to do X), *role* (who is doing it), and *tool integration* (how each AI tool sees them) — observed setups nest skills under agents and duplicate content across per-tool folders (`claude/`, `codex/`, `github/`, etc.). V1 separates these into three peer buckets with one canonical source for each:
 
 - **Skills** at `.tcgstackflow/skills/{name}/SKILL.md` — atomic capabilities, tool-agnostic content, Claude-Code-compatible format.
 - **Agents** at `.tcgstackflow/agents/{role}.md` — role profiles that curate skills and add guardrails. Markdown today, executable-later by parsing the same sections.
@@ -8,8 +8,8 @@ The master prompt and INX both blur the line between *capability* (how to do X),
 
 ## Considered options
 
-- **Nested model (skills inside agents, as INX has it)** — rejected: forces duplication when two roles use the same skill, and conflates capabilities with role.
-- **Per-tool duplication (one full skill set per tool)** — rejected: INX shows this drift (`ai-mem/claude/skills/`, `ai-mem/codex/`, etc.) and the duplicates inevitably get out of sync.
+- **Nested model (skills inside agents)** — rejected: forces duplication when two roles use the same skill, and conflates capabilities with role.
+- **Per-tool duplication (one full skill set per tool)** — rejected: real-world ad-hoc setups show this drift (`{root}/claude/skills/`, `{root}/codex/skills/`, etc.) and the duplicates inevitably get out of sync.
 - **Three-bucket peer model** — *chosen*. One canonical home for each concern, adapters are generated, agents reference skills by name.
 
 ## Consequences
