@@ -1,0 +1,60 @@
+---
+name: tcgflow-upgrade
+description: Run `init.js --upgrade` to migrate an existing pre-v0.2 .tcgstackflow/ workspace to the current layout. Use when the user types `/tcgflow-upgrade` or asks "upgrade this workspace", "migrate to no-dotfiles convention", "rename .weekly to weekly". Non-destructive — renames dotted subfolders, moves workspace .gitignore content to project-root .gitignore, creates the Obsidian symlink. Does NOT touch tasks, wiki, agents, skills, or tool adapter content.
+---
+
+# `/tcgflow-upgrade` — in-place upgrade of an existing workspace
+
+## When to use
+
+The user typed `/tcgflow-upgrade` or said *"upgrade this workspace"*, *"migrate to the no-dotfiles convention"*, *"rename .weekly to weekly"*, *"get this project on the current layout"*. The current directory has an existing `.tcgstackflow/` workspace from a previous version.
+
+## What to do
+
+1. **Verify the target.** Confirm the working directory is the right one and `.tcgstackflow/` exists there. If not, route to `/tcgflow-init` for new workspaces or `/tcgflow-migrate` for moving off ad-hoc AI infra.
+
+2. **Detect what needs upgrading.** Look for any of:
+   - `.tcgstackflow/tasks/.weekly/`
+   - `.tcgstackflow/raw/.archived/`
+   - `.tcgstackflow/.migration-notes/`
+   - `.tcgstackflow/.gitignore`
+   - Missing `tcgstackflow → .tcgstackflow` symlink at project root
+   - Project-root `.gitignore` missing the `# === Creative GeekStack Flow ===` block
+
+   If none of these are true, tell the user the workspace is already current and stop.
+
+3. **Run `geekstackflow init --upgrade .`** (or `node /path/to/init.js --upgrade .` as fallback). The script:
+   - Renames `.weekly/` → `weekly/`, `.archived/` → `archived/`, `.migration-notes/` → `migration-notes/`
+   - Removes `.tcgstackflow/.gitignore`, appends the marker block to project-root `.gitignore`
+   - Creates the Obsidian symlink if missing
+   - Leaves all user content (tasks, wiki, agents, skills, tool adapter overrides) **untouched**
+
+4. **Report the changes** the script made.
+
+5. **Offer two follow-up steps** (don't auto-run unless the user asks):
+
+   a. **Refresh global slash commands** — useful to pick up new commands and path corrections in older ones:
+      ```bash
+      cp -R /path/to/geekstack-flow/templates/claude-commands/* ~/.claude/skills/
+      ```
+      Then restart any other open Claude Code session so it sees the refreshed skills.
+
+   b. **Refresh tool adapter content** at `.tcgstackflow/tools/{claude,codex,github}/` — only if the user wants the latest skill tables and convention docs. **NOT recommended via `--force`** because that also resets agents/skills templates the user may have customised. Suggest a manual diff-and-merge against `templates/workspace/.tcgstackflow/tools/` from the geekstack-flow repo.
+
+## Anti-patterns
+
+- **Running on a directory with no `.tcgstackflow/`.** `--upgrade` is for existing workspaces; route to `/tcgflow-init` for new ones.
+- **Suggesting `--force` for tool adapter refresh.** `--force` is destructive; it resets agents and skills too. Manual merge is safer.
+- **Treating "no changes needed" as a failure.** A workspace already on the current layout is a successful no-op; just say so.
+- **Modifying user content during upgrade.** The script is non-destructive by design; if it ever needs to touch task/wiki content, that's a breaking change and warrants a different command name.
+
+## Notes
+
+- The `.gitignore` block insertion is idempotent — the marker `# === Creative GeekStack Flow ===` is checked before appending, so re-running `/tcgflow-upgrade` on a partially-upgraded workspace doesn't duplicate it.
+- For multi-project workspaces, the upgrade runs once at the workspace root — the `projects:` array in `config.yaml` and per-project tool adapters are not affected by the dotfile renames.
+- If both old and new folders exist (e.g. `tasks/.weekly/` AND `tasks/weekly/`), the script leaves them alone and tells the user to reconcile manually — this protects against silently merging unrelated content.
+
+## See also
+
+- ADR 0017 — no dotfiles inside `.tcgstackflow/` convention.
+- CHANGELOG `[Unreleased]` → Migration section.

@@ -84,6 +84,29 @@ Both locations are readable to Copilot. Tech-skill content is referenced from pr
 6. **Each PR/change has a single clear concern.**
 7. **Append-only task logs.** Never delete prior YAML entries.
 
+## Commands (invocation in Copilot)
+
+The workspace ships fourteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
+
+| Workflow | Trigger phrases |
+|---|---|
+| `tcgflow-plan` | "plan ES-1234", "design the new feature", "task for X" |
+| `tcgflow-code` | "implement ES-1234", "start coding the planned task" |
+| `tcgflow-review` | "review the diff", "is ES-1234 ready?" |
+| `tcgflow-ingest` | "ingest ES-1234", "fold this into the wiki" |
+| `tcgflow-lint` | "lint the wiki", "find stale pages" |
+| `tcgflow-audit` | "audit the workspace", "are skills in sync?" |
+| `tcgflow-task-from-snyk` | "create tasks from Snyk", "process vulnerabilities" |
+| `tcgflow-task-from-cypress` | "create tasks from failing tests", "what's flaky?" |
+| `tcgflow-task-from-datadog` | "create a task from the latest incident" |
+| `tcgflow-timesheet-generate` | "generate this week's timesheet" |
+| `tcgflow-timesheet-submit` | "submit the timesheet to Tempo" (HIGH risk) |
+| `tcgflow-upgrade` | "upgrade this workspace" |
+| `tcgflow-init` | "set up geekstackflow here" |
+| `tcgflow-migrate` | "migrate this project to geekstackflow" |
+
+The slash-command form (`/tcgflow-*`) is a Claude-Code-specific UX shortcut; the underlying workflows live as files in this workspace and are tool-portable. Same content; different invocation UI per tool.
+
 ## Strict Invariants
 
 - **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`.

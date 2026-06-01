@@ -9,11 +9,22 @@ const os = require('os');
 
 const HELP = `Creative GeekStack Flow — init
 
-Usage:
-  node init.js [target]                       Initialise .tcgstackflow/ in the target dir (default: cwd)
-  node init.js --help                         Show this help
-  node init.js --force [target]               Overwrite existing .tcgstackflow/
-  node init.js --migrate-from <old> [target]  Collect old AI infra into migration-notes/ for review
+Usage (all forms equivalent — pick what feels natural):
+  geekstackflow [target]                      Initialise .tcgstackflow/ in the target dir (default: cwd)
+  geekstackflow init [target]                 Same, with explicit subcommand
+  geekstackflow upgrade [target]              In-place upgrade of an existing workspace (alias for --upgrade)
+  geekstackflow --upgrade [target]            Same as above
+  geekstackflow --force [target]              Overwrite existing .tcgstackflow/
+  geekstackflow --migrate-from <old> [target] Collect old AI infra into migration-notes/ for review
+  geekstackflow --help                        Show this help
+
+  (node init.js ... works the same — substitute 'node init.js' for 'geekstackflow' anywhere.)
+
+What --upgrade does:
+  In-place upgrade of an existing workspace. Renames pre-v0.2 dotted subfolders
+  (.weekly/, .archived/, .migration-notes/), moves .tcgstackflow/.gitignore content
+  to the project-root .gitignore, creates the Obsidian symlink if missing.
+  NON-DESTRUCTIVE — leaves tasks, wiki, agents, and skills untouched.
 
 What this does:
   1. Copies templates/workspace/.tcgstackflow/ into the target project
@@ -40,13 +51,26 @@ const WORKSPACE_TEMPLATE = path.join(SCRIPT_DIR, 'templates/workspace/.tcgstackf
 const GLOBAL_TEMPLATE = path.join(SCRIPT_DIR, 'templates/global/.tcgstackflow');
 
 function parseArgs(argv) {
-  const args = { force: false, help: false, migrateFrom: null, target: process.cwd() };
+  const args = { force: false, help: false, upgrade: false, migrateFrom: null, target: process.cwd() };
   const positional = [];
   const raw = argv.slice(2);
+
+  // Discard or interpret a leading subcommand. Supports both styles:
+  //   `geekstackflow init [args]`   → 'init' is discarded (the default action)
+  //   `geekstackflow upgrade [args]` → equivalent to --upgrade
+  //   `node init.js [args]`         → no subcommand, original style still works
+  if (raw[0] === 'init') {
+    raw.shift();
+  } else if (raw[0] === 'upgrade') {
+    raw.shift();
+    args.upgrade = true;
+  }
+
   for (let i = 0; i < raw.length; i++) {
     const a = raw[i];
     if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--force') args.force = true;
+    else if (a === '--upgrade') args.upgrade = true;
     else if (a === '--migrate-from') {
       i++;
       if (i >= raw.length) throw new Error('--migrate-from requires a path argument');
@@ -55,6 +79,103 @@ function parseArgs(argv) {
   }
   if (positional.length) args.target = path.resolve(positional[0]);
   return args;
+}
+
+const GITIGNORE_MARKER = '# === Creative GeekStack Flow ===';
+const GITIGNORE_BLOCK = [
+  GITIGNORE_MARKER,
+  '# Obsidian — auto-generated state files (keep shared config tracked)',
+  '.tcgstackflow/.obsidian/workspace.json',
+  '.tcgstackflow/.obsidian/workspace-mobile.json',
+  '.tcgstackflow/.obsidian/cache',
+  '.tcgstackflow/.obsidian/graph.json',
+  '# Migration scratch (regeneratable by init.js --migrate-from)',
+  '.tcgstackflow/migration-notes/',
+  "# Obsidian-friendly non-hidden symlink — uncomment if you don't want to track it.",
+  '# /tcgstackflow',
+  '# === end Creative GeekStack Flow ===',
+  '',
+].join('\n');
+
+function appendGsfBlockToRootGitignore(target) {
+  const rootGitignorePath = path.join(target, '.gitignore');
+  const existing = fs.existsSync(rootGitignorePath) ? fs.readFileSync(rootGitignorePath, 'utf8') : '';
+  if (existing.includes(GITIGNORE_MARKER)) return false; // already present
+  const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
+  const sep = existing ? '\n' : '';
+  fs.writeFileSync(rootGitignorePath, existing + prefix + sep + GITIGNORE_BLOCK);
+  return true;
+}
+
+async function upgradeWorkspace(target) {
+  const workspaceDir = path.join(target, '.tcgstackflow');
+  if (!fs.existsSync(workspaceDir)) {
+    console.error(`No .tcgstackflow/ found at ${target}.`);
+    console.error('--upgrade is for existing workspaces. To create a new workspace, run init.js without --upgrade.');
+    process.exit(1);
+  }
+
+  console.log('\nCreative GeekStack Flow — upgrade');
+  console.log(`Target: ${target}\n`);
+
+  let changes = 0;
+
+  // 1. Rename pre-v0.2 dotted subfolders
+  const renames = [
+    ['tasks/.weekly', 'tasks/weekly'],
+    ['raw/.archived', 'raw/archived'],
+    ['.migration-notes', 'migration-notes'],
+  ];
+  for (const [from, to] of renames) {
+    const oldPath = path.join(workspaceDir, from);
+    const newPath = path.join(workspaceDir, to);
+    if (fs.existsSync(oldPath)) {
+      if (fs.existsSync(newPath)) {
+        console.log(`  ~ both ${from} and ${to} exist — leaving alone, please reconcile manually`);
+        continue;
+      }
+      fs.renameSync(oldPath, newPath);
+      console.log(`  ✓ renamed .tcgstackflow/${from} → .tcgstackflow/${to}`);
+      changes++;
+    }
+  }
+
+  // 2. Move .tcgstackflow/.gitignore content to project-root .gitignore
+  const oldGitignore = path.join(workspaceDir, '.gitignore');
+  if (fs.existsSync(oldGitignore)) {
+    const appended = appendGsfBlockToRootGitignore(target);
+    fs.unlinkSync(oldGitignore);
+    console.log(`  ✓ removed .tcgstackflow/.gitignore${appended ? ' and appended block to project-root .gitignore' : ' (project-root .gitignore already had the block)'}`);
+    changes++;
+  } else {
+    // Even if the workspace had no .gitignore, make sure the project root has the block.
+    const appended = appendGsfBlockToRootGitignore(target);
+    if (appended) {
+      console.log(`  ✓ appended geekstack-flow block to project-root .gitignore`);
+      changes++;
+    }
+  }
+
+  // 3. Create the Obsidian symlink if missing
+  const symlinkPath = path.join(target, 'tcgstackflow');
+  if (!fs.existsSync(symlinkPath) && !fs.lstatSync(symlinkPath, { throwIfNoEntry: false })) {
+    try {
+      fs.symlinkSync('.tcgstackflow', symlinkPath, 'dir');
+      console.log(`  ✓ created tcgstackflow → .tcgstackflow symlink (for Obsidian vault)`);
+      changes++;
+    } catch (err) {
+      console.log(`  ~ couldn't create Obsidian symlink (${err.code}). On Windows: 'mklink /D tcgstackflow .tcgstackflow' from elevated cmd.`);
+    }
+  }
+
+  if (changes === 0) {
+    console.log('  ~ nothing to upgrade — workspace already matches the current layout');
+  }
+
+  console.log('\nUpgrade complete. Not refreshed by --upgrade (run separately if you want them updated):');
+  console.log('  - Tool adapter content at .tcgstackflow/tools/{claude,codex,github}/ — re-run init.js --force to refresh,');
+  console.log('    but that also resets agents/skills templates. Manual diff-and-merge is safer.');
+  console.log('  - Slash commands at ~/.claude/skills/tcgflow-*/ — `cp -R templates/claude-commands/* ~/.claude/skills/`.');
 }
 
 function copyDirSync(src, dest) {
@@ -332,6 +453,11 @@ async function main() {
     return;
   }
 
+  if (args.upgrade) {
+    await upgradeWorkspace(args.target);
+    return;
+  }
+
   const target = args.target;
   const workspaceDest = path.join(target, '.tcgstackflow');
 
@@ -535,25 +661,7 @@ async function main() {
   // --- write/append .gitignore at project root for geekstack-flow concerns ---
   // (The workspace itself ships no .gitignore — we keep .tcgstackflow/ free of dotfiles.)
   const rootGitignorePath = path.join(target, '.gitignore');
-  const gitignoreMarker = '# === Creative GeekStack Flow ===';
-  const gitignoreBlock = [
-    gitignoreMarker,
-    '# Obsidian — auto-generated state files (keep shared config tracked)',
-    '.tcgstackflow/.obsidian/workspace.json',
-    '.tcgstackflow/.obsidian/workspace-mobile.json',
-    '.tcgstackflow/.obsidian/cache',
-    '.tcgstackflow/.obsidian/graph.json',
-    '# Migration scratch (regeneratable by init.js --migrate-from)',
-    '.tcgstackflow/migration-notes/',
-    '# Obsidian-friendly non-hidden symlink — uncomment if you don\'t want to track it.',
-    '# /tcgstackflow',
-    '# === end Creative GeekStack Flow ===',
-    '',
-  ].join('\n');
-  const existingGitignore = fs.existsSync(rootGitignorePath) ? fs.readFileSync(rootGitignorePath, 'utf8') : '';
-  if (!existingGitignore.includes(gitignoreMarker)) {
-    const prefix = existingGitignore && !existingGitignore.endsWith('\n') ? '\n' : '';
-    fs.writeFileSync(rootGitignorePath, existingGitignore + prefix + (existingGitignore ? '\n' : '') + gitignoreBlock);
+  if (appendGsfBlockToRootGitignore(target)) {
     console.log(`  ✓ appended geekstack-flow block to ${path.relative(target, rootGitignorePath)}`);
   }
 
@@ -575,8 +683,9 @@ async function main() {
   }
 
   // --- install /tcgflow-* slash commands to ~/.claude/skills/ ---
+  // Source is the freshly-copied workspace commands/ folder — single canonical location.
   if (enableClaudeCommands) {
-    const commandsSrc = path.join(SCRIPT_DIR, 'templates/claude-commands');
+    const commandsSrc = path.join(workspaceDest, 'commands');
     const claudeSkillsDest = path.join(os.homedir(), '.claude/skills');
     if (fs.existsSync(commandsSrc)) {
       fs.mkdirSync(claudeSkillsDest, { recursive: true });

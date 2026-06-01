@@ -51,6 +51,27 @@ Under `.tcgstackflow/skills/`. Same eight starter skills as Claude — the forma
 | `generate-timesheet` | user (LOW) | Weekly Tempo draft |
 | `submit-timesheet` | user (HIGH) | Submit worklogs via Atlassian MCP |
 
+## Commands (invocation in this tool)
+
+The workspace ships fourteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
+
+- *"plan ES-1234"*, *"design the new payment flow"* → invoke the `tcgflow-plan` workflow → adopt planner role + use `grill-task` and `plan-task` skills
+- *"implement ES-1234"*, *"start coding"* → `tcgflow-code` workflow → coder role + `update-task-log`
+- *"review the diff"*, *"is ES-1234 ready?"* → `tcgflow-review` workflow → reviewer role + `review-diff`
+- *"ingest ES-1234"*, *"fold this into the wiki"* → `tcgflow-ingest` workflow → ingester role + `ingest`
+- *"lint the wiki"* → `tcgflow-lint` workflow → `lint-wiki` skill
+- *"audit the workspace"* → `tcgflow-audit` workflow → `audit-workspace` skill
+- *"create tasks from Snyk"*, *"process the latest vulnerabilities"* → `tcgflow-task-from-snyk` workflow
+- *"create tasks from failing tests"*, *"what's flaky?"* → `tcgflow-task-from-cypress` workflow
+- *"create a task from the latest incident"* → `tcgflow-task-from-datadog` workflow
+- *"generate this week's timesheet"* → `tcgflow-timesheet-generate` workflow
+- *"submit the timesheet to Tempo"* → `tcgflow-timesheet-submit` workflow (HIGH risk)
+- *"upgrade this workspace"* → `tcgflow-upgrade` workflow
+- *"set up geekstackflow here"* → `tcgflow-init` workflow
+- *"migrate this project to geekstackflow"* → `tcgflow-migrate` workflow
+
+When you (Codex) receive any of these phrases, read the relevant `.tcgstackflow/commands/{name}/SKILL.md` for the full procedure and follow it. The slash-command form (`/tcgflow-*`) is a Claude-Code-specific UX shortcut; the underlying workflows are identical across tools.
+
 ## Strict invariants
 
 - **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never split.

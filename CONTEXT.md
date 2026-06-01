@@ -53,6 +53,9 @@ Generating per-tool config files (`CLAUDE.md`, `AGENTS.md`) from one source of t
 **Skill**:
 An atomic capability — "how to do X" — written once and consumed by any AI tool. Each skill is one folder under `.tcgstackflow/skills/{name}/` with a `SKILL.md` (Claude Code skill format, so mattpocock-style skills drop in unchanged) plus optional `examples/` and `templates/`. The content is tool-agnostic; the format happens to be Claude's because it is the only AI tool with a real skill system. _Avoid_: capability, helper, instruction.
 
+**Command** (or **Workflow dispatcher**):
+A thin dispatcher — *"when the user says X, adopt Y role and invoke Z skill"* — that lives in `.tcgstackflow/commands/{name}/SKILL.md` (canonical workspace location, tool-agnostic). Fourteen ship in V1, all prefixed `tcgflow-` (`tcgflow-init`, `tcgflow-plan`, `tcgflow-code`, etc.). Claude Code reads them as global slash commands (`/tcgflow-*`) after `init.js` installs them to `~/.claude/skills/`. Codex, GitHub Copilot, and other AI tools read them directly from `.tcgstackflow/commands/` via the tool adapter (`AGENTS.md`/`copilot-instructions.md`) and dispatch by natural-language trigger phrases listed in each command's `description`. **The workflow is tool-portable; the slash-command UX is Claude-specific.** _Avoid_: shortcut, alias, macro.
+
 **Agent**:
 A role profile — "who I am and which skills I use." One Markdown file per role under `.tcgstackflow/agents/{role}.md`. Names the role's skills, the files it reads and writes, its guardrails, and its hand-off condition. V1 agents are Markdown-only (a human or AI reads the file to assume the role); a future runner can parse the same sections as structured fields, so executable-later requires no schema change. Initial roles: `planner`, `coder`, `reviewer`, `ingester`. _Avoid_: runner, sub-agent (those are execution concerns).
 

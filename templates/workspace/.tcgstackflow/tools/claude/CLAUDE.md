@@ -45,6 +45,15 @@ Under `.tcgstackflow/skills/`. Thirteen starter skills ship with V1:
 
 Skills are atomic — one capability per skill. Compose them via agent profiles.
 
+## Commands (invocation shortcuts)
+
+Same workflows, shipped in two forms — both live at `.tcgstackflow/commands/{name}/SKILL.md`:
+
+- **Claude Code** (this tool) reads them as global slash commands from `~/.claude/skills/` (installed by `init.js`). Type `/tcgflow-init`, `/tcgflow-plan`, etc.
+- **Other AI tools** (Codex, GitHub Copilot, Antigravity, Continue, etc.) read the SAME files at the workspace location `.tcgstackflow/commands/`. They are dispatched via natural-language phrases listed in each command's `description` — e.g. *"plan ES-1234"* invokes the same workflow `/tcgflow-plan` does for Claude.
+
+A command is a thin dispatcher: each `commands/{name}/SKILL.md` describes when to invoke and which workspace skill or agent role to use. The actual behaviour lives in `.tcgstackflow/skills/` and `.tcgstackflow/agents/`. Result: workflows are **tool-portable**; the slash-command UX is **Claude-specific**.
+
 ## Strict invariants
 
 - **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`. Append to the existing two files.

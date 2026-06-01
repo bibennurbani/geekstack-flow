@@ -14,7 +14,7 @@ A structured AI workflow for planning, coding, reviewing, testing, and shipping 
 - **Thirteen starter skills** in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills).
 - **Governance** — risk levels, permission-request recipe, project rules.
 - **Generated tool adapters** for Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`), and GitHub Copilot (`.github/copilot-instructions.md` plus per-domain `.instructions.md` files).
-- **Thirteen `/tcgflow-*` slash commands** for Claude Code (including `/tcgflow-init`, `/tcgflow-plan`, `/tcgflow-code`, `/tcgflow-review`, `/tcgflow-ingest`, `/tcgflow-lint`, `/tcgflow-audit`, `/tcgflow-migrate`, `/tcgflow-task-from-{snyk,cypress,datadog}`, `/tcgflow-timesheet-{generate,submit}`) — installed to `~/.claude/skills/` during init.
+- **Fourteen `/tcgflow-*` slash commands** for Claude Code (including `/tcgflow-init`, `/tcgflow-upgrade`, `/tcgflow-plan`, `/tcgflow-code`, `/tcgflow-review`, `/tcgflow-ingest`, `/tcgflow-lint`, `/tcgflow-audit`, `/tcgflow-migrate`, `/tcgflow-task-from-{snyk,cypress,datadog}`, `/tcgflow-timesheet-{generate,submit}`) — installed to `~/.claude/skills/` during init.
 - **Multi-project workspace** auto-detection — when init finds 2+ codebases at top level (package.json, *.csproj at top or `src/<proj>/`, Pulumi.yaml, etc.), it populates `config.yaml`'s `projects:` array with per-project stack and test/lint commands.
 - The `.tcgstackflow/` folder is designed as an **Obsidian vault** — `init.js` creates a non-hidden symlink (`tcgstackflow/ → .tcgstackflow/`) so Obsidian's vault picker (which hides dotfiles by default) can select it. Open the symlink in Obsidian for graph navigation across the wiki, tasks, agents, and skills.
 - A **weekly Tempo/Jira timesheet flow** as two skills (`generate-timesheet` LOW, `submit-timesheet` HIGH).
@@ -78,6 +78,32 @@ geekstackflow init --migrate-from . .
 
 The four-phase migration pattern (init+adapters / tasks / wiki / decommission) is documented in the `migrate-to-gsf` skill that ships in V1.
 
+### Upgrading an existing workspace from a previous version
+
+If you initialised geekstackflow before the no-dotfiles convention (ADR 0017) — i.e. your workspace has `.tcgstackflow/tasks/.weekly/`, `.tcgstackflow/raw/.archived/`, or `.tcgstackflow/.gitignore` — use:
+
+```bash
+cd /path/to/existing-project
+geekstackflow init --upgrade .
+```
+
+What it does:
+
+- Renames `.tcgstackflow/tasks/.weekly/` → `tasks/weekly/`
+- Renames `.tcgstackflow/raw/.archived/` → `raw/archived/`
+- Renames `.tcgstackflow/.migration-notes/` → `migration-notes/` (if present)
+- Removes `.tcgstackflow/.gitignore`, appends its rules to the project-root `.gitignore` with a `# === Creative GeekStack Flow ===` marker block
+- Creates the `tcgstackflow → .tcgstackflow` symlink for Obsidian if missing
+- **Non-destructive** — leaves all task content, wiki pages, agent profiles, skills, and tool adapter content untouched
+
+After upgrade, if you also want the latest **slash commands** (e.g. the new `/tcgflow-task-from-{snyk,cypress,datadog}`) installed globally:
+
+```bash
+cp -R /path/to/geekstack-flow/templates/claude-commands/* ~/.claude/skills/
+```
+
+Then restart any open Claude Code session so it picks up the new skills.
+
 ## Skills shipped
 
 Two sets — workspace skills used by agents inside a project, plus global slash commands invoked from Claude Code in any directory.
@@ -104,13 +130,23 @@ Thirteen skills ship in V1, in Claude Code `SKILL.md` format (drop-in compatible
 
 These are project-scoped — they're versioned with the project and shipped to each `.tcgstackflow/` workspace.
 
-### Global slash commands (`~/.claude/skills/tcgflow-{name}/SKILL.md`)
+### Commands (workflow dispatchers — `.tcgstackflow/commands/{name}/SKILL.md`)
 
-Thirteen Claude Code slash commands, prefixed `tcgflow-`, installed globally by `init.js` when you opt in. Each dispatches to a role or skill:
+Each command is a thin dispatcher that adopts a role or invokes specific workspace skills. The commands themselves live **inside the workspace** at `.tcgstackflow/commands/`, so every AI tool that reads the workspace can dispatch them. Invocation differs per tool:
+
+- **Claude Code** — type `/tcgflow-init`, `/tcgflow-plan`, etc. The same `SKILL.md` files are also installed at `~/.claude/skills/` during init for the slash-command UX.
+- **Codex** — describe the action in natural language: *"plan ES-1234"*, *"create tasks from Snyk"*. Codex reads `AGENTS.md` (which references `.tcgstackflow/commands/`) and dispatches by matching the trigger phrases in each command's `description`.
+- **GitHub Copilot** — same natural-language dispatch; reads `.github/copilot-instructions.md`.
+- **Antigravity / other tools** — same pattern as Codex/Copilot.
+
+The workflows are tool-portable; the slash-command form is a Claude Code UX shortcut. See ADR 0019.
+
+Fourteen commands ship in V1:
 
 | Command | Dispatches to | When to type it |
 |---|---|---|
 | `/tcgflow-init` | `init.js` installer | "Set up geekstackflow here" |
+| `/tcgflow-upgrade` | `init.js --upgrade` | "Upgrade this workspace to the current layout" |
 | `/tcgflow-migrate` | `migrate-to-gsf` skill (4 phases) | "Migrate this project from .taskRef/ai-mem" |
 | `/tcgflow-plan [ID]` | Planner role + `grill-task` + `plan-task` | "Plan ES-1234", "design …" |
 | `/tcgflow-code [ID]` | Coder role + `update-task-log` | "Implement ES-1234", "start coding" |
@@ -124,7 +160,7 @@ Thirteen Claude Code slash commands, prefixed `tcgflow-`, installed globally by 
 | `/tcgflow-timesheet-generate` | `generate-timesheet` skill (LOW) | "Generate this week's timesheet" |
 | `/tcgflow-timesheet-submit` | `submit-timesheet` skill (HIGH) | "Submit the timesheet to Tempo" |
 
-These are user-scoped — installed once, available in every Claude Code session on your machine.
+For Claude Code: also installed at `~/.claude/skills/tcgflow-*/` for the slash-command UX (one global install per machine). For other tools: read directly from the workspace at `.tcgstackflow/commands/` — no separate install needed.
 
 ## Repository layout
 
