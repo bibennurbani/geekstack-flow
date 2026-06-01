@@ -11,10 +11,10 @@ A structured AI workflow for planning, coding, reviewing, testing, and shipping 
 - A **flat Obsidian-style wiki** maintained by AI, following [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). qmd-compatible for retrieval.
 - A **task tracking system** with a strict two-file rule (`TASK {ID}.md` + `TASK details {ID}.md`).
 - **Four agent profiles** (`planner`, `coder`, `reviewer`, `ingester`) — tool-agnostic role specs.
-- **Ten starter skills** in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills).
+- **Thirteen starter skills** in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills).
 - **Governance** — risk levels, permission-request recipe, project rules.
 - **Generated tool adapters** for Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`), and GitHub Copilot (`.github/copilot-instructions.md` plus per-domain `.instructions.md` files).
-- **Ten `/tcgflow-*` slash commands** for Claude Code (`/tcgflow-init`, `/tcgflow-plan`, `/tcgflow-code`, `/tcgflow-review`, `/tcgflow-ingest`, `/tcgflow-lint`, `/tcgflow-audit`, `/tcgflow-migrate`, `/tcgflow-timesheet-generate`, `/tcgflow-timesheet-submit`) — installed to `~/.claude/skills/` during init.
+- **Thirteen `/tcgflow-*` slash commands** for Claude Code (including `/tcgflow-init`, `/tcgflow-plan`, `/tcgflow-code`, `/tcgflow-review`, `/tcgflow-ingest`, `/tcgflow-lint`, `/tcgflow-audit`, `/tcgflow-migrate`, `/tcgflow-task-from-{snyk,cypress,datadog}`, `/tcgflow-timesheet-{generate,submit}`) — installed to `~/.claude/skills/` during init.
 - **Multi-project workspace** auto-detection — when init finds 2+ codebases at top level (package.json, *.csproj at top or `src/<proj>/`, Pulumi.yaml, etc.), it populates `config.yaml`'s `projects:` array with per-project stack and test/lint commands.
 - The `.tcgstackflow/` folder is designed as an **Obsidian vault** — `init.js` creates a non-hidden symlink (`tcgstackflow/ → .tcgstackflow/`) so Obsidian's vault picker (which hides dotfiles by default) can select it. Open the symlink in Obsidian for graph navigation across the wiki, tasks, agents, and skills.
 - A **weekly Tempo/Jira timesheet flow** as two skills (`generate-timesheet` LOW, `submit-timesheet` HIGH).
@@ -84,7 +84,7 @@ Two sets — workspace skills used by agents inside a project, plus global slash
 
 ### Workspace skills (`.tcgstackflow/skills/{name}/SKILL.md`)
 
-Ten skills ship in V1, in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills):
+Thirteen skills ship in V1, in Claude Code `SKILL.md` format (drop-in compatible with mattpocock-style skills):
 
 | Skill | Used by | Purpose |
 |---|---|---|
@@ -96,6 +96,9 @@ Ten skills ship in V1, in Claude Code `SKILL.md` format (drop-in compatible with
 | `lint-wiki` | ingester / standalone | Periodic wiki health-check — contradictions, orphans, stale claims |
 | `audit-workspace` | ingester / standalone | Cross-check agents ↔ skills ↔ codebase drift |
 | `migrate-to-gsf` | planner / coder | Migrate a project's ad-hoc AI infra onto canonical `.tcgstackflow/` |
+| `task-from-snyk` | planner / standalone | Create a PLANNED task from Snyk vulnerability findings, grouped by package |
+| `task-from-cypress` | planner / standalone | Create a PLANNED task from Cypress failures, grouped by spec, classified as flaky/broken/test-wrong |
+| `task-from-datadog` | planner / standalone | Create a task from a Datadog incident/alert/trace — investigate/mitigate/fix/postmortem subtasks |
 | `generate-timesheet` | user (LOW) | Weekly Tempo draft from task data + inline admin input |
 | `submit-timesheet` | user (HIGH) | Submit worklogs via Atlassian MCP, sequential, with confirmation table |
 
@@ -103,7 +106,7 @@ These are project-scoped — they're versioned with the project and shipped to e
 
 ### Global slash commands (`~/.claude/skills/tcgflow-{name}/SKILL.md`)
 
-Ten Claude Code slash commands, prefixed `tcgflow-`, installed globally by `init.js` when you opt in. Each dispatches to a role or skill:
+Thirteen Claude Code slash commands, prefixed `tcgflow-`, installed globally by `init.js` when you opt in. Each dispatches to a role or skill:
 
 | Command | Dispatches to | When to type it |
 |---|---|---|
@@ -115,6 +118,9 @@ Ten Claude Code slash commands, prefixed `tcgflow-`, installed globally by `init
 | `/tcgflow-ingest [scope]` | Ingester role + `ingest` skill | "Ingest ES-1234", "fold into wiki" |
 | `/tcgflow-lint` | `lint-wiki` skill | "Lint the wiki", "find stale pages" |
 | `/tcgflow-audit` | `audit-workspace` skill | "Audit the workspace", "are skills in sync?" |
+| `/tcgflow-task-from-snyk` | `task-from-snyk` skill | "Create tasks from Snyk", "process vulnerabilities" |
+| `/tcgflow-task-from-cypress` | `task-from-cypress` skill | "Create tasks from failing tests", "what's flaky?" |
+| `/tcgflow-task-from-datadog` | `task-from-datadog` skill | "Create a task from the latest incident", "process the Datadog alert" |
 | `/tcgflow-timesheet-generate` | `generate-timesheet` skill (LOW) | "Generate this week's timesheet" |
 | `/tcgflow-timesheet-submit` | `submit-timesheet` skill (HIGH) | "Submit the timesheet to Tempo" |
 

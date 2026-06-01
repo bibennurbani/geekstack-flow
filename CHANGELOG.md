@@ -4,6 +4,18 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **3 MCP-derived task skills** (ADR 0018): `task-from-snyk`, `task-from-cypress`, `task-from-datadog`. Each converts MCP output (security findings, test failures, incident telemetry) into a `PLANNED` task with the standard two-file shape — grouped by source-appropriate unit (package / spec / incident), with dedup against existing tasks and severity-aware risk escalation.
+- **3 matching `/tcgflow-task-from-*` slash commands** in the global Claude Code skills set.
+- **ADR 0017** — formalises the "no dotfiles inside `.tcgstackflow/`" convention; renames `tasks/.weekly/` → `tasks/weekly/`, `raw/.archived/` → `raw/archived/`, `.migration-notes/` → `migration-notes/`. Workspace `.gitignore` removed; `init.js` now writes a marked block into the project-root `.gitignore`.
+- **`init.js` Obsidian-symlink prompt** — creates `tcgstackflow/ → .tcgstackflow/` so Obsidian's vault picker (which hides dotfiles) can select the workspace.
+
+### Changed
+
+- V1 starter skill set: 10 → **13** skills.
+- V1 slash command set: 10 → **13** commands.
+
 ## [0.1.0] — 2026-05-31
 
 First public-ready release. Personal-first scope; team and OSS gates are next.

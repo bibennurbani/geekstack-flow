@@ -45,6 +45,9 @@ Under `.tcgstackflow/skills/`. Same eight starter skills as Claude — the forma
 | `lint-wiki` | ingester | Periodic health-check of the wiki |
 | `audit-workspace` | ingester | Cross-check agents ↔ skills ↔ codebase drift |
 | `migrate-to-gsf` | planner / coder | Migrate existing project onto canonical layout |
+| `task-from-snyk` | planner / standalone | Generate a task from Snyk findings, grouped by package |
+| `task-from-cypress` | planner / standalone | Generate a task from Cypress failures, classified by failure type |
+| `task-from-datadog` | planner / standalone | Generate a task from a Datadog signal — investigate / mitigate / fix / postmortem |
 | `generate-timesheet` | user (LOW) | Weekly Tempo draft |
 | `submit-timesheet` | user (HIGH) | Submit worklogs via Atlassian MCP |
 

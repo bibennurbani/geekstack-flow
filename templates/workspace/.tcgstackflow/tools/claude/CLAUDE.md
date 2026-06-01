@@ -25,7 +25,7 @@ Each profile lists which files it reads, which it writes, which skills it uses, 
 
 ## Skills available
 
-Under `.tcgstackflow/skills/`. Ten starter skills ship with V1:
+Under `.tcgstackflow/skills/`. Thirteen starter skills ship with V1:
 
 | Skill | Role | Purpose |
 |---|---|---|
@@ -37,6 +37,9 @@ Under `.tcgstackflow/skills/`. Ten starter skills ship with V1:
 | [`lint-wiki`](../../skills/lint-wiki/SKILL.md) | ingester | Periodic health-check of the wiki |
 | [`audit-workspace`](../../skills/audit-workspace/SKILL.md) | ingester / standalone | Cross-check agents ↔ skills ↔ codebase drift |
 | [`migrate-to-gsf`](../../skills/migrate-to-gsf/SKILL.md) | planner / coder | Migrate an existing project's ad-hoc AI infra onto canonical `.tcgstackflow/` |
+| [`task-from-snyk`](../../skills/task-from-snyk/SKILL.md) | planner / standalone | Create a PLANNED task from Snyk findings, grouped by package |
+| [`task-from-cypress`](../../skills/task-from-cypress/SKILL.md) | planner / standalone | Create a PLANNED task from Cypress failures, classified by failure type |
+| [`task-from-datadog`](../../skills/task-from-datadog/SKILL.md) | planner / standalone | Create a task from a Datadog incident/alert — investigate / mitigate / fix / postmortem |
 | [`generate-timesheet`](../../skills/generate-timesheet/SKILL.md) | user (LOW) | Weekly Tempo draft from task data |
 | [`submit-timesheet`](../../skills/submit-timesheet/SKILL.md) | user (HIGH) | Submit worklogs via Atlassian MCP |
 
