@@ -94,15 +94,10 @@ What it does:
 - Renames `.tcgstackflow/.migration-notes/` → `migration-notes/` (if present)
 - Removes `.tcgstackflow/.gitignore`, appends its rules to the project-root `.gitignore` with a `# === Creative GeekStack Flow ===` marker block
 - Creates the `tcgstackflow → .tcgstackflow` symlink for Obsidian if missing
-- **Non-destructive** — leaves all task content, wiki pages, agent profiles, skills, and tool adapter content untouched
+- **Refreshes tool-owned files** — the `tcgflow-*` slash commands (both in `.tcgstackflow/commands/` and the installed copies under `~/.claude/skills/`) and the shipped agent profiles (`.tcgstackflow/agents/`) are updated to the installed templates, so behavioural fixes and newly-shipped commands arrive automatically. Any drifted file is backed up to `{name}.bak` first. Installed-command refresh runs only if you already use Claude commands (≥1 `tcgflow-*` in `~/.claude/skills/`).
+- **Leaves your customizations untouched** — task content, wiki pages, `governance.md`, `config.yaml`, the skill library, and tool adapter content are never overwritten (diff them against `templates/` and merge manually)
 
-After upgrade, if you also want the latest **slash commands** (e.g. the new `/tcgflow-task-from-{snyk,cypress,datadog}`) installed globally:
-
-```bash
-cp -R /path/to/geekstack-flow/templates/claude-commands/* ~/.claude/skills/
-```
-
-Then restart any open Claude Code session so it picks up the new skills.
+Restart any open Claude Code session after upgrade so it picks up the refreshed slash commands.
 
 ## Skills shipped
 

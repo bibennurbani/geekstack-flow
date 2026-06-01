@@ -28,6 +28,15 @@ For shipped files that **exist but have drifted** from the installed tool's temp
 
 Rejected: **full-sync** (overwrite-to-latest with three-way merge) — too easy to clobber a customization; the additive model delivers new capability without that risk.
 
+### Amendment (2026-06): tool-owned files are refreshed, not just reported
+
+Experience showed the pure never-clobber rule has a sharp edge: a **bug fix to a shipped `tcgflow-*` command** (e.g. tightening the Planner's Jira-fetch rule so it stops fabricating ticket context) never reached existing projects — `upgrade` only reported the drift as a diff and waited for a manual merge that rarely happened. So `upgrade` now **refreshes tool-owned product surface to the installed template**, distinguishing two classes of shipped file:
+
+- **Tool-owned (refresh, with backup):** the `tcgflow-*` slash commands (in `.tcgstackflow/commands/` and the installed copies under `~/.claude/skills/`) and the shipped **agent profiles** (`.tcgstackflow/agents/`). These are product surface, not customization targets. On drift, `upgrade` writes the old file to `{name}.bak` and overwrites — so fixes ship and any local edits stay recoverable. Installation to `~/.claude/skills/` only happens for projects already using Claude commands (≥1 `tcgflow-*` present); it never creates that directory from scratch.
+- **Customization surfaces (additive + diff-report, unchanged):** `governance.md`, `config.yaml`, the skill library (`.tcgstackflow/skills/`), and tool adapters (`.tcgstackflow/tools/`). Absent shipped units are added; drifted ones are left for manual merge. These remain sacred.
+
+This narrows — does not abandon — never-clobber: it still never silently overwrites a customization surface, and the `.bak` backup makes even the tool-owned overwrite reversible.
+
 ## Upgrade is the Cockpit's one sanctioned write
 
 The Cockpit is read-only for project content and agent runs, with **one deliberate exception**: it *performs* the update by running `geekstackflow upgrade <path>` as a local subprocess and streaming the result. Justified because the operation is safe, idempotent, git-reversible, and never touches project source or task/wiki content — and because it is the ideal **tracer bullet for the Orchestrator's write-path** (subprocess invocation, progress streaming, confirmation UI, error handling), proven on a low-risk maintenance op before the Orchestrator runs real agents.

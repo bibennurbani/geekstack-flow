@@ -1,0 +1,20 @@
+{
+  "name": "@geekstackflow/cockpit-ui",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Creative GeekStack Flow — Cockpit SPA (Vue 3 + Vite). Served locally by the zero-dep Node server in ./server.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server/index.cjs"
+  },
+  "dependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.0",
+    "vite": "^5.4.0"
+  }
+}

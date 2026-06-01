@@ -36,7 +36,16 @@ You are now in the **Planner role**. Read `.tcgstackflow/agents/planner.md` for 
 - **No speculative subtasks.** Each subtask must have a checkable acceptance criterion. If unsure, surface as Open Question.
 - **Two-file rule strict.** Never create per-subtask files (`TASK {ID}-FE-1.md`, etc.). Append only.
 
+## Fetching a Jira ticket (hard rule)
+
+If the user passes a Jira-style ticket ID (e.g. `ES-6546`), the ticket's real contents are the source of truth — **never invent them, and never substitute another task's context.**
+
+1. **Attempt the fetch.** Use the Atlassian MCP (`getJiraIssue` / `searchJiraIssuesUsingJql`) to pull the ticket.
+2. **If the Atlassian MCP isn't connected, try to make it available** — don't silently give up. Check `claude mcp list`; if `atlassian` is absent, tell the user it's in `config.yaml`'s `mcp.recommended` list and how to wire it (`claude mcp add` / the connector flow), then ask them to connect it.
+3. **If it still can't be fetched, STOP.** Do **not** proceed by guessing the ticket from the wiki, another task, or a similarly-named feature. Say plainly that you couldn't reach `{ID}`, and ask the user to either connect the Atlassian MCP or paste the ticket's title / description / acceptance criteria inline. Only resume once you have the real ticket content (from MCP or from the user).
+
+This refuse-don't-fabricate rule is non-negotiable: a plan built from the wrong ticket is worse than no plan.
+
 ## Notes
 
-- If the user passes a Jira ticket ID and Atlassian MCP is configured, pull the ticket details first.
 - For migration tasks specifically (replacing prior AI infra), route the user to `/tcgflow-migrate` instead — it's the specialized command for that pattern.

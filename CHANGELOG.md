@@ -4,8 +4,37 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — Cockpit (Phase 2, in progress)
+
+- **`ui/` package** (ADR 0022) — the local Cockpit. Vue 3 + Vite SPA in `ui/src/`, served by a **zero-dependency Node `http` server** in `ui/server/` (a refinement of ADR 0022, which named Hono and allowed a substitute; built-in `http` is thinner and testable without an install). UI dependencies live in `ui/package.json` only — the root CLI (`init.js`) stays zero-dependency.
+- **`geekstackflow ui [--port N]`** — launches the Cockpit at `http://127.0.0.1:4729` (default), opens a browser. Binds localhost only, no auth (ADR 0020).
+- **Read-only API** — `GET /api/health`, `/api/projects` (registry + `update_available`), `/api/project?path=…` (config, version, action-queue, tasks, wiki summary). Pure projections over `.tcgstackflow/` files — no database (ADR 0024).
+- **Action queue** (ADR 0023) — computed per project from task status via a status→next-agent map (`PLANNED→coder`, `IN_REVIEW→reviewer`, `VALIDATED→ingester`, …). The Home view aggregates queues across all registered projects.
+- **Copy-prompt** (ADR 0023) — the mocked "Run" affordance: copies a ready-to-paste prompt for the next agent on a task. Clipboard only, no file writes. Becomes the Orchestrator's subprocess input later.
+- **Built-in fallback UI** — the server serves a vanilla-JS page with the same functionality until the Vue SPA is built, so the cockpit works with zero `npm install`.
+- **Second-pass panels** (ADR 0023) — per-project **Governance** (project-specific rules), **Timesheet** (this week's draft + submitted/draft status), and **Tools & MCP** (enabled tool adapters + recommended/optional MCP) panels in the data layer and the Vue SPA.
+
+### Changed
+
+- **`upgrade` now refreshes tool-owned files** (ADR 0021 amendment) — the `tcgflow-*` slash commands (in `.tcgstackflow/commands/` and the installed copies under `~/.claude/skills/`) and the shipped agent profiles (`.tcgstackflow/agents/`) are now refreshed to the installed templates so behavioural fixes ship via `upgrade` instead of waiting on a manual diff-merge. Drifted files are backed up to `{name}.bak` before being overwritten. Customization surfaces — `governance.md`, `config.yaml`, the skill library, and tool adapters — stay additive-only and untouched. Installed-command refresh only runs for projects already using Claude commands (≥1 `tcgflow-*` present in `~/.claude/skills/`); it never creates that directory from scratch.
+
+### Fixed
+
+- **Planner no longer fabricates Jira ticket context** — `/tcgflow-plan` and the `planner` agent now treat a Jira-style ID as requiring the real ticket: attempt the Atlassian MCP fetch, and if it can't connect, try to make it available, then **stop and ask** the user to connect the MCP or paste the ticket. Previously, when the MCP was absent, the Planner silently substituted an unrelated task's context.
+- **`upgrade` now auto-registers the project** in the Cockpit registry. Previously only `init`/`register` wrote to `~/.tcgstackflow/projects.yaml`, so a project set up before the registry existed (or migrated via `upgrade`) never appeared in the Cockpit's left-nav. `upgrade` now adds it (idempotent).
+- **Governance panel** no longer surfaces the template's commented-out example rules — HTML-comment blocks are stripped before extracting project-specific rules, so a fresh project correctly shows none.
+- **Cockpit UI redesign** — replaced the broken `color-scheme: light dark` (which rendered dark text on a dark canvas, unreadable) with an explicit, AA-contrast design system: dark sidebar + light content, semantic **color-coded status badges** (PLANNED/IN_PROGRESS/IN_REVIEW/VALIDATED/COMPLETED/BLOCKED/DRAFT), agent-colored chips, card hover states, and a "✓ Copied" feedback state on Copy-prompt. Fallback page given an explicit light background too.
+- **Status normalization** — task statuses are normalized to the canonical set before mapping to agents (`In Progress`/`WIP`/`Doing` → `IN_PROGRESS`, `Done`/`Closed`/`Shipped` → `COMPLETED`, `Review` → `IN_REVIEW`, etc.). Real-world projects (e.g. INX, which writes `Status: In Progress`) now populate the action queue correctly instead of showing unmapped raw statuses.
+
+## [0.2.0] — 2026-06-01
+
+Phase 2 foundation: workspace version stamping + a real migration runner, plus the no-dotfiles convention, MCP-derived task skills, and tool-portable commands.
+
 ### Added
 
+- **Workspace version stamp** (ADR 0021) — every `config.yaml` now carries `tcgflow_version` (the tool semver that last touched it) and `workspace_schema` (an integer layout version). `init` stamps both; `upgrade` reads `workspace_schema` and migrates forward.
+- **Migration runner** — `upgrade` is no longer a one-off layout-sniff. It reads the workspace's `workspace_schema`, applies every registered migration step from there up to the tool's `LATEST_SCHEMA` (each step idempotent), then stamps the new version. Schema 1 → 2 is the no-dotfiles migration. A workspace newer than the installed tool is detected and the user is told to update the tool. Foundation for the Cockpit's "Update available" badge.
+- **Project registry** (CONTEXT "Project registry") — per-machine `~/.tcgstackflow/projects.yaml` feeding the Cockpit's left-nav. `init` auto-registers the project it scaffolds (dedup by resolved path). New **`geekstackflow register [target]`** subcommand adds an already-initialised project without re-running init (e.g. after cloning to a new machine). Registry is never committed — paths are machine-specific absolute paths.
 - **`init.js --upgrade`** — non-destructive in-place upgrade of a pre-v0.2 workspace. Renames pre-v0.2 dotted subfolders (`.weekly/` → `weekly/`, `.archived/` → `archived/`, `.migration-notes/` → `migration-notes/`), moves `.tcgstackflow/.gitignore` content to the project-root `.gitignore` with a marker block, and creates the Obsidian symlink if missing. Leaves task content, wiki, agents, skills, and tool adapters untouched.
 - **`/tcgflow-upgrade`** slash command — dispatches to `init.js --upgrade`. Brings command count to **14**.
 - **ADR 0019** — workflows are tool-portable; slash commands are a Claude Code UX shortcut. The `templates/claude-commands/` folder is **removed**; commands now live canonically at `templates/workspace/.tcgstackflow/commands/` and propagate into every initialised project at `.tcgstackflow/commands/`. Codex, GitHub Copilot, Antigravity, and any other AI tool can read and dispatch them directly from the workspace; Claude Code additionally installs them to `~/.claude/skills/` for the `/slash` UX. Tool adapter files (`CLAUDE.md`, `AGENTS.md`, `copilot-instructions.md`) gain a "Commands (invocation)" section explaining tool-specific invocation.
