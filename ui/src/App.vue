@@ -44,6 +44,18 @@ function copyPrompt(taskId, agent, key) {
 const updateCount = computed(() => projects.value.filter(p => p.update_available).length);
 const prettyStatus = (s) => (s || '').replace(/_/g, ' ');
 
+function relTime(iso) {
+  if (!iso) return 'never synced';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'synced';
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return 'synced just now';
+  if (mins < 60) return `synced ${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `synced ${hrs}h ago`;
+  return `synced ${Math.round(hrs / 24)}d ago`;
+}
+
 onMounted(async () => { await loadProjects(); await loadHome(); });
 </script>
 
@@ -113,6 +125,7 @@ onMounted(async () => { await loadProjects(); await loadHome(); });
               <span>{{ detail.config.workspace_kind }}</span>
               <span>schema {{ detail.version.workspace_schema }}</span>
               <span>v{{ detail.version.tcgflow_version }}</span>
+              <span class="badge soft" title="Jira status cache — refresh with /tcgflow-sync-jira">Jira: {{ relTime(detail.jira_synced) }}</span>
             </div>
           </div>
 
@@ -133,6 +146,8 @@ onMounted(async () => { await loadProjects(); await loadHome(); });
               <div class="sub">
                 <span class="badge" :class="'st-' + a.status">{{ prettyStatus(a.status) }}</span>
                 <span>→ <span class="agent" :class="'agent-' + a.agent">{{ a.agent }}</span></span>
+                <span v-if="a.jira_status" class="badge jira">Jira: {{ a.jira_status }}</span>
+                <span v-if="a.jira_drift" class="badge st-BLOCKED" title="Workspace and Jira disagree on done-ness">⚠ drift</span>
               </div>
             </div>
             <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === 'q'+i }"
@@ -147,6 +162,9 @@ onMounted(async () => { await loadProjects(); await loadHome(); });
             <div class="grow">
               <span class="task-id">{{ t.id }}</span><span class="task-title">{{ t.title }}</span>
             </div>
+            <span v-if="t.jira_drift" class="badge st-BLOCKED" title="Workspace and Jira disagree on done-ness">⚠</span>
+            <a v-if="t.jira_status" class="badge jira" :href="t.jira_url || undefined" target="_blank" rel="noopener"
+               :title="t.jira_url ? 'Open in Jira' : ''">Jira: {{ t.jira_status }}</a>
             <span class="badge soft">{{ t.bucket }}</span>
             <span class="badge" :class="'st-' + t.status">{{ prettyStatus(t.status) }}</span>
           </div>

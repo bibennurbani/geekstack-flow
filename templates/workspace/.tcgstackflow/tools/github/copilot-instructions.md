@@ -50,6 +50,7 @@ Same four as Claude / Codex — defined in `.tcgstackflow/agents/`:
 | `planner` | "plan ES-1234", "design …", "task for …" | `.tcgstackflow/agents/planner.md` |
 | `coder` | "implement ES-1234", "start coding" | `.tcgstackflow/agents/coder.md` |
 | `reviewer` | "review the diff", "is this ready?" | `.tcgstackflow/agents/reviewer.md` |
+| `tester` | "test ES-1234", "verify this works", "run the E2E" | `.tcgstackflow/agents/tester.md` |
 | `ingester` | "ingest ES-1234", "fold into wiki" | `.tcgstackflow/agents/ingester.md` |
 
 ## Per-Domain Instructions
@@ -69,7 +70,7 @@ These complement — they do not duplicate — the agent profiles in `.tcgstackf
 
 Two locations:
 
-- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Thirteen ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `task-from-snyk`, `task-from-cypress`, `task-from-datadog`, `generate-timesheet`, `submit-timesheet`).
+- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Fifteen ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `verify`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `task-from-snyk`, `task-from-cypress`, `task-from-datadog`, `sync-jira`, `generate-timesheet`, `submit-timesheet`).
 - **Tech skills** live at `~/.tcgstackflow/skills/` — global library, cross-project. Vue, Vuetify, Pinia, Cypress, .NET, Pulumi, Auth0, etc. Install with `cd ~/.tcgstackflow/skills && npx skills add <owner/repo@skill>`.
 
 Both locations are readable to Copilot. Tech-skill content is referenced from project guidance but not duplicated into the project.
@@ -93,6 +94,8 @@ The workspace ships fourteen workflow commands at `.tcgstackflow/commands/{name}
 | `tcgflow-plan` | "plan ES-1234", "design the new feature", "task for X" |
 | `tcgflow-code` | "implement ES-1234", "start coding the planned task" |
 | `tcgflow-review` | "review the diff", "is ES-1234 ready?" |
+| `tcgflow-test` | "test ES-1234", "verify this works", "run the E2E", "write a test plan" |
+| `tcgflow-sync-jira` | "sync Jira", "refresh Jira status", "check the Jira status of our tasks" |
 | `tcgflow-ingest` | "ingest ES-1234", "fold this into the wiki" |
 | `tcgflow-lint` | "lint the wiki", "find stale pages" |
 | `tcgflow-audit` | "audit the workspace", "are skills in sync?" |

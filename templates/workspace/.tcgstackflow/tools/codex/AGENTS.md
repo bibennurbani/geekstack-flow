@@ -19,6 +19,7 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 | `planner` | "plan ES-1234", "design …", "task for …" | [agents/planner.md](.tcgstackflow/agents/planner.md) |
 | `coder` | "implement ES-1234", "start coding" | [agents/coder.md](.tcgstackflow/agents/coder.md) |
 | `reviewer` | "review the diff", "is this ready?" | [agents/reviewer.md](.tcgstackflow/agents/reviewer.md) |
+| `tester` | "test ES-1234", "verify this works", "run the E2E" | [agents/tester.md](.tcgstackflow/agents/tester.md) |
 | `ingester` | "ingest ES-1234", "fold into wiki" | [agents/ingester.md](.tcgstackflow/agents/ingester.md) |
 
 ## Cross-tool handoff context
@@ -41,6 +42,8 @@ Under `.tcgstackflow/skills/`. Same eight starter skills as Claude — the forma
 | `plan-task` | planner | Write the two-file task structure |
 | `update-task-log` | coder | Append YAML entry to `TASK {ID}.md` |
 | `review-diff` | reviewer | Walk diff against acceptance + governance |
+| `verify` | tester | Build a test plan, run tests/E2E/app, record pass/fail verdict |
+| `sync-jira` | any | Fetch Jira status of tasks via Atlassian MCP → `tasks/jira-cache.json` |
 | `ingest` | ingester | Fold a Raw source into the wiki |
 | `lint-wiki` | ingester | Periodic health-check of the wiki |
 | `audit-workspace` | ingester | Cross-check agents ↔ skills ↔ codebase drift |
@@ -58,6 +61,8 @@ The workspace ships fourteen workflow commands at `.tcgstackflow/commands/{name}
 - *"plan ES-1234"*, *"design the new payment flow"* → invoke the `tcgflow-plan` workflow → adopt planner role + use `grill-task` and `plan-task` skills
 - *"implement ES-1234"*, *"start coding"* → `tcgflow-code` workflow → coder role + `update-task-log`
 - *"review the diff"*, *"is ES-1234 ready?"* → `tcgflow-review` workflow → reviewer role + `review-diff`
+- *"test ES-1234"*, *"verify this works"*, *"run the E2E"* → `tcgflow-test` workflow → tester role + `verify`
+- *"sync Jira"*, *"refresh Jira status"* → `tcgflow-sync-jira` workflow → `sync-jira` skill (writes `tasks/jira-cache.json`)
 - *"ingest ES-1234"*, *"fold this into the wiki"* → `tcgflow-ingest` workflow → ingester role + `ingest`
 - *"lint the wiki"* → `tcgflow-lint` workflow → `lint-wiki` skill
 - *"audit the workspace"* → `tcgflow-audit` workflow → `audit-workspace` skill

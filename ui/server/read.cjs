@@ -17,6 +17,7 @@ const STATUS_NEXT_AGENT = {
   IN_PROGRESS: 'coder',
   BLOCKED: 'human',
   IN_REVIEW: 'reviewer',
+  IN_TEST: 'tester',
   VALIDATED: 'ingester',
   INGESTED: null,
   COMPLETED: null,
@@ -32,6 +33,7 @@ function normalizeStatus(raw) {
     IN_PROGRESS: 'IN_PROGRESS', INPROGRESS: 'IN_PROGRESS', WIP: 'IN_PROGRESS', DOING: 'IN_PROGRESS', STARTED: 'IN_PROGRESS',
     BLOCKED: 'BLOCKED', ON_HOLD: 'BLOCKED', WAITING: 'BLOCKED',
     IN_REVIEW: 'IN_REVIEW', REVIEW: 'IN_REVIEW', REVIEWING: 'IN_REVIEW',
+    IN_TEST: 'IN_TEST', TESTING: 'IN_TEST', TEST: 'IN_TEST', QA: 'IN_TEST', IN_QA: 'IN_TEST',
     VALIDATED: 'VALIDATED', VERIFIED: 'VALIDATED', APPROVED: 'VALIDATED',
     DONE: 'COMPLETED', COMPLETE: 'COMPLETED', COMPLETED: 'COMPLETED', CLOSED: 'COMPLETED', SHIPPED: 'COMPLETED',
     INGESTED: 'INGESTED',
@@ -176,6 +178,26 @@ function readTimesheet(workspaceDir) {
   return { present: true, latest, submitted };
 }
 
+// --- Jira status cache (project-specific, written by the sync-jira skill via the Atlassian MCP) ---
+// The cockpit server has no Jira creds/MCP — it only reads this cache file. AI-mediated (ADR 0029).
+function readJiraCache(workspaceDir) {
+  const raw = safeRead(path.join(workspaceDir, 'tasks', 'jira-cache.json'));
+  if (!raw) return { synced: null, issues: {} };
+  try {
+    const j = JSON.parse(raw);
+    return { synced: j._synced || null, issues: j.issues || {} };
+  } catch { return { synced: null, issues: {} }; }
+}
+
+// Drift: workspace thinks it's done-ish but Jira doesn't (or vice-versa) — the most actionable signal.
+const WS_DONE = new Set(['VALIDATED', 'COMPLETED', 'INGESTED']);
+function jiraDrift(wsStatus, jiraCategory) {
+  if (!jiraCategory) return false;
+  const wsDone = WS_DONE.has(wsStatus);
+  const jiraDone = jiraCategory.toLowerCase() === 'done';
+  return wsDone !== jiraDone;
+}
+
 // --- tools + MCP from config.yaml ---
 function readToolsAndMcp(workspaceDir) {
   const text = safeRead(path.join(workspaceDir, 'config.yaml'));
@@ -223,9 +245,23 @@ function buildProjectDetail(projectPath) {
   }
   const config = readConfig(workspaceDir);
   const tasks = listTasks(workspaceDir);
+
+  // Attach Jira status from the project-local cache (if synced). Workspace status drives the
+  // action queue; Jira status is the client-side business state — they can drift.
+  const jira = readJiraCache(workspaceDir);
+  for (const t of tasks) {
+    const j = jira.issues[t.id];
+    if (j) {
+      t.jira_status = j.status || null;
+      t.jira_category = j.category || null;
+      t.jira_url = j.url || null;
+      t.jira_drift = jiraDrift(t.status, j.category);
+    }
+  }
+
   const action_queue = tasks
     .filter(t => t.bucket === 'active' && t.next_agent && t.next_agent !== 'human')
-    .map(t => ({ task_id: t.id, title: t.title, status: t.status, agent: t.next_agent }));
+    .map(t => ({ task_id: t.id, title: t.title, status: t.status, agent: t.next_agent, jira_status: t.jira_status || null, jira_drift: !!t.jira_drift }));
   return {
     path: projectPath,
     config,
@@ -235,6 +271,7 @@ function buildProjectDetail(projectPath) {
       latest_schema: gsf.LATEST_SCHEMA,
       update_available: config.workspace_schema < gsf.LATEST_SCHEMA,
     },
+    jira_synced: jira.synced,
     action_queue,
     tasks,
     wiki: readWiki(workspaceDir),

@@ -28,6 +28,7 @@
   --st-progress: #b45309;    --st-progress-bg: #fef3c7;
   --st-blocked: #b91c1c;     --st-blocked-bg: #fee2e2;
   --st-review: #6d28d9;      --st-review-bg: #ede9fe;
+  --st-test: #0e7490;        --st-test-bg: #cffafe;
   --st-validated: #0f766e;   --st-validated-bg: #ccfbf1;
   --st-done: #15803d;        --st-done-bg: #dcfce7;
   --st-draft: #475569;       --st-draft-bg: #e2e8f0;
@@ -114,12 +115,15 @@ main { flex: 1; overflow-y: auto; }
   padding: 4px 9px; border-radius: 999px; white-space: nowrap;
 }
 .badge.soft { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); font-weight: 500; }
+.badge.jira { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; text-decoration: none; }
+a.badge.jira:hover { background: #e0e7ff; }
 .badge.dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
 .st-PLANNED   { color: var(--st-planned);   background: var(--st-planned-bg); }
 .st-IN_PROGRESS { color: var(--st-progress); background: var(--st-progress-bg); }
 .st-BLOCKED   { color: var(--st-blocked);   background: var(--st-blocked-bg); }
 .st-IN_REVIEW { color: var(--st-review);    background: var(--st-review-bg); }
+.st-IN_TEST   { color: var(--st-test);      background: var(--st-test-bg); }
 .st-VALIDATED { color: var(--st-validated); background: var(--st-validated-bg); }
 .st-COMPLETED, .st-INGESTED { color: var(--st-done); background: var(--st-done-bg); }
 .st-DRAFT     { color: var(--st-draft);     background: var(--st-draft-bg); }
@@ -127,6 +131,7 @@ main { flex: 1; overflow-y: auto; }
 .agent { font-weight: 700; }
 .agent-coder    { color: var(--primary); }
 .agent-reviewer { color: #7c3aed; }
+.agent-tester   { color: #0e7490; }
 .agent-planner  { color: #0f766e; }
 .agent-ingester { color: #b45309; }
 .agent-human    { color: var(--text-2); }

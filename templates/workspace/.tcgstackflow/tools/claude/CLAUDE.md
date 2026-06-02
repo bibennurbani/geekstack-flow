@@ -19,13 +19,16 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 | `planner` | "plan ES-1234", "let's design …", "we need a task for …" | [agents/planner.md](../../agents/planner.md) |
 | `coder` | "implement ES-1234", "work on the planned task", "start coding" | [agents/coder.md](../../agents/coder.md) |
 | `reviewer` | "review the diff", "is this ready?", "check ES-1234" | [agents/reviewer.md](../../agents/reviewer.md) |
+| `tester` | "test ES-1234", "verify this works", "run the E2E", "write a test plan" | [agents/tester.md](../../agents/tester.md) |
 | `ingester` | "ingest ES-1234", "fold this into the wiki", "ingest raw/" | [agents/ingester.md](../../agents/ingester.md) |
+
+Lifecycle: `planner → coder → reviewer → tester → ingester` (`IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED`). Reviewer checks the code is *right* (static); Tester checks it *works* (dynamic).
 
 Each profile lists which files it reads, which it writes, which skills it uses, and what its hand-off condition is. Stay inside the profile's `Writes:` list — that is the strongest invariant of role discipline.
 
 ## Skills available
 
-Under `.tcgstackflow/skills/`. Thirteen starter skills ship with V1:
+Under `.tcgstackflow/skills/`. Fifteen starter skills ship with V1:
 
 | Skill | Role | Purpose |
 |---|---|---|
@@ -33,6 +36,7 @@ Under `.tcgstackflow/skills/`. Thirteen starter skills ship with V1:
 | [`plan-task`](../../skills/plan-task/SKILL.md) | planner | Write the two-file task structure |
 | [`update-task-log`](../../skills/update-task-log/SKILL.md) | coder | Append YAML entry to `TASK {ID}.md` |
 | [`review-diff`](../../skills/review-diff/SKILL.md) | reviewer | Walk diff against acceptance + governance |
+| [`verify`](../../skills/verify/SKILL.md) | tester | Build a test plan, run tests/E2E/app, record a pass/fail verdict |
 | [`ingest`](../../skills/ingest/SKILL.md) | ingester | Fold a Raw source into the wiki, log-first |
 | [`lint-wiki`](../../skills/lint-wiki/SKILL.md) | ingester | Periodic health-check of the wiki |
 | [`audit-workspace`](../../skills/audit-workspace/SKILL.md) | ingester / standalone | Cross-check agents ↔ skills ↔ codebase drift |
@@ -40,6 +44,7 @@ Under `.tcgstackflow/skills/`. Thirteen starter skills ship with V1:
 | [`task-from-snyk`](../../skills/task-from-snyk/SKILL.md) | planner / standalone | Create a PLANNED task from Snyk findings, grouped by package |
 | [`task-from-cypress`](../../skills/task-from-cypress/SKILL.md) | planner / standalone | Create a PLANNED task from Cypress failures, classified by failure type |
 | [`task-from-datadog`](../../skills/task-from-datadog/SKILL.md) | planner / standalone | Create a task from a Datadog incident/alert — investigate / mitigate / fix / postmortem |
+| [`sync-jira`](../../skills/sync-jira/SKILL.md) | any (LOW) | Fetch Jira status of tasks via Atlassian MCP → `tasks/jira-cache.json` (Cockpit reads it) |
 | [`generate-timesheet`](../../skills/generate-timesheet/SKILL.md) | user (LOW) | Weekly Tempo draft from task data |
 | [`submit-timesheet`](../../skills/submit-timesheet/SKILL.md) | user (HIGH) | Submit worklogs via Atlassian MCP |
 

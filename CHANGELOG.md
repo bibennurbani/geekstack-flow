@@ -4,6 +4,25 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — Jira status sync (ADR 0029)
+
+- **`sync-jira` skill + `/tcgflow-sync-jira` command** — the AI (Atlassian MCP) fetches each Jira-keyed task's status and writes a project-local snapshot `tasks/jira-cache.json`. The credential-free Cockpit server only *reads* this cache — it never calls Jira (preserves the zero-secret-server invariant, ADR 0020/0024).
+- **Two statuses per task in the Cockpit** — workspace status (drives the action queue) + **Jira status** (badge linking to the ticket, "synced Xh ago", and a ⚠ **drift** flag when workspace and Jira disagree on done-ness). Read-only on Jira; transitioning tickets stays a separate explicit action.
+- `init.js` offers `tasks/jira-cache.json` as a commented gitignore option (default committed — teammates see last-known Jira state).
+- 15 skills, 16 commands.
+- `copyDirSync` now skips OS/editor cruft (`.DS_Store`, `Thumbs.db`, `*.swp`, `node_modules`, `.git`) so it never ships into a user's workspace; repo-root `.gitignore` added.
+
+### Added — Tester role (ADR 0028)
+
+- **5th agent `tester` + `IN_TEST` status** — separates the dynamic gate (does it *work*?) from the reviewer's static gate (is the code *right*?). Lifecycle is now `IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED`. Reviewer approval routes to `IN_TEST`/Tester instead of straight to `VALIDATED`.
+- **`verify` skill** — the Tester builds a test plan from acceptance criteria, documents it (task log + proposed `wiki/testing/{ID}.md`) or pushes it to **Jira** (HIGH, approval-gated), runs unit/E2E/app verification, and records a pass/fail verdict. Coder still writes unit tests inline; the Tester owns end-to-end verification + the test plan.
+- **`/tcgflow-test` command** (14th command), agent `tester.md`, Cockpit cyan `IN_TEST` badge + `agent-tester` chip, status normalization (`In Test`/`Testing`/`QA` → `IN_TEST`).
+- Tool adapters updated: 5 roles, 14 skills, `tcgflow-test`.
+
+### Changed
+
+- **`upgrade` now additively installs new skills** (absent → add, existing → never overwrite), in addition to refreshing tool-owned commands + agent profiles. So new/updated `tcgflow-*` commands, agent profiles, and skills (like the tester set) propagate to existing projects via `geekstackflow upgrade` — satisfying "add/update a skill or command → it ships through upgrade."
+
 ### Added — Cockpit (Phase 2, in progress)
 
 - **`ui/` package** (ADR 0022) — the local Cockpit. Vue 3 + Vite SPA in `ui/src/`, served by a **zero-dependency Node `http` server** in `ui/server/` (a refinement of ADR 0022, which named Hono and allowed a substitute; built-in `http` is thinner and testable without an install). UI dependencies live in `ui/package.json` only — the root CLI (`init.js`) stays zero-dependency.

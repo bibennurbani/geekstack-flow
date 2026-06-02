@@ -37,7 +37,7 @@ You are walking a diff and deciding whether the task can move to `VALIDATED`. Ho
    - **Any blocker** → verdict `needs-work`. List blockers first, nits second.
 8. **Append a REVIEW entry** to `TASK {ID}.md` using the shape below.
 9. **Update status.**
-   - `approved` → set top-level status to `VALIDATED` in both `TASK {ID}.md` and `TASK details {ID}.md`. Hand off to Ingester.
+   - `approved` → set top-level status to `IN_TEST` in both `TASK {ID}.md` and `TASK details {ID}.md`. Hand off to the **Tester** (`/tcgflow-test`) for dynamic verification before the task is `VALIDATED`.
    - `needs-work` → set status back to `IN_PROGRESS`, hand back to Coder.
 
 ### Output

@@ -1,0 +1,15 @@
+# OS / editor cruft — must never ship in the npm package or into user workspaces
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Node
+node_modules/
+ui/node_modules/
+ui/dist/
+*.log
+
+# Local scratch
+/tmp/

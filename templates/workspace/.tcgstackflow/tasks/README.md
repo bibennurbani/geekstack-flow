@@ -55,9 +55,12 @@ Older completed and abandoned tasks, grouped by category for findability. Catego
 | `PLANNED` | All subtasks have acceptance criteria; ready for Coder | Planner |
 | `IN_PROGRESS` | Coder is actively working | Coder |
 | `BLOCKED` | Blocked on an external dependency or user input | Coder |
-| `IN_REVIEW` | All subtasks Done; awaiting Reviewer | Coder |
-| `VALIDATED` | Reviewer approved; awaiting Ingester | Reviewer |
+| `IN_REVIEW` | All subtasks Done; awaiting Reviewer (static: code is *right*) | Coder |
+| `IN_TEST` | Reviewer approved; awaiting Tester (dynamic: code *works*) | Reviewer |
+| `VALIDATED` | Tester verified behavior; awaiting Ingester | Tester |
 | `INGESTED` | Ingester folded into wiki; task complete | Ingester |
+
+Lifecycle: `DRAFT → PLANNED → IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED` (with `BLOCKED` as a side state). Reviewer checks the code is right; Tester checks it works.
 
 ## Folder structure
 
