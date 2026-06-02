@@ -4,6 +4,10 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- Added a full **`docs/`** set: [`docs/README.md`](docs/README.md) (index), [`INSTALL.md`](docs/INSTALL.md) (prerequisites, npm/clone install, Cockpit build, optional integrations), [`QUICKSTART.md`](docs/QUICKSTART.md) (zero-to-working in ~5 min), and [`USAGE.md`](docs/USAGE.md) (the full daily workflow, Cockpit, wiki/memory, timesheets, Jira sync, signal→task, governance, multi-project, migration, upgrade, global memory, troubleshooting, reference tables). Top-level README rewritten and links to the guides.
+
 ### Added — Jira status sync (ADR 0029)
 
 - **`sync-jira` skill + `/tcgflow-sync-jira` command** — the AI (Atlassian MCP) fetches each Jira-keyed task's status and writes a project-local snapshot `tasks/jira-cache.json`. The credential-free Cockpit server only *reads* this cache — it never calls Jira (preserves the zero-secret-server invariant, ADR 0020/0024).

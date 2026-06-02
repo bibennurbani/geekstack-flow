@@ -6,6 +6,8 @@
 
 > **Scope:** personal-first → team-usable → OSS-ready. Built for one author, designed so a teammate can adopt it on day one, and structured so it can become a public tool without re-architecting. See [docs/adr/0001](docs/adr/0001-personal-first-team-usable-oss-ready.md).
 
+📚 **Full docs:** [Install](docs/INSTALL.md) · [Quick Start](docs/QUICKSTART.md) · [Usage Guide](docs/USAGE.md) · [docs index](docs/README.md)
+
 ---
 
 ## Table of contents
