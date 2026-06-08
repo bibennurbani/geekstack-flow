@@ -1,7 +1,7 @@
 ---
 title: Personal Preferences
 priority: P0
-updated: 2026-05-30
+updated: 2026-06-08
 status: current
 ---
 
@@ -27,6 +27,7 @@ Defaults the user wants the AI to use unless a project overrides them. Local wik
 
 - Don't add features, refactors, or new abstractions beyond what the task requires.
 - A bug fix doesn't need surrounding cleanup.
+  - But you SHOULD still clean up after your *own* change: remove imports and dead code your edit orphaned, and drop commented-out scratch in the files you touched. That diff-scoped tidy is part of the change, not "surrounding cleanup." Broad/structural refactors are a separate `/tcgflow-refactor` task.
 - A one-shot operation doesn't need a helper function.
 - Half-finished implementations are worse than nothing.
 

@@ -61,12 +61,13 @@ const GLOBAL_TEMPLATE = path.join(SCRIPT_DIR, 'templates/global/.tcgstackflow');
 // Tool semver (from package.json) and the latest workspace layout schema this tool knows.
 // schema 1 = original dotted layout (.weekly/, .archived/, workspace .gitignore)
 // schema 2 = no-dotfiles layout (weekly/, archived/, root .gitignore block, symlink) — ADR 0017
+// schema 3 = wiki_search (qmd) config block in config.yaml — ADR 0030
 function readToolVersion() {
   try { return JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, 'package.json'), 'utf8')).version || '0.0.0'; }
   catch { return '0.0.0'; }
 }
 const TOOL_VERSION = readToolVersion();
-const LATEST_SCHEMA = 2;
+const LATEST_SCHEMA = 3;
 
 function parseArgs(argv) {
   const args = { force: false, help: false, upgrade: false, register: false, ui: false, port: null, migrateFrom: null, target: process.cwd() };
@@ -269,7 +270,44 @@ const MIGRATIONS = [
       return n;
     },
   },
-  // Future: { from: 2, to: 3, label: 'add runs/ area for Orchestrator', apply… }
+  {
+    from: 2, to: 3,
+    label: 'add wiki_search (qmd) config block to config.yaml (ADR 0030)',
+    apply(target, workspaceDir) {
+      const configPath = path.join(workspaceDir, 'config.yaml');
+      if (!fs.existsSync(configPath)) return 0;
+      let yaml = fs.readFileSync(configPath, 'utf8');
+      if (/^wiki_search:/m.test(yaml)) return 0; // idempotent — already present
+      const block = [
+        '',
+        '# Wiki search (qmd) — the MANDATORY discovery layer over the LLM-wiki and docs/ (ADR 0030).',
+        '# Installed + indexed by the `/tcgflow-init` AI command (HIGH: global npm + ~2GB models, gated).',
+        '# init.js the SCRIPT stays dependency-free and does NOT install qmd. Complements index.md (the fallback).',
+        'wiki_search:',
+        '  engine: qmd                       # https://github.com/tobi/qmd — local hybrid (BM25 + vector + rerank)',
+        "  interface: cli                    # 'cli' is canonical/tool-portable; the qmd MCP is an optional Claude convenience",
+        '  embed_on_ingest: true             # the Ingester re-embeds all collections after each ingest/lint',
+        '  collections:                      # a docs/ entry is added only when the directory exists',
+        '    - name: wiki',
+        '      path: .tcgstackflow/wiki      # mandatory',
+        '    # - name: docs',
+        '    #   path: docs                  # added by /tcgflow-init when a docs/ dir is present',
+        '',
+      ].join('\n');
+      // Insert before the `skills:` block to match the template layout; else before governance:; else append.
+      if (/^skills:/m.test(yaml)) {
+        yaml = yaml.replace(/^skills:/m, block.replace(/^\n/, '') + '\nskills:');
+      } else if (/^governance:/m.test(yaml)) {
+        yaml = yaml.replace(/^governance:/m, block.replace(/^\n/, '') + '\ngovernance:');
+      } else {
+        yaml = yaml.replace(/\s*$/, '\n') + block;
+      }
+      fs.writeFileSync(configPath, yaml);
+      console.log('    ✓ added wiki_search (qmd) block to config.yaml — run `/tcgflow-init` (or the qmd setup) to install + embed');
+      return 1;
+    },
+  },
+  // Future: { from: 3, to: 4, label: 'add runs/ area for Orchestrator', apply… }
 ];
 
 // Launch the Cockpit: spawn the zero-dep local server as a child process and open the browser.
@@ -1018,14 +1056,19 @@ async function main() {
   console.log('\nNext steps:');
   console.log('  1. Open the project in your AI tool — it reads CLAUDE.md / AGENTS.md.');
   console.log('  2. Edit .tcgstackflow/governance.md project-rules section as needed.');
+  console.log('  3. Set up wiki search (qmd) — the mandatory discovery layer over the wiki & docs/ (ADR 0030).');
+  console.log('       Easiest: in your AI tool run `/tcgflow-init` (or "set up qmd wiki search") — it installs qmd and');
+  console.log('       indexes the wiki & docs/ for you, asking permission for the global install (~2GB models).');
+  console.log('       Manual: npm i -g @tobilu/qmd  &&  qmd collection add .tcgstackflow/wiki --name wiki  &&  qmd embed');
+  console.log('       (requires Node >=22; on macOS: brew install sqlite)');
   if (enableClaudeCommands) {
-    console.log('  3. Try a slash command in Claude Code: /tcgflow-plan, /tcgflow-lint, /tcgflow-audit, etc.');
-    console.log('  4. First task: /tcgflow-plan (planner agent will grill you and write tasks/active/{ID}/).');
+    console.log('  4. Try a slash command in Claude Code: /tcgflow-plan, /tcgflow-refactor, /tcgflow-lint, /tcgflow-audit, etc.');
+    console.log('  5. First task: /tcgflow-plan (planner agent will grill you and write tasks/active/{ID}/).');
   } else {
-    console.log('  3. First task: invoke the planner ("plan a project-overview ingest task").');
+    console.log('  4. First task: invoke the planner ("plan a project-overview ingest task").');
   }
   if (enableTempo) {
-    console.log(`  4. Tempo enabled. cloudId: ${cloudId}, admin key: ${adminKey}, mode: ${submissionMode}.`);
+    console.log(`  6. Tempo enabled. cloudId: ${cloudId}, admin key: ${adminKey}, mode: ${submissionMode}.`);
   }
   console.log('');
 }

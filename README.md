@@ -2,7 +2,7 @@
 
 **A structured AI workflow for planning, coding, reviewing, testing, and shipping software — with project memory, task tracking, governance, and a local cockpit.**
 
-`geekstackflow` scaffolds a `.tcgstackflow/` workspace inside any project that gives your AI coding tools (Claude Code, Codex, GitHub Copilot) a shared brain: a Karpathy-style LLM wiki for memory, a strict two-file task system, five agent roles with a clear lifecycle, governance with risk levels, and a local web **Cockpit** to see it all.
+`geekstackflow` scaffolds a `.tcgstackflow/` workspace inside any project that gives your AI coding tools (Claude Code, Codex, GitHub Copilot) a shared brain: a Karpathy-style LLM wiki for memory (searched via mandatory [qmd](https://github.com/tobi/qmd) hybrid search), a strict two-file task system, six agent roles with a clear lifecycle, governance with risk levels, and a local web **Cockpit** to see it all.
 
 > **Scope:** personal-first → team-usable → OSS-ready. Built for one author, designed so a teammate can adopt it on day one, and structured so it can become a public tool without re-architecting. See [docs/adr/0001](docs/adr/0001-personal-first-team-usable-oss-ready.md).
 
@@ -32,11 +32,11 @@
 
 After `geekstackflow init`, your project has a `.tcgstackflow/` folder containing:
 
-- **LLM wiki** (`wiki/`) — flat, Obsidian-flavoured Markdown maintained by AI, following [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Searchable via [qmd](https://github.com/tobi/qmd). This is the project's memory.
+- **LLM wiki** (`wiki/`) — flat, Obsidian-flavoured Markdown maintained by AI, following [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Searched via the mandatory **wiki-search (qmd)** layer — a local hybrid keyword + vector + re-rank index that complements the `index.md` Map of Content (ADR 0030). This is the project's memory.
 - **Tasks** (`tasks/`) — every task is exactly two files (`TASK {ID}.md` log + `TASK details {ID}.md` plan), moving through `active/ → completed/ → archive/`.
-- **5 agent roles** (`agents/`) — `planner → coder → reviewer → tester → ingester`, each a tool-agnostic Markdown profile.
-- **15 skills** (`skills/`) — atomic capabilities in Claude Code `SKILL.md` format (mattpocock-compatible).
-- **16 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
+- **6 agent roles** (`agents/`) — the linear `planner → coder → reviewer → tester → ingester`, plus the manually-invoked **`refactorer`** (a peer to the Coder, re-entering at Review), each a tool-agnostic Markdown profile.
+- **17 skills** (`skills/`) — atomic capabilities in Claude Code `SKILL.md` format (mattpocock-compatible).
+- **17 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
 - **Governance** (`governance.md`) — four risk levels (LOW/MEDIUM/HIGH/CRITICAL) + a permission-request recipe + your project-specific rules.
 - **Tool adapters** (`tools/`) — generated `CLAUDE.md`, `AGENTS.md` (Codex), and `.github/copilot-instructions.md` (Copilot), all pointing back at `.tcgstackflow/` as the single source of truth.
 - **A local Cockpit** — `geekstackflow ui` opens a browser dashboard over all your projects: action queue, task board, wiki activity, Jira status, governance, timesheet.
@@ -147,6 +147,14 @@ The **Tester** builds a test plan from the acceptance criteria, **runs** the uni
 
 The **Ingester** folds the finished task into the LLM wiki — log-first (drafts the `wiki/log.md` entry, then updates pages), asking before creating new pages or deleting. Moves the task to `completed/`. Status → `INGESTED`. This is how the project's memory grows.
 
+### Refactor on demand
+
+```
+/tcgflow-refactor <target>
+```
+
+For a **broad, behaviour-preserving** restructure that isn't tied to one feature, the **Refactorer** (a peer to the Coder, not a linear stage) surveys the target read-only, proposes a refactor task with behaviour-preservation acceptance, writes characterization tests first where coverage is thin, then executes and hands off into the same Review → Test → Ingest gates (ADR 0031). Distinct from the Coder's diff-scoped **cleanup pass** — the mandatory tidy of *your own change* (orphaned imports/dead code/scratch in touched files only) that runs before every handoff.
+
 ### Recurring rituals
 
 - **Weekly timesheet** — `/tcgflow-timesheet-generate` (drafts a sugar-coated Tempo timesheet from your task logs + inline admin meetings) then `/tcgflow-timesheet-submit` (pushes to Tempo via Atlassian MCP, approval-gated).
@@ -187,6 +195,8 @@ DRAFT → PLANNED → IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → IN
 
 The Cockpit's **action queue** is computed from these statuses: it shows, per task, which agent is ready to act next.
 
+The **Refactorer** sits outside this linear flow — invoked on demand via `/tcgflow-refactor`, it produces a refactor task and re-enters at `IN_REVIEW` (Reviewer → Tester → Ingester). For refactor-typed tasks the Reviewer's scope-drift blocker is relaxed and behaviour-preservation is the acceptance oracle (ADR 0031).
+
 ---
 
 ## The Cockpit
@@ -210,11 +220,11 @@ Before the SPA is built, the server serves a built-in fallback page with the sam
 
 ## Commands reference
 
-16 commands. In Claude Code, type `/tcgflow-<name>`. In other tools, use the trigger phrase.
+17 commands. In Claude Code, type `/tcgflow-<name>`. In other tools, use the trigger phrase.
 
 | Command | Does |
 |---|---|
-| `/tcgflow-init` | Initialise `.tcgstackflow/` in the current project |
+| `/tcgflow-init` | Initialise `.tcgstackflow/` in the current project (and install + index qmd) |
 | `/tcgflow-upgrade` | Upgrade an existing workspace to the current layout + refresh tool-owned files |
 | `/tcgflow-migrate` | Migrate a project off ad-hoc AI infra (`.taskRef/`, `ai-mem/`, …) — 4-phase clean cutover |
 | `/tcgflow-plan [ID]` | Planner: grill + write the two-file task |
@@ -222,6 +232,7 @@ Before the SPA is built, the server serves a built-in fallback page with the sam
 | `/tcgflow-review [ID]` | Reviewer: static review of the diff |
 | `/tcgflow-test [ID]` | Tester: build test plan, run verification |
 | `/tcgflow-ingest [scope]` | Ingester: fold a task / `raw/` / MCP output into the wiki |
+| `/tcgflow-refactor [target]` | Refactorer: broad, behaviour-preserving refactor of a target area (re-enters at Review) |
 | `/tcgflow-sync-jira` | Pull Jira statuses into `tasks/jira-cache.json` |
 | `/tcgflow-lint` | Wiki health-check |
 | `/tcgflow-audit` | Workspace integrity check (agents ↔ skills ↔ codebase) |
@@ -235,7 +246,7 @@ Before the SPA is built, the server serves a built-in fallback page with the sam
 
 ## Skills reference
 
-15 atomic skills under `.tcgstackflow/skills/`. Commands dispatch these; agents compose them.
+17 atomic skills under `.tcgstackflow/skills/`. Commands dispatch these; agents compose them.
 
 | Skill | Role | Purpose |
 |---|---|---|
@@ -244,6 +255,8 @@ Before the SPA is built, the server serves a built-in fallback page with the sam
 | `update-task-log` | coder | Append a YAML entry to the task log |
 | `review-diff` | reviewer | Walk the diff vs acceptance + governance |
 | `verify` | tester | Build a test plan, run tests/E2E/app, record a verdict |
+| `wiki-search` | any | Find wiki/`docs/` content via qmd before reading — the mandatory discovery layer |
+| `best-practice-refactor` | coder / refactorer | Diff-scoped cleanup pass (Coder) + broad behaviour-preserving refactor (Refactorer) |
 | `ingest` | ingester | Fold a Raw source into the wiki (log-first, gated) |
 | `lint-wiki` | ingester / standalone | Wiki health-check |
 | `audit-workspace` | ingester / standalone | Agents ↔ skills ↔ codebase drift check |
@@ -313,16 +326,16 @@ geekstack-flow/
 ├── init.js                 # the CLI (init / upgrade / register / ui) — zero dependencies
 ├── package.json            # bin: { geekstackflow, tcgflow }, v0.2.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
-├── docs/adr/               # 29 Architecture Decision Records
+├── docs/adr/               # 31 Architecture Decision Records
 ├── ui/                     # the Cockpit (Vue 3 + Vite SPA + zero-dep Node server)
 │   ├── server/             #   read.cjs (data layer) + index.cjs (http server)
 │   └── src/                #   App.vue + styles
 └── templates/
     ├── workspace/.tcgstackflow/   # copied into each project
     │   ├── config.yaml  governance.md  README.md
-    │   ├── agents/        # 5 role profiles
-    │   ├── skills/        # 15 skills
-    │   ├── commands/      # 16 tcgflow-* commands
+    │   ├── agents/        # 6 role profiles
+    │   ├── skills/        # 17 skills
+    │   ├── commands/      # 17 tcgflow-* commands
     │   ├── wiki/          # starter pages + adr/
     │   ├── tasks/         # README + weekly/ + active/completed/archive/
     │   ├── raw/  prompts/
@@ -335,12 +348,12 @@ geekstack-flow/
 ## Design & decisions
 
 - **[CONTEXT.md](CONTEXT.md)** — the project's domain language (Wiki, Raw, Ingest/Query/Lint, Agent, Skill, Command, Cockpit, Orchestrator, Workspace vs Jira status, …).
-- **[docs/adr/](docs/adr/)** — 29 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029).
+- **[docs/adr/](docs/adr/)** — 31 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031).
 
 ## Inspirations
 
 - [Karpathy — LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — the memory pattern.
-- [qmd by Tobi Lütke](https://github.com/tobi/qmd) — local wiki search, wired as MCP.
+- [qmd by Tobi Lütke](https://github.com/tobi/qmd) — the mandatory local wiki-search layer (CLI canonical; MCP an optional Claude convenience).
 - [mattpocock/skills](https://github.com/mattpocock/skills) — the `SKILL.md` format adopted as canonical.
 - [ruvnet/ruflo](https://github.com/ruvnet/ruflo) — the workspace-initialisation idea that seeded the brief.
 

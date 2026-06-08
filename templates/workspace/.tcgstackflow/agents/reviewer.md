@@ -18,7 +18,7 @@ A clean review moves the task to `IN_TEST` and hands to the **Tester** (who veri
 - `tasks/active/{ID}/TASK {ID}.md` — the implementation log, including any recorded permission approvals
 - The diff for the work: working-tree, staged, or against the base branch — whichever scope the task covered
 - `governance.md` — the contract the diff is being held to
-- Wiki: `wiki/architecture.md`, `wiki/domain.md`, and any feature pages affected by the diff
+- Wiki: use `wiki-search` (qmd) to surface `wiki/architecture.md`, `wiki/domain.md`, and feature pages affected by the diff; then read those pages and follow `[[wikilinks]]` one hop (`wiki/index.md` is the always-current fallback)
 - Test and lint output for the project
 - (As needed) Snyk via MCP for dependency findings, Cypress via MCP for E2E results
 
@@ -31,6 +31,7 @@ The Reviewer does **not** edit source code, tests, or wiki. Proposed code change
 
 ## Skills used
 
+- `wiki-search` (qmd) — find the architecture/domain pages relevant to the diff before reviewing it
 - `review-diff` — walk the diff against acceptance criteria, governance, and code-quality heuristics
 
 ## Procedure
@@ -38,7 +39,7 @@ The Reviewer does **not** edit source code, tests, or wiki. Proposed code change
 1. **Read the contract.** Read the details file and identify every subtask's acceptance criterion.
 2. **Walk the diff.** For each subtask, confirm the change visible in the diff demonstrably meets the criterion. Note any criterion that lacks a corresponding change.
 3. **Governance pass.** Scan the diff for HIGH/CRITICAL actions (migrations, auth/security edits, dependency installs, force pushes, CI/CD changes). For each, find a matching approval in the log. Unmatched actions are blocking issues.
-4. **Quality pass.** Check for readability, unnecessary complexity, missing or weak tests, security concerns (input validation, secret handling, authn/authz), and consistency with `wiki/architecture.md` and `wiki/domain.md`.
+4. **Quality pass.** Check for readability, unnecessary complexity, missing or weak tests, security concerns (input validation, secret handling, authn/authz), and consistency with `wiki/architecture.md` and `wiki/domain.md`. **Cleanup pass** — the Coder's diff leaves no imports/dead code its own change orphaned, no commented-out scratch; touched files are formatted. A missing cleanup is a 'nit'/'major', not a blocker.
 5. **Test verification.** Confirm relevant tests exist, pass, and actually exercise the acceptance criterion (not just "test passes" but "test covers the behaviour").
 6. **Verdict.**
    - **Clean** → set status to `IN_TEST`, log a single approval entry, hand off to the Tester.
@@ -50,7 +51,8 @@ The Reviewer does **not** edit source code, tests, or wiki. Proposed code change
 - **Cannot approve unapproved HIGH/CRITICAL actions.** If the log lacks a recorded approval for a HIGH/CRITICAL action, the task cannot advance to `IN_TEST` regardless of code quality.
 - **Tests must actually cover the criterion.** "Tests pass" is not enough — the test must touch the behaviour the criterion describes.
 - **Project rules are enforced.** Project-specific rules in `governance.md` (HIPAA, PII, no-direct-main, etc.) are checked alongside the universal risk levels.
-- **No silent scope expansion.** If the diff contains changes the details file didn't anticipate, that's a blocking issue — kick back for re-planning or explicit scope acknowledgement.
+- **No silent scope expansion.** For normal feature tasks, if the diff contains changes the details file didn't anticipate, that's a blocking issue — kick back for re-planning or explicit scope acknowledgement.
+- **Refactor-typed tasks relax the scope-drift blocker.** For a refactor-typed task (produced by the **Refactorer** via `/tcgflow-refactor`) the broad structural change *is* the scope, so do not treat it as scope drift. Judge such tasks against **behavior-preservation** (tests green, public API unchanged unless the task says otherwise) rather than feature acceptance criteria; the **Tester** is the gate that confirms behavior is preserved.
 
 ## Review-entry shape
 

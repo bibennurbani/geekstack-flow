@@ -30,6 +30,7 @@ You are surveying the entire wiki and producing a report. Lint never edits pages
 3. **Append the report.** One `## [YYYY-MM-DD] lint | {scope}` entry to `wiki/log.md` (scope = `full-wiki` or a narrower descriptor like `architecture-and-data-model`). List every finding, grouped by detector, with a one-sentence proposed fix per finding.
 4. **Surface the top 5 findings inline** to the user, ordered by impact. The full report stays in the log entry.
 5. **Wait for direction.** The user picks which findings to fix. Each fix routes through the `ingest` skill — that's where the approval gates for new pages and deletions kick in.
+6. **Re-embed the wiki search index.** After producing the report, run an incremental `qmd embed` to refresh the wiki search index — Lint is the backstop for `docs/` changed outside a task flow. If qmd is unavailable, note it — `index.md` stays the fallback.
 
 ### Detectors
 

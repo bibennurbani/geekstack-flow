@@ -31,6 +31,7 @@ You are walking a diff and deciding whether the task can move to `VALIDATED`. Ho
    - Security — input validation, secret handling, authn/authz boundaries
    - Tests — exist for the acceptance criteria, actually exercise the behaviour (not just smoke "compiles")
    - Consistency — alignment with `wiki/architecture.md` and `wiki/domain.md` (e.g. uses the project's preferred naming, doesn't reintroduce a deleted concept)
+   - Cleanup pass — the Coder's diff leaves no imports or dead code *its own change* orphaned, no commented-out scratch; touched files are formatted. Missing cleanup is a `nit`/`major`, not a `blocker`.
    - Project rules — anything in `governance.md`'s Project-Specific Rules section
 7. **Decide the verdict.**
    - **All criteria met + zero blockers** → verdict `approved`.
@@ -50,7 +51,7 @@ A short message to the user summarising verdict + blockers (if any). Plus the RE
 - **Editing code yourself.** The Reviewer proposes via the findings list. The Coder implements the fix and re-submits for review.
 - **Approving unapproved HIGH/CRITICAL actions.** If the log lacks a matching `governance:` block for a HIGH/CRITICAL change, that's a blocker regardless of code quality.
 - **Burying blockers under nits.** Findings are ordered: `blocker`, then `major`, then `nit`. Don't make the Coder dig.
-- **Scope drift.** If the diff contains changes the details file didn't anticipate, that's a `blocker` — kick back for re-planning, don't silently approve.
+- **Scope drift.** If the diff contains changes the details file didn't anticipate, that's a `blocker` — kick back for re-planning, don't silently approve. **EXCEPTION — refactor-typed tasks** (from `/tcgflow-refactor` / the Refactorer): broad structural change is the intended scope, so it is **not** scope drift. For these, judge against **behavior-preservation** (suite green, public API unchanged unless the task says so) instead of feature acceptance, and rely on the **Tester** to confirm behavior is unchanged.
 
 ## REVIEW entry shape
 

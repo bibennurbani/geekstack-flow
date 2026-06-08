@@ -29,8 +29,8 @@ For MCP-driven ingestion:
 
 Always:
 
-- `wiki/index.md` first — to find what's relevant
-- The pages `index.md` points to for the topic, plus pages linked from those (one wikilink hop)
+- `wiki-search` (qmd) first — to find which pages the topic touches (qmd-first, then read + `[[wikilink]]` one hop; `index.md` fallback)
+- The pages qmd surfaces for the topic, plus pages linked from those (one wikilink hop); `wiki/index.md` is the always-current fallback
 - Recent `wiki/log.md` entries (last 5–10) for context on what's happened lately
 - `governance.md` — to know which Raw sources imply project-rule changes
 
@@ -50,6 +50,7 @@ The Ingester does **not** modify source code, Raw task files (immutable post-val
 
 ## Skills used
 
+- `wiki-search` (qmd) — used to find which pages an ingest touches (qmd-first, then `[[wikilink]]` one hop; `index.md` fallback)
 - `ingest` — the log-first ingestion procedure
 - `lint-wiki` — periodic health-check (separate invocation, on demand or scheduled)
 
@@ -75,6 +76,8 @@ The Ingester does **not** modify source code, Raw task files (immutable post-val
 
 11. **Schema-doc co-evolution.** If this ingest introduced a new convention — a renamed page, a new agent role, a new skill, a new project-specific governance rule — update `tools/claude/CLAUDE.md`, `tools/codex/AGENTS.md`, and `tools/github/copilot-instructions.md` in the same ingest. Don't leave the schema docs out of sync.
 
+12. **Re-embed the wiki search index.** After applying page changes and finalising the log entry, run an incremental `qmd embed` so the qmd index reflects the new/changed pages — the Ingester is the only wiki writer, and readers rely on a fresh index. This also refreshes the `docs/` collection. If qmd is unavailable, note it; `index.md` stays the fallback.
+
 ## Procedure (Lint)
 
 Triggered explicitly (user asks for it) or scheduled (e.g. weekly):
@@ -88,12 +91,14 @@ Triggered explicitly (user asks for it) or scheduled (e.g. weekly):
    - Missing cross-references (a page mentions another concept without linking to its page)
 3. **Produce a report.** Append `## [YYYY-MM-DD] lint | {scope}` to `log.md` with each finding and a proposed fix. **No silent rewrites.**
 4. **Fixes are user-approved.** The Ingester does not apply lint fixes automatically; it proposes each, and the user approves or rejects.
+5. **Re-embed the wiki search index.** After applying page changes and finalising the log entry, run an incremental `qmd embed` so the qmd index reflects the new/changed pages — the Ingester is the only wiki writer, and readers rely on a fresh index. This also refreshes the `docs/` collection. If qmd is unavailable, note it; `index.md` stays the fallback.
 
 ## Guardrails
 
 - **Log-first, always.** No page edit happens before the `log.md` entry is drafted.
 - **New pages and deletions are gated.** Existing-page updates flow; structural changes always ask. (See ADR 0007.)
 - **Stable file paths.** Page renames preserve backlinks via `aliases:` frontmatter. qmd uses paths as IDs; broken paths break search.
+- **Re-index after writing.** The Ingester owns wiki-search freshness — every ingest/lint ends with `qmd embed`.
 - **Raw is immutable.** Codebase, completed task files, MCP outputs — read-only. The Ingester never edits Raw.
 - **No silent contradictions.** Conflicts surface in the log entry's `Decision` section and trigger a user conversation, never an unsupervised overwrite.
 - **Frontmatter discipline.** Every touched page bumps `updated:`; `title`, `tags`, `aliases`, `priority`, `status` stay consistent across the wiki.

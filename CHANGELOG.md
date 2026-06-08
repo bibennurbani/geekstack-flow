@@ -4,6 +4,22 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — qmd is the mandatory wiki-search layer (ADR 0030)
+
+- **`wiki-search` skill** — one shared discovery skill every agent uses to find LLM-wiki and `docs/` content via [qmd](https://github.com/tobi/qmd) (local hybrid keyword + vector + LLM re-rank) before reading or editing the wiki. qmd is now **mandatory, not optional**: it surfaces *which* pages are relevant, then the agent opens them and follows `[[wikilinks]]` one hop. It **complements** `wiki/index.md` — the Map of Content stays the always-current fallback when the index is stale or qmd is unavailable. The **CLI is canonical** (`qmd query "…" -c wiki --json`, plus `search`/`vsearch`/`get`); the qmd MCP is an optional Claude convenience. The old "when wired"/optional framing is removed.
+- **Auto-installed + indexed by `/tcgflow-init`** — `init.js` stays dependency-free and only scaffolds the `wiki_search` config block and prints the next step; the `/tcgflow-init` AI command performs the permission-gated install (`npm i -g @tobilu/qmd` + ~2 GB local models — a HIGH action), registers the `wiki` (and `docs`) collection, and runs the first `qmd embed`. The **Ingester re-embeds as its final step** so reads stay fresh. New prerequisites documented in `INSTALL.md`/`QUICKSTART.md`: **Node ≥ 22, ~2 GB disk for models, `brew install sqlite` on macOS**. Declining the install falls back to `index.md` navigation.
+
+### Added — Refactorer role + cleanup-pass doctrine (ADR 0031)
+
+- **6th agent `refactorer` + `/tcgflow-refactor` command** — a manually-invoked peer to the Coder (not a linear lifecycle stage) for **broad, behaviour-preserving** refactors of a target area. It surveys read-only, **proposes a two-file refactor task** (behaviour-preservation acceptance per subtask — an approval gate), **writes characterization tests first** when the area is under-covered, executes logging YAML entries, and hands off into **Reviewer → Tester → Ingester** (it never self-approves). For refactor-typed tasks the Reviewer's **scope-drift blocker is relaxed**, the acceptance oracle is behaviour-preservation, and the **Tester is the real gate**.
+- **`best-practice-refactor` skill** — holds the refactor heuristics in two scopes: the broad Refactor (Scope B) and the narrow **Coder cleanup pass** (Scope A) it reuses.
+- **Diff-scoped Coder cleanup pass** — every Coder now leaves *its own* touched files clean before `IN_REVIEW`: removes imports and dead code *its change* orphaned, drops commented-out scratch, runs the formatter/linter autofix on touched files only. This is "clean up after your own change," explicitly **not** surrounding cleanup or refactoring beyond the task (that's `/tcgflow-refactor`), so it coexists with the global minimal-change preference. The **Reviewer verifies** it happened.
+
+### Changed
+
+- **`workspace_schema` bumped to 3** — a schema-2 → 3 migration injects the `wiki_search` config block into existing workspaces; `upgrade` installs/registers/embeds qmd for them.
+- Now **6 agent roles, 17 skills, 17 commands**.
+
 ### Documentation
 
 - Added a full **`docs/`** set: [`docs/README.md`](docs/README.md) (index), [`INSTALL.md`](docs/INSTALL.md) (prerequisites, npm/clone install, Cockpit build, optional integrations), [`QUICKSTART.md`](docs/QUICKSTART.md) (zero-to-working in ~5 min), and [`USAGE.md`](docs/USAGE.md) (the full daily workflow, Cockpit, wiki/memory, timesheets, Jira sync, signal→task, governance, multi-project, migration, upgrade, global memory, troubleshooting, reference tables). Top-level README rewritten and links to the guides.

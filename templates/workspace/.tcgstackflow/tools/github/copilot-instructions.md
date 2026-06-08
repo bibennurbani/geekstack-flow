@@ -16,7 +16,7 @@ _(Per-project description — what is this codebase, who uses it, the projects i
 
 Before any non-trivial action, read in this order:
 
-1. **`.tcgstackflow/wiki/index.md`** — the Map of Content. Pick the pages relevant to the topic; do not load the whole wiki.
+1. **Search the wiki via the `wiki-search` skill (qmd)** — the mandatory discovery layer. qmd finds *which* pages are relevant (`qmd query "..." -c wiki --json`); you then open them and follow `[[wikilinks]]` one hop. It **complements** `.tcgstackflow/wiki/index.md` — the Map of Content and the always-current fallback when the index is stale or qmd is unavailable. qmd is installed and the wiki indexed during setup (`/tcgflow-init`).
 2. **`.tcgstackflow/governance.md`** — the four-level risk taxonomy and the permission-request recipe. HIGH/CRITICAL actions require an inline permission request.
 3. **`.tcgstackflow/agents/{role}.md`** — the role profile you are acting as.
 
@@ -43,7 +43,7 @@ See `.tcgstackflow/agents/coder.md` for the YAML log entry shape; `.tcgstackflow
 
 ## Roles you can adopt
 
-Same four as Claude / Codex — defined in `.tcgstackflow/agents/`:
+Same six as Claude / Codex — defined in `.tcgstackflow/agents/`:
 
 | Role | When invoked | Profile |
 |---|---|---|
@@ -52,6 +52,9 @@ Same four as Claude / Codex — defined in `.tcgstackflow/agents/`:
 | `reviewer` | "review the diff", "is this ready?" | `.tcgstackflow/agents/reviewer.md` |
 | `tester` | "test ES-1234", "verify this works", "run the E2E" | `.tcgstackflow/agents/tester.md` |
 | `ingester` | "ingest ES-1234", "fold into wiki" | `.tcgstackflow/agents/ingester.md` |
+| `refactorer` | "refactor X", "/tcgflow-refactor" | `.tcgstackflow/agents/refactorer.md` |
+
+The `refactorer` is **manually-invoked** — not a linear stage. It is a Coder-peer whose output re-enters the lifecycle at the Reviewer.
 
 ## Per-Domain Instructions
 
@@ -70,7 +73,7 @@ These complement — they do not duplicate — the agent profiles in `.tcgstackf
 
 Two locations:
 
-- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Fifteen ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `verify`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `task-from-snyk`, `task-from-cypress`, `task-from-datadog`, `sync-jira`, `generate-timesheet`, `submit-timesheet`).
+- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Seventeen ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `verify`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `task-from-snyk`, `task-from-cypress`, `task-from-datadog`, `sync-jira`, `generate-timesheet`, `submit-timesheet`, `wiki-search`, `best-practice-refactor`).
 - **Tech skills** live at `~/.tcgstackflow/skills/` — global library, cross-project. Vue, Vuetify, Pinia, Cypress, .NET, Pulumi, Auth0, etc. Install with `cd ~/.tcgstackflow/skills && npx skills add <owner/repo@skill>`.
 
 Both locations are readable to Copilot. Tech-skill content is referenced from project guidance but not duplicated into the project.
@@ -78,7 +81,7 @@ Both locations are readable to Copilot. Tech-skill content is referenced from pr
 ## Prime Directives
 
 1. **Mirror existing patterns.** Imitate the structure, naming, and conventions already in the codebase.
-2. **Minimal, purpose-driven changes.** Avoid bundling refactors with features.
+2. **Minimal, purpose-driven changes.** Avoid bundling refactors with features. Still clean up after your OWN change — orphaned imports, dead code, commented-out scratch in files you touched — that diff-scoped cleanup is part of the change; broad refactors are a separate `/tcgflow-refactor` task.
 3. **Delay abstraction** until the third repetition justifies shared code.
 4. **Comments explain WHY**, not WHAT. Never put task IDs in code comments.
 5. **Don't reformat untouched code** or reorder imports without necessity.
@@ -87,7 +90,7 @@ Both locations are readable to Copilot. Tech-skill content is referenced from pr
 
 ## Commands (invocation in Copilot)
 
-The workspace ships fourteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
+The workspace ships seventeen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
 
 | Workflow | Trigger phrases |
 |---|---|
@@ -95,6 +98,7 @@ The workspace ships fourteen workflow commands at `.tcgstackflow/commands/{name}
 | `tcgflow-code` | "implement ES-1234", "start coding the planned task" |
 | `tcgflow-review` | "review the diff", "is ES-1234 ready?" |
 | `tcgflow-test` | "test ES-1234", "verify this works", "run the E2E", "write a test plan" |
+| `tcgflow-refactor` | "refactor X", "do a best-practice refactor of …" |
 | `tcgflow-sync-jira` | "sync Jira", "refresh Jira status", "check the Jira status of our tasks" |
 | `tcgflow-ingest` | "ingest ES-1234", "fold this into the wiki" |
 | `tcgflow-lint` | "lint the wiki", "find stale pages" |

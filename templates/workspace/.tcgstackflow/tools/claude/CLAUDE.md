@@ -21,17 +21,20 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 | `reviewer` | "review the diff", "is this ready?", "check ES-1234" | [agents/reviewer.md](../../agents/reviewer.md) |
 | `tester` | "test ES-1234", "verify this works", "run the E2E", "write a test plan" | [agents/tester.md](../../agents/tester.md) |
 | `ingester` | "ingest ES-1234", "fold this into the wiki", "ingest raw/" | [agents/ingester.md](../../agents/ingester.md) |
+| `refactorer` | "refactor X", "best-practice refactor of …", "/tcgflow-refactor" | [agents/refactorer.md](../../agents/refactorer.md) |
 
-Lifecycle: `planner → coder → reviewer → tester → ingester` (`IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED`). Reviewer checks the code is *right* (static); Tester checks it *works* (dynamic).
+Lifecycle: `planner → coder → reviewer → tester → ingester` (`IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED`). Reviewer checks the code is *right* (static); Tester checks it *works* (dynamic). The `refactorer` is **not** a linear stage — it is a manually-invoked Coder-peer (via `/tcgflow-refactor`) whose output re-enters the lifecycle at Reviewer.
 
 Each profile lists which files it reads, which it writes, which skills it uses, and what its hand-off condition is. Stay inside the profile's `Writes:` list — that is the strongest invariant of role discipline.
 
 ## Skills available
 
-Under `.tcgstackflow/skills/`. Fifteen starter skills ship with V1:
+Under `.tcgstackflow/skills/`. Seventeen starter skills ship with V1:
 
 | Skill | Role | Purpose |
 |---|---|---|
+| [`wiki-search`](../../skills/wiki-search/SKILL.md) | any | qmd discovery over the wiki/docs — find which pages are relevant before reading or ingesting |
+| [`best-practice-refactor`](../../skills/best-practice-refactor/SKILL.md) | coder (cleanup scope) / refactorer (broad scope) | Behavior-preserving structure cleanup — diff-scoped Coder pass or broad Refactorer task |
 | [`grill-task`](../../skills/grill-task/SKILL.md) | planner | Interview the user before writing the plan |
 | [`plan-task`](../../skills/plan-task/SKILL.md) | planner | Write the two-file task structure |
 | [`update-task-log`](../../skills/update-task-log/SKILL.md) | coder | Append YAML entry to `TASK {ID}.md` |
@@ -70,9 +73,10 @@ A command is a thin dispatcher: each `commands/{name}/SKILL.md` describes when t
 
 ## Wiki reading guide
 
-The wiki is flat, Obsidian-flavoured Markdown with `[[wikilinks]]`. Pattern is [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Search and re-rank is via [qmd](https://github.com/tobi/qmd) when wired as an MCP.
+The wiki is flat, Obsidian-flavoured Markdown with `[[wikilinks]]`. Pattern is [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
-- Start at `wiki/index.md`.
+- **Search the wiki via the [`wiki-search`](../../skills/wiki-search/SKILL.md) skill (qmd) — the mandatory discovery layer.** qmd ([qmd](https://github.com/tobi/qmd)) finds *which* pages are relevant (CLI canonical: `qmd query "..." -c wiki --json`; the qmd MCP is an optional Claude convenience). Open those pages and follow `[[wikilinks]]` one hop. `wiki/index.md` remains the always-current fallback when the index is stale or qmd is unavailable. Setup is done by `/tcgflow-init` (installs qmd + indexes the wiki and `docs/`).
+- Start at `wiki/index.md` when qmd is unavailable.
 - Follow `[[wikilinks]]` only to pages relevant to the current topic.
 - Bump `updated:` frontmatter whenever you touch a page during ingestion.
 - Frontmatter schema: `title`, `tags`, `aliases`, `priority` (P0/P1/P2), `created`, `updated`, `status` (`current` | `stub` | `archived`).

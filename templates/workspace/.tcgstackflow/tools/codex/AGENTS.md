@@ -21,6 +21,9 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 | `reviewer` | "review the diff", "is this ready?" | [agents/reviewer.md](.tcgstackflow/agents/reviewer.md) |
 | `tester` | "test ES-1234", "verify this works", "run the E2E" | [agents/tester.md](.tcgstackflow/agents/tester.md) |
 | `ingester` | "ingest ES-1234", "fold into wiki" | [agents/ingester.md](.tcgstackflow/agents/ingester.md) |
+| `refactorer` | "refactor X", "/tcgflow-refactor" | [agents/refactorer.md](.tcgstackflow/agents/refactorer.md) |
+
+The `refactorer` is a manually-invoked Coder-peer — not a linear stage. Its output re-enters the lifecycle at the Reviewer.
 
 ## Cross-tool handoff context
 
@@ -34,14 +37,16 @@ You may be invoked because **Claude wrote the plan** and **you are executing it*
 
 ## Skills
 
-Under `.tcgstackflow/skills/`. Same eight starter skills as Claude — the format is portable (`SKILL.md` with frontmatter `name` and `description`). Read them as if they were specifications written for you.
+Under `.tcgstackflow/skills/`. Same seventeen starter skills as Claude — the format is portable (`SKILL.md` with frontmatter `name` and `description`). Read them as if they were specifications written for you.
 
 | Skill | Used by | One-line purpose |
 |---|---|---|
+| `wiki-search` | any | Find relevant wiki/`docs/` pages via qmd before reading/editing — the discovery layer |
 | `grill-task` | planner | Interview the user on ambiguous areas |
 | `plan-task` | planner | Write the two-file task structure |
 | `update-task-log` | coder | Append YAML entry to `TASK {ID}.md` |
 | `review-diff` | reviewer | Walk diff against acceptance + governance |
+| `best-practice-refactor` | coder / refactorer | Cleanup pass (Coder, diff-scoped) + broad behavior-preserving refactor (Refactorer) |
 | `verify` | tester | Build a test plan, run tests/E2E/app, record pass/fail verdict |
 | `sync-jira` | any | Fetch Jira status of tasks via Atlassian MCP → `tasks/jira-cache.json` |
 | `ingest` | ingester | Fold a Raw source into the wiki |
@@ -56,12 +61,13 @@ Under `.tcgstackflow/skills/`. Same eight starter skills as Claude — the forma
 
 ## Commands (invocation in this tool)
 
-The workspace ships fourteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
+The workspace ships seventeen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
 
 - *"plan ES-1234"*, *"design the new payment flow"* → invoke the `tcgflow-plan` workflow → adopt planner role + use `grill-task` and `plan-task` skills
 - *"implement ES-1234"*, *"start coding"* → `tcgflow-code` workflow → coder role + `update-task-log`
 - *"review the diff"*, *"is ES-1234 ready?"* → `tcgflow-review` workflow → reviewer role + `review-diff`
 - *"test ES-1234"*, *"verify this works"*, *"run the E2E"* → `tcgflow-test` workflow → tester role + `verify`
+- *"refactor X"*, *"do a best-practice refactor of …"* → `tcgflow-refactor` workflow → adopt refactorer role + `best-practice-refactor` skill
 - *"sync Jira"*, *"refresh Jira status"* → `tcgflow-sync-jira` workflow → `sync-jira` skill (writes `tasks/jira-cache.json`)
 - *"ingest ES-1234"*, *"fold this into the wiki"* → `tcgflow-ingest` workflow → ingester role + `ingest`
 - *"lint the wiki"* → `tcgflow-lint` workflow → `lint-wiki` skill
@@ -91,7 +97,7 @@ When you (Codex) receive any of these phrases, read the relevant `.tcgstackflow/
 - Flat directory of Markdown with `[[wikilinks]]`.
 - Frontmatter: `title`, `tags`, `aliases`, `priority`, `created`, `updated`, `status`.
 - Pattern: [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
-- Search via [qmd](https://github.com/tobi/qmd) when wired.
+- **Search is mandatory via the `wiki-search` skill** — [qmd](https://github.com/tobi/qmd) is the discovery layer over the wiki and the project's `docs/`. The CLI is canonical (`qmd query "..." -c wiki --json`); the qmd MCP is an optional Claude convenience. qmd finds *which* pages are relevant; it complements `index.md` (the always-current fallback), not replaces it. Set up by `/tcgflow-init`.
 
 ## Sandbox and approvals
 

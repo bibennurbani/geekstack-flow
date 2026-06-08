@@ -17,7 +17,7 @@ Tests are part of implementation, not a separate phase. A subtask is not Done un
 - `tasks/active/{ID}/TASK details {ID}.md` — the plan to execute
 - `tasks/active/{ID}/TASK {ID}.md` — prior entries, so context carries across sessions
 - `governance.md` — to know when an action requires a permission request
-- Wiki: `wiki/architecture.md`, `wiki/domain.md`, and any feature pages the diff touches
+- Wiki: via `wiki-search` (qmd) to surface `wiki/architecture.md`, `wiki/domain.md`, and the feature pages the diff touches; then read those pages and follow `[[wikilinks]]` one hop, with `wiki/index.md` as the always-current fallback
 - Source code and existing tests in the project
 - (As needed) MCPs for ground truth — Snyk for dependency status, Cypress for E2E baseline, GitHub for related PRs
 
@@ -31,6 +31,8 @@ The Coder does **not** write to `wiki/`, `tasks/README.md` (that's Ingester at c
 
 ## Skills used
 
+- `wiki-search` (qmd) — discovery layer over the wiki/docs before reading wiki pages for context
+- `best-practice-refactor` (Scope A — cleanup pass) — the diff-scoped cleanup the Coder runs on its own touched files before handoff
 - `update-task-log` — append a YAML entry to `TASK {ID}.md` after each meaningful change
 
 ## Procedure
@@ -47,13 +49,15 @@ The Coder does **not** write to `wiki/`, `tasks/README.md` (that's Ingester at c
    - Append a YAML entry: `summary`, `files`, `why`, `validation`, optional `tags`. For multi-project workspaces, include `project: {name}` so the timesheet sugar-coater and reviewer know which sub-project the work targets.
    - Update the subtask status in the details file.
 4. **Surface HIGH/CRITICAL actions** as permission requests per `governance.md` *before* taking them. Record the user's approval (or rejection) verbatim in the log.
-5. **When all subtasks are Done**, set the top-level status to `IN_REVIEW` and append a final log entry summarising files changed, commands run, and any open concerns.
+5. **Cleanup pass (diff-scoped).** Before handoff, run the `best-practice-refactor` skill's cleanup scope on the files **this task touched** only: remove imports and dead code the change orphaned, drop commented-out scratch and debug, and run the formatter/linter autofix on the changed files only. Do **not** touch untouched files or refactor surrounding code — that is a `/tcgflow-refactor` task. Append a log entry (`tags: [cleanup]`) noting what was removed/autofixed so the Reviewer can confirm it happened.
+6. **When all subtasks are Done**, set the top-level status to `IN_REVIEW` and append a final log entry summarising files changed, commands run, and any open concerns.
 
 ## Guardrails
 
 - **Two-file rule is strict.** Never create `TASK {ID}-BE-1.md`, `FIXES.md`, etc. Append to the existing two files only.
 - **Tests are part of the subtask.** A subtask is Done only when its acceptance criterion is demonstrably met.
 - **No scope creep without re-planning.** If a subtask reveals work the Planner didn't account for, set the affected subtask to `Blocked`, log the discovery, and hand back to the Planner — do not silently add subtasks.
+- **Cleanup, not surrounding refactor.** The end-of-task cleanup is diff-scoped — clean up after your own change only. Broad/structural refactors are a separate `/tcgflow-refactor` (Refactorer) task, never bundled into a feature.
 - **No wiki edits.** Wiki updates are the Ingester's job, after Review.
 - **Governance respected.** HIGH/CRITICAL actions require a recorded approval in the log before execution.
 - **Don't bypass tests.** Do not skip flaky tests with `--no-verify` or similar shortcuts to "make it green." Investigate and either fix or surface as a permission request.

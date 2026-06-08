@@ -44,6 +44,20 @@ skills:
   global_path: ~/.tcgstackflow/skills
   strategy: symlink                 # symlink | copy
 
+# Wiki search (qmd) — the MANDATORY discovery layer over the LLM-wiki and docs/ (ADR 0030).
+# Installed + indexed by the `/tcgflow-init` AI command (a HIGH action: global npm + ~2GB models,
+# permission-gated). init.js the SCRIPT stays dependency-free and does NOT install qmd.
+# Complements (does not replace) wiki/index.md navigation; index.md is the always-current fallback.
+wiki_search:
+  engine: qmd                       # https://github.com/tobi/qmd — local hybrid (BM25 + vector + rerank)
+  interface: cli                    # 'cli' is canonical/tool-portable; the qmd MCP (mcp.recommended) is an optional Claude convenience
+  embed_on_ingest: true             # the Ingester re-embeds all collections after each ingest/lint
+  collections:                      # init registers these; a docs/ entry is added only when the directory exists
+    - name: wiki
+      path: .tcgstackflow/wiki      # mandatory
+    # - name: docs
+    #   path: docs                  # added by /tcgflow-init when a docs/ dir is present (per sub-project in multi-project)
+
 governance:
   mode: strict                      # strict | relaxed
   permissions_file: .tcgstackflow/governance.md

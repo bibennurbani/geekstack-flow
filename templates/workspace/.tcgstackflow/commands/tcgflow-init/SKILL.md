@@ -31,7 +31,12 @@ The user typed `/tcgflow-init` or said something equivalent: *"set up geekstackf
 
 5. **Report what was created** — `.tcgstackflow/`, the root adapter files, and (for multi-project) the auto-detected `projects:` array.
 
-6. **Suggest the next move:** invoke `/tcgflow-plan` for a first task (commonly a scan-and-populate task to fill `wiki/project-overview.md` and `wiki/architecture.md` from the codebase).
+6. **Bootstrap qmd wiki-search** (realizes the `wiki_search` config block `init.js` scaffolds — ADR 0030; `init.js` the *script* stays dependency-free and does **not** install qmd):
+   - **Ensure qmd is installed.** Run `qmd --version`. If missing, install it — `npm install -g @tobilu/qmd`. This is a **HIGH action** per `governance.md` (global npm install + ~2 GB of local models): issue a permission request first. Needs Node ≥ 22, ~2 GB disk for models, and `brew install sqlite` on macOS.
+   - **Register collections.** `qmd collection add .tcgstackflow/wiki --name wiki` (mandatory), plus `qmd collection add docs --name docs` when a `docs/` directory exists — per sub-project `docs/` in a multi-project workspace.
+   - **Run the first embed.** `qmd embed` so the collections are indexed and the `wiki-search` skill works on first use.
+
+7. **Suggest the next move:** invoke `/tcgflow-plan` for a first task (commonly a scan-and-populate task to fill `wiki/project-overview.md` and `wiki/architecture.md` from the codebase).
 
 ## Notes
 

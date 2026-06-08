@@ -31,7 +31,9 @@ The user typed `/tcgflow-upgrade` or said *"upgrade this workspace"*, *"migrate 
 
 4. **Report the changes** the script made.
 
-5. **Offer two follow-up steps** (don't auto-run unless the user asks):
+5. **Bootstrap qmd wiki-search after the schema-2→3 migration.** That migration injects the `wiki_search` config block into the existing workspace (ADR 0030); `init.js` the script does **not** install qmd. So once the migration has run: if qmd is absent, run the setup — `qmd --version`, and if missing `npm install -g @tobilu/qmd` (a **HIGH action** per `governance.md` — global npm install + ~2 GB models, Node ≥ 22, `brew install sqlite` on macOS — issue a permission request first), then register collections (`qmd collection add .tcgstackflow/wiki --name wiki`, plus `qmd collection add docs --name docs` when a `docs/` dir exists). Then **re-embed** with `qmd embed` so the index reflects the upgraded workspace.
+
+6. **Offer two follow-up steps** (don't auto-run unless the user asks):
 
    a. **Refresh global slash commands** — useful to pick up new commands and path corrections in older ones:
       ```bash

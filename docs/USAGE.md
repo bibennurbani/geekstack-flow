@@ -31,9 +31,9 @@ your-project/
 └── .tcgstackflow/
     ├── config.yaml      # project config: stack, sub-projects, Tempo, tools, version stamp
     ├── governance.md    # risk levels + permission recipe + your project rules
-    ├── agents/          # planner, coder, reviewer, tester, ingester (role profiles)
-    ├── skills/          # 15 workflow skills (SKILL.md each)
-    ├── commands/        # 16 tcgflow-* command dispatchers
+    ├── agents/          # planner, coder, reviewer, tester, ingester, refactorer (role profiles)
+    ├── skills/          # 17 workflow skills (SKILL.md each)
+    ├── commands/        # 17 tcgflow-* command dispatchers
     ├── wiki/            # the LLM wiki (index.md, log.md, project-overview.md, …) + adr/
     ├── tasks/           # README + active/ completed/ archive/ weekly/  (+ jira-cache.json)
     ├── raw/             # drop external docs here to ingest; archived/ after
@@ -47,7 +47,7 @@ your-project/
 
 ## The daily workflow
 
-Work flows through five roles, tracked by task status:
+Work flows through five linear roles, tracked by task status (a sixth role, the **Refactorer**, runs on demand and re-enters at Review — see [Refactor](#refactor-on-demand--tcgflow-refactor-target)):
 
 ```
 DRAFT → PLANNED → IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED      (BLOCKED = side state)
@@ -75,6 +75,7 @@ The **Coder**:
 - Verifies the task is `PLANNED` (won't code otherwise).
 - Works **one subtask at a time**: makes the change, writes/updates **unit tests**, runs the right test/lint command (the sub-project's, in multi-project workspaces), appends a YAML log entry (`author: claude|codex|…`, summary, files, why, validation).
 - Surfaces **HIGH/CRITICAL** actions (push, migration, dependency install, auth changes) as a permission request first, per `governance.md`, and records your approval in the log.
+- Runs a **cleanup pass** before handing off — a mandatory, **diff-scoped** tidy of *only the files this task touched*: removes imports and dead code *its own change* orphaned, drops commented-out scratch, and runs the formatter/linter autofix on those files. This is "clean up after your own change" — explicitly **not** surrounding cleanup or refactoring beyond the task (that's `/tcgflow-refactor`). The Reviewer verifies it happened.
 - When all subtasks are done → status `IN_REVIEW`.
 
 ### Review — `/tcgflow-review ES-1234` (static gate)
@@ -101,6 +102,17 @@ The **Ingester** folds the finished task into the wiki:
 - Moves the task `active/ → completed/`, sets status `INGESTED`.
 
 This is how the project's memory compounds: every shipped task makes the wiki smarter for the next one.
+
+### Refactor (on demand) — `/tcgflow-refactor <target>`
+
+The **Refactorer** is a sixth role and a **peer to the Coder**, not a stage in the linear lifecycle. Invoke it manually when you want a **broad, behaviour-preserving** restructure of an area (a file, module, or directory) that isn't tied to a single feature task. It:
+
+1. surveys the target **read-only** (with `wiki-search` for architecture/domain context) and **proposes a two-file refactor task** with a behaviour-preservation acceptance per subtask — an approval gate before any edit;
+2. **writes characterization (golden-master) tests first** when the area is under-covered (or narrows scope and logs "needs tests first" where it can't);
+3. executes the refactor, logging YAML entries like any Coder;
+4. hands off into the normal **Reviewer → Tester → Ingester** gates — it never self-approves.
+
+Because the broad change is *explicitly requested*, for refactor-typed tasks the **Reviewer's scope-drift blocker is relaxed**, the acceptance oracle becomes **behaviour-preservation** (tests green, public API unchanged unless stated), and the **Tester is the real gate**. Don't confuse this with the Coder's diff-scoped cleanup pass — that's the narrow tidy of your own change; a Refactor is the surrounding work the cleanup pass deliberately excludes.
 
 ---
 
@@ -141,8 +153,10 @@ Projects appear in the Cockpit because `init` (and `upgrade`, and `register`) ad
 The **wiki** (`.tcgstackflow/wiki/`) is the AI's primary context — flat Markdown with `[[wikilinks]]`, an `index.md` map-of-content, and an append-only `log.md`. Three operations:
 
 - **Ingest** (`/tcgflow-ingest`) — fold a *Raw* source into the wiki. Raw = a completed task, files you drop into `raw/`, or MCP output (a Jira digest, Snyk report, Datadog write-up). Log-first; new pages/deletions are approval-gated.
-- **Query** — just ask your AI a question; it reads `index.md` then the relevant pages. If the answer is wiki-worthy, it can be filed back as a page.
+- **Query** — just ask your AI a question; it finds the relevant pages with **wiki search (qmd)**, then drills in. If the answer is wiki-worthy, it can be filed back as a page.
 - **Lint** (`/tcgflow-lint`) — periodic health-check: contradictions, stale claims, orphan pages, missing cross-references, broken links. Produces a report; fixes route back through ingest.
+
+**Wiki search (qmd).** Every agent finds wiki (and `docs/`) content through the shared `wiki-search` skill, backed by [qmd](https://github.com/tobi/qmd) — a local hybrid index (keyword + vector + LLM re-rank). It is the **mandatory** discovery layer (ADR 0030): qmd surfaces *which* pages are relevant, then the agent opens them and follows `[[wikilinks]]` one hop. It **complements** `index.md` — the Map of Content stays the always-current fallback when the index is stale or qmd is unavailable. The CLI is canonical (`qmd query "…" -c wiki --json`); the qmd MCP is an optional Claude convenience. The Ingester re-embeds after each ingest so reads stay fresh. Set it up via [INSTALL.md → Wiki search (qmd)](INSTALL.md#wiki-search-qmd).
 
 Open the wiki in **Obsidian**: "Open folder as vault" → select the non-hidden `tcgstackflow/` symlink (Obsidian hides dotfiles, so don't pick `.tcgstackflow/` directly).
 
@@ -299,13 +313,13 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 | VALIDATED | ingester |
 | INGESTED / COMPLETED | — |
 
-### Commands (16)
+### Commands (17)
 
-`init` · `upgrade` · `migrate` · `plan` · `code` · `review` · `test` · `ingest` · `sync-jira` · `lint` · `audit` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `timesheet-generate` · `timesheet-submit` — all prefixed `/tcgflow-`. Full table in [../README.md](../README.md#commands-reference).
+`init` · `upgrade` · `migrate` · `plan` · `code` · `review` · `test` · `ingest` · `refactor` · `sync-jira` · `lint` · `audit` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `timesheet-generate` · `timesheet-submit` — all prefixed `/tcgflow-`. Full table in [../README.md](../README.md#commands-reference).
 
-### Skills (15)
+### Skills (17)
 
-`grill-task` · `plan-task` · `update-task-log` · `review-diff` · `verify` · `ingest` · `lint-wiki` · `audit-workspace` · `migrate-to-gsf` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `sync-jira` · `generate-timesheet` · `submit-timesheet`. Full table in [../README.md](../README.md#skills-reference).
+`grill-task` · `plan-task` · `update-task-log` · `review-diff` · `verify` · `ingest` · `lint-wiki` · `audit-workspace` · `migrate-to-gsf` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `sync-jira` · `generate-timesheet` · `submit-timesheet` · `wiki-search` · `best-practice-refactor`. Full table in [../README.md](../README.md#skills-reference).
 
 ### CLI flags
 
@@ -321,4 +335,4 @@ geekstackflow --help
 
 ### Design rationale
 
-Every decision is recorded in [adr/](adr/) (29 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).
+Every decision is recorded in [adr/](adr/) (31 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).

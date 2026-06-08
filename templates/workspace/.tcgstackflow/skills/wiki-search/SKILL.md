@@ -1,0 +1,58 @@
+---
+name: wiki-search
+description: Find relevant LLM-wiki and docs/ content via qmd (local hybrid keyword+vector+rerank search) before reading or editing the wiki. The canonical discovery layer every agent uses — qmd surfaces which pages are relevant, then you open them and follow [[wikilinks]] one hop. Use when searching notes, finding related content, or retrieving documents from the indexed wiki/docs collections. Falls back to index.md Map-of-Content navigation when qmd is unavailable.
+---
+
+# Wiki Search (qmd)
+
+## When to use this skill
+
+Invoke this skill **whenever an agent needs to find content in the LLM-wiki or the project's `docs/`** — before reading wiki pages for context (Planner/Coder/Reviewer/Tester), before deciding which pages an ingest touches (Ingester), or whenever the user asks a question answered *from* the wiki (a Query).
+
+This is the **discovery layer**, not a replacement for the wiki's structure: qmd finds *which* pages are relevant; you then open those pages and follow their `[[wikilinks]]` one hop. `wiki/index.md` remains the Map of Content and the always-current fallback.
+
+**Do not** use this skill to edit the wiki (that's `ingest`) or to search source code (use the normal code-search tools — qmd indexes Markdown knowledge, not the codebase).
+
+## Instructions
+
+### 1. Ensure qmd is ready (cheap precondition check)
+
+The workspace is set up by `init`/`upgrade` so qmd is normally already installed and the collections embedded. Verify, in order:
+
+1. **Binary present?** `qmd --version`. If the command is missing, qmd is not installed. Installing it (`npm install -g @tobilu/qmd`, ~2 GB of local models) is a **HIGH action** per `governance.md` — issue a permission request before running it. If the user declines or install fails, **fall back to `index.md` navigation** (read `wiki/index.md`, follow `[[wikilinks]]`) and tell the user "qmd unavailable — using the Map-of-Content fallback." Do not fabricate search results.
+2. **Collections registered?** `qmd collection list`. The workspace expects a `wiki` collection (`.tcgstackflow/wiki/`) and, when the project has a `docs/` directory, a `docs` collection. Register any missing one with `qmd collection add <path> --name <name>`.
+3. **Index fresh?** The Ingester re-embeds after every ingest, so reads are normally current. If you have reason to believe the index is stale (you just edited pages, or a search returns obviously missing content), run an incremental `qmd embed`.
+
+### 2. Search (CLI is canonical)
+
+The CLI works identically across Claude, Codex, and Copilot, so it is the canonical interface:
+
+```bash
+qmd query "<your question>" -c wiki --json -n 8      # hybrid: BM25 + vector + rerank (default choice)
+qmd search "<exact phrase>"  -c wiki --json          # keyword/BM25 only — for known terms/identifiers
+qmd vsearch "<concept>"      -c wiki --json          # pure semantic — for fuzzy "something about X"
+```
+
+- Scope with `-c wiki` (or `-c docs`) to the right collection; omit `-c` to search all collections.
+- `--json` for machine-readable hits; `--files` for `docid, score, filepath` lines; `--full` to inline page content.
+- Default to `query` (hybrid). Reach for `search` when you know the exact term, `vsearch` for vague conceptual lookups.
+
+**Claude convenience (optional):** when the qmd MCP is wired (`config.yaml` `mcp.recommended`), Claude may call the MCP tool instead of shelling out — same results. Nothing depends on the MCP; the CLI is the portable baseline.
+
+### 3. Open and drill in
+
+1. Open the top-ranked pages qmd returned (`qmd get "<filepath>"` or read the file directly).
+2. Follow their `[[wikilinks]]` **one hop** to catch directly-related pages.
+3. If results look thin or stale, fall back to `wiki/index.md` and navigate the Map of Content by hand — it is always current.
+
+### Output
+
+The relevant page set for the task at hand — not narration. Use the content to do the real work (plan, code, review, test, ingest).
+
+## Anti-patterns
+
+- **Skipping qmd and grepping the wiki by hand** when qmd is available — you miss semantically-relevant pages no wikilink path reaches.
+- **Treating qmd as the only way in.** It is the discovery layer; `index.md` + `[[wikilinks]]` remain the structure and the fallback.
+- **Silently installing qmd.** The global install + 2 GB model download is HIGH — request permission first.
+- **Trusting a stale index.** Right after an ingest the index should be fresh (the Ingester re-embeds); if you suspect drift, `qmd embed` before searching.
+- **Fabricating a fallback.** If qmd is unavailable and you can't navigate `index.md` either, say so — never invent page content.

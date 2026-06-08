@@ -25,7 +25,7 @@ You are folding a Raw source into the wiki. The procedure is **log-first** — t
    - **Task ingest** — read `tasks/active/{ID}/TASK details {ID}.md` and `TASK {ID}.md`. Summarise the diff (use `git log` / `git diff` against the merge-base, or the file lists from log entries).
    - **`raw/` ingest** — list files in `.tcgstackflow/raw/`, summarise each in one line. If the user gave a topic phrase, use it.
    - **MCP ingest** — capture the MCP output as the source-of-record.
-2. **Plan.** Walk `wiki/index.md` first. Identify:
+2. **Plan.** Use the `wiki-search` skill (qmd) to surface the pages the Raw touches, and walk `wiki/index.md` to place them in the Map of Content. Identify:
    - **Affected existing pages** — pages whose topic overlaps the Raw. Walk the wikilink graph one hop from each to catch downstream impact.
    - **Candidate new pages** — topics not covered by any existing page. (Will require approval.)
    - **Contradictions** — places where the Raw conflicts with current wiki claims. These surface in the log entry's Decision section; never silently overwrite.
@@ -53,6 +53,7 @@ You are folding a Raw source into the wiki. The procedure is **log-first** — t
    - Never delete. Re-ingest with new context must remain possible.
 8. **Finalise the `log.md` entry.** Replace the proposed file lists with the actual file lists after changes are applied. Bump the touched pages' frontmatter and `wiki/index.md` if pages were added/removed/renamed.
 9. **Schema doc co-evolution.** If this ingest introduced a new convention (a renamed page, a new agent role, a new skill, a new project-specific governance rule), update `tools/claude/CLAUDE.md` and `tools/codex/AGENTS.md` *in the same ingest*. Don't leave the schema docs out of sync.
+10. **Re-embed the wiki search index.** Run an incremental `qmd embed` so qmd reflects the new/changed pages (the Ingester is the only wiki writer; readers rely on a fresh index). Refreshes the `docs/` collection too. If qmd is unavailable, note it — `index.md` stays the fallback.
 
 ### Output
 

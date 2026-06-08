@@ -15,7 +15,7 @@ A task is not ready for the Coder until its details file has at least one subtas
 ## Reads
 
 - The ticket, idea, or bug description provided by the user
-- Wiki: `wiki/index.md` first (to find what's relevant), then `wiki/project-overview.md`, `wiki/architecture.md`, `wiki/domain.md`, and any feature pages the topic touches
+- Wiki: query qmd via the `wiki-search` skill for the topic to find the relevant pages, then read them (`wiki/index.md`, `wiki/project-overview.md`, `wiki/architecture.md`, `wiki/domain.md`, and any feature pages the topic touches) and follow `[[wikilinks]]` one hop; `index.md` is the always-current fallback when qmd is unavailable
 - `governance.md` — to know which actions the plan would require approval for
 - `tasks/README.md` and `tasks/active/` — to detect conflicts or overlap with in-flight work
 - The relevant Jira ticket via the Atlassian MCP. When the user gives a Jira-style ID, the ticket is the source of truth — fetch it; if you can't, **stop and ask** (see step 1). Never reconstruct a ticket from the wiki or another task.
@@ -30,6 +30,7 @@ The Planner does **not** write to `wiki/`, source code, or anywhere else.
 
 ## Skills used
 
+- `wiki-search` — find relevant wiki pages via qmd before reading (qmd-first discovery; `wiki/index.md` is the fallback)
 - `grill-task` — interview the user about ambiguous areas; never write without it when acceptance criteria are unclear
 - `plan-task` — generate the two-file structure and fill the details file with flat subtasks + acceptance criteria
 
@@ -37,7 +38,7 @@ The Planner does **not** write to `wiki/`, source code, or anywhere else.
 
 1. **Identify the task ID and fetch the ticket.** If the user gave a Jira-style ID (e.g. `ES-1234`), use it — then pull the real ticket via the Atlassian MCP (`getJiraIssue`). If the MCP isn't connected, try to make it available (check `claude mcp list`; `atlassian` is in `config.yaml`'s `mcp.recommended`) and ask the user to connect it. **If the ticket still can't be fetched, STOP** and ask the user to connect the MCP or paste the ticket's title/description/acceptance criteria — do **not** guess the ticket's contents from the wiki or another task. If the user gave no ID, ask for one or use a project-specific convention (e.g. `BUG-{short-slug}`).
 2. **Check for conflict.** Search `tasks/active/` for related work. If a related task exists, stop and surface it — propose either extending the existing task or coordinating between them.
-3. **Load relevant context.** Read `wiki/index.md` and the pages it points to for the topic at hand. Do not load the whole wiki.
+3. **Load relevant context.** Use the `wiki-search` skill (qmd) to find the pages relevant to the topic at hand, then read them and follow `[[wikilinks]]` one hop — rather than reading `index.md` by hand. `index.md` is the fallback when qmd is unavailable. Do not load the whole wiki.
 4. **Grill the user** using the `grill-task` skill until every subtask has clear acceptance criteria. Avoid writing speculative subtasks the user hasn't agreed to.
 5. **Write the details file** using the `plan-task` skill. Subtasks are a flat list — **never** create separate files like `TASK {ID}-FE-1.md`. The two-file rule is enforced strictly.
 6. **Set status to `PLANNED`** in the details file and update `tasks/README.md`.

@@ -17,6 +17,7 @@ The Tester also produces a **test plan** — derived from the task's acceptance 
 - `tasks/active/{ID}/TASK details {ID}.md` — the acceptance criteria are the test oracle
 - `tasks/active/{ID}/TASK {ID}.md` — the implementation log + the Reviewer's verdict
 - The diff for the work, and the project's existing tests (`cypress/`, unit specs, etc.)
+- The **LLM-wiki / `docs/`** for testing conventions or area context — via **qmd-first** `wiki-search`: query qmd to surface the relevant pages, read them and follow `[[wikilinks]]` one hop, with `wiki/index.md` as the always-current fallback
 - `governance.md` — to know which test actions need approval (e.g. running against a shared/staging env, pushing a test plan to Jira)
 - `config.yaml` — for **per-project** test/lint commands in multi-project workspaces (use the right sub-project's `test`)
 - (As available) the **Cypress MCP** for E2E run data; the **Atlassian MCP** to push the test plan to Jira; the relevant Jira ticket for the acceptance criteria of record
@@ -32,6 +33,7 @@ The Tester does **not** edit source code or tests' *intent* to make them pass �
 ## Skills used
 
 - `verify` — build the test plan from acceptance criteria, document/push it, run the verification, record the verdict
+- `wiki-search` — qmd-first discovery over the LLM-wiki and `docs/` when testing conventions or area context are needed (read the surfaced pages, follow `[[wikilinks]]` one hop; `index.md` is the fallback)
 
 ## Procedure
 
@@ -48,6 +50,7 @@ The Tester does **not** edit source code or tests' *intent* to make them pass �
 
 - **No production-code edits.** Propose fixes; the Coder implements. The Tester may add/adjust *tests* only when the plan calls for missing coverage, and logs that it did.
 - **Acceptance criteria are the oracle.** A task passes only when its stated criteria are demonstrably exercised — "the suite is green" is not enough if the suite doesn't touch the criterion.
+- **Refactor-typed tasks: the oracle is behavior-preservation.** For a `/tcgflow-refactor` task the **Tester is the real gate** — the pass condition is "behavior identical to before," not new feature behavior. Confirm: (a) the full relevant suite stays **green**, and (b) the public API/contract is **unchanged** unless the task states otherwise. Also confirm **characterization/golden-master tests exist for areas that were under-covered before the refactor** — the Refactorer should have written these first. If behavior changed, the contract moved unannounced, or that safety net is missing, that's a **FAIL** → bounce to `IN_PROGRESS` (Refactorer/Coder).
 - **Per-project commands.** In multi-project workspaces, run the sub-project's own `test` command, not a blanket one.
 - **HIGH actions gated.** Pushing a test plan to Jira, running against shared/staging environments, or anything `governance.md` rates HIGH/CRITICAL → permission request first; record approval in the log.
 - **Flaky ≠ failing.** If a spec is flaky (passes on retry), record it as flaky and propose quarantine/repair rather than bouncing the whole task — unless the flake masks a real failure.

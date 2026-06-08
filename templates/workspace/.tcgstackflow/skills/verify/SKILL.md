@@ -41,6 +41,14 @@ You verify behavior dynamically and produce a documented test plan. Acceptance c
    - **Pass** (every criterion verified) → set status `VALIDATED`, hand to the Ingester.
    - **Fail** → set status `IN_PROGRESS`, hand back to the Coder with the failing criteria and evidence.
 
+### Refactor-typed tasks (behavior-preservation oracle)
+
+For a **Refactor** task (from `/tcgflow-refactor`, executed by the Refactorer) the oracle is **behavior-preservation**, not new acceptance behavior — you are the real gate that the broad change introduced no silent regression:
+
+- **Run the full relevant suite and confirm it stays green with behavior identical to before the refactor.** The public API/contract is unchanged unless the task states otherwise.
+- **Verify characterization/golden-master tests exist for areas that were under-covered before the refactor** — those tests *are* the oracle for a refactor. If the area had no safety net and none was written, you cannot prove behavior was preserved.
+- A **behavior change** (or a **missing safety net** over a refactored area) is a **FAIL** → set status `IN_PROGRESS`, hand back to the Refactorer/Coder with the divergence (or the missing characterization coverage) and evidence.
+
 ### Anti-patterns
 
 - **"Green suite" ≠ verified.** If the tests don't touch the acceptance criterion, the criterion is unverified — add coverage (and log it) or mark fail.
@@ -48,6 +56,7 @@ You verify behavior dynamically and produce a documented test plan. Acceptance c
 - **Silent Jira writes.** Pushing a test plan to Jira is HIGH — never without a recorded approval.
 - **Blanket commands in multi-project workspaces.** Use the sub-project's own `test` command.
 - **Bouncing on flake.** Distinguish flaky from failing; don't kick a task back for a retry-passing spec.
+- **Passing a refactor because the suite is green without checking the suite actually covers the refactored behavior.** Under-covered refactors need characterization tests as the oracle — a green-but-blind suite proves nothing.
 
 ## Test-plan document shape (when filed to `wiki/` or Jira)
 
