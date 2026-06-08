@@ -268,9 +268,10 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 - runs **layout migrations** keyed off `workspace_schema`,
 - **refreshes tool-owned files** — `tcgflow-*` commands (workspace + `~/.claude/skills/`) and agent profiles are updated to the latest templates; any drifted file is backed up to `{name}.bak` first,
 - **additively adds new skills** (absent → added; existing → never overwritten),
+- **prints a drift report** — the existing skills + tool adapters that differ from the new templates (the files it won't auto-merge),
 - re-registers the project and stamps the version.
 
-**Your customizations are never clobbered** — `governance.md`, `config.yaml`, existing skills, and tool-adapter content are left for you to merge. Restart Claude Code afterward to pick up refreshed slash commands. (Then `cd ui && npm run build` if the tool's UI changed.)
+**Your customizations are never clobbered** — `governance.md`, `config.yaml`, existing skills, and tool-adapter content are left for you to merge. The drift report tells you which of those drifted; re-run it anytime with `geekstackflow drift /path/to/project` (read-only — it normalises the `{{project-name}}` placeholder and ignores your below-the-marker overrides, so it won't cry wolf). Restart Claude Code afterward to pick up refreshed slash commands. (Then `cd ui && npm run build` if the tool's UI changed.)
 
 ---
 
@@ -296,6 +297,7 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 | Planner "can't fetch the ticket" | The Atlassian MCP isn't connected. Connect it, or paste the ticket's title/description/acceptance criteria — the planner won't invent ticket contents. |
 | `upgrade` says "newer than this tool" | The workspace was touched by a newer geekstackflow. Update the tool (`npm update -g geekstackflow` or `git pull`). |
 | A refreshed command/agent lost my edits | `upgrade` backed it up to `{name}.bak` before overwriting tool-owned files — your version is recoverable there. (Customizations to `governance.md`/`config.yaml`/skills are never overwritten.) |
+| Not sure what to merge after an upgrade | Run `geekstackflow drift /path/to/project` — it lists exactly which existing skills + tool adapters differ from the installed templates (and flags new skills not yet installed). Read-only. |
 
 ---
 
@@ -327,6 +329,7 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 geekstackflow init [target]                  initialise a workspace
 geekstackflow upgrade [target]               migrate layout + refresh tool-owned files
 geekstackflow register [target]              add an existing workspace to the Cockpit registry
+geekstackflow drift [target]                 report skills/adapters that differ from the templates (read-only)
 geekstackflow ui [--port N]                  launch the Cockpit
 geekstackflow init --migrate-from <old> .    collect old AI infra for migration review
 geekstackflow init --force [target]          overwrite an existing .tcgstackflow/

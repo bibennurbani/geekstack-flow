@@ -313,9 +313,10 @@ This:
 - runs any **layout migrations** keyed off `workspace_schema` (e.g. the pre-v0.2 dotfile rename),
 - **refreshes tool-owned files** — `tcgflow-*` commands (in the workspace *and* `~/.claude/skills/`) and agent profiles are updated to the latest templates, backing up any drifted file to `{name}.bak`,
 - **additively adds new skills** (absent → added; existing → never overwritten),
+- **prints a drift report** — exactly which existing skills and tool adapters differ from the new templates (the files it won't auto-merge), so you know precisely what to review,
 - registers the project in the Cockpit and stamps the version.
 
-**Your customizations are never clobbered** — `governance.md`, `config.yaml`, existing skills, and tool-adapter content are left for manual merge. Restart Claude Code afterward to pick up refreshed slash commands. (ADR 0021.)
+**Your customizations are never clobbered** — `governance.md`, `config.yaml`, existing skills, and tool-adapter content are left for manual merge. The drift report (re-runnable anytime with `geekstackflow drift /path/to/project`) tells you which of those drifted from the new templates, so the merge is targeted, not guesswork. Restart Claude Code afterward to pick up refreshed slash commands. (ADR 0021.)
 
 ---
 
@@ -323,7 +324,7 @@ This:
 
 ```
 geekstack-flow/
-├── init.js                 # the CLI (init / upgrade / register / ui) — zero dependencies
+├── init.js                 # the CLI (init / upgrade / register / drift / ui) — zero dependencies
 ├── package.json            # bin: { geekstackflow, tcgflow }, v0.2.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
 ├── docs/adr/               # 31 Architecture Decision Records

@@ -17,6 +17,9 @@ Usage (all forms equivalent — pick what feels natural):
   geekstackflow register [target]             Add an already-initialised project to the Cockpit registry
                                               (~/.tcgstackflow/projects.yaml) without re-running init —
                                               e.g. after cloning a project to a new machine.
+  geekstackflow drift [target]                Report which existing skills / tool adapters differ from the
+                                              installed templates — the files upgrade won't auto-merge,
+                                              so you know exactly what to review. Read-only; writes nothing.
   geekstackflow ui [--port N]                 Launch the Cockpit — a local read-only UI over all your
                                               registered projects at http://127.0.0.1:4729 (default port).
   geekstackflow --force [target]              Overwrite existing .tcgstackflow/
@@ -70,7 +73,7 @@ const TOOL_VERSION = readToolVersion();
 const LATEST_SCHEMA = 3;
 
 function parseArgs(argv) {
-  const args = { force: false, help: false, upgrade: false, register: false, ui: false, port: null, migrateFrom: null, target: process.cwd() };
+  const args = { force: false, help: false, upgrade: false, register: false, drift: false, ui: false, port: null, migrateFrom: null, target: process.cwd() };
   const positional = [];
   const raw = argv.slice(2);
 
@@ -86,6 +89,9 @@ function parseArgs(argv) {
   } else if (raw[0] === 'register') {
     raw.shift();
     args.register = true;
+  } else if (raw[0] === 'drift') {
+    raw.shift();
+    args.drift = true;
   } else if (raw[0] === 'ui') {
     raw.shift();
     args.ui = true;
@@ -428,9 +434,12 @@ async function upgradeWorkspace(target) {
     console.log('\n  ~ tool-owned files (commands + agents + skills) already current — nothing to refresh');
   }
 
-  console.log('\nNot refreshed by upgrade (intentional — these carry your customizations):');
-  console.log('  - governance.md, config.yaml, and EXISTING skills (.tcgstackflow/skills/) — new skills are added, your edits are never overwritten; diff against templates/ to merge upstream improvements.');
-  console.log('  - Tool adapter content at .tcgstackflow/tools/{claude,codex,github}/ — diff against templates/ and merge manually.');
+  console.log('\nNot refreshed by upgrade (intentional — your customizations): governance.md and config.yaml (beyond the migration above).');
+
+  // Tell the user EXACTLY which non-auto-merged files (existing skills + tool adapters) carry
+  // upstream changes, so the manual merge is targeted rather than guesswork. `geekstackflow drift`
+  // re-runs just this check anytime.
+  reportWorkspaceDrift(target);
 }
 
 // OS/editor cruft we never copy into a user's workspace.
@@ -501,6 +510,82 @@ function mergeRefresh(acc, r) {
   acc.updated.push(...r.updated);
   acc.backedUp.push(...r.backedUp);
   return acc;
+}
+
+// --- Drift report: which non-auto-merged files differ from the installed templates ---
+// `upgrade` refreshes tool-owned files (commands + agents) and additively adds new skills, but it
+// never overwrites EXISTING skills or the tool adapters (customization surfaces, ADR 0021). This
+// read-only report tells the user EXACTLY which of those drifted, so the manual merge is targeted
+// rather than "diff the whole templates/ tree and guess." Shared by `upgrade` and `drift`.
+
+const ADAPTER_OVERRIDE_MARKER = 'Edit below this line';
+
+// Read-only recursive compare of a template dir vs a project dir. Writes nothing. Returns relative
+// paths bucketed as drifted (present + differs), current (present + identical), missing (absent).
+function reportDriftFromTemplate(srcDir, destDir, _rel = '') {
+  const out = { drifted: [], current: [], missing: [] };
+  if (!fs.existsSync(srcDir)) return out;
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (COPY_SKIP.has(entry.name) || entry.name.endsWith('.swp')) continue;
+    const s = path.join(srcDir, entry.name);
+    const d = path.join(destDir, entry.name);
+    const rel = _rel ? path.join(_rel, entry.name) : entry.name;
+    if (entry.isDirectory()) {
+      const sub = reportDriftFromTemplate(s, d, rel);
+      out.drifted.push(...sub.drifted);
+      out.current.push(...sub.current);
+      out.missing.push(...sub.missing);
+    } else if (entry.isFile()) {
+      if (!fs.existsSync(d)) out.missing.push(rel);
+      else if (!filesEqual(s, d)) out.drifted.push(rel);
+      else out.current.push(rel);
+    }
+  }
+  return out;
+}
+
+// Adapters get {{project-name}} substituted at init and carry user overrides below a marker, so a
+// raw byte-compare always shows false drift. Compare only the tool-owned portion ABOVE the marker,
+// with the placeholder normalised to the project's name. Returns 'missing' | 'current' | 'drifted'.
+function adapterDrifted(templatePath, projectPath, projectName) {
+  if (!fs.existsSync(projectPath) || !fs.existsSync(templatePath)) return 'missing';
+  const aboveMarker = (s) => { const i = s.indexOf(ADAPTER_OVERRIDE_MARKER); return (i === -1 ? s : s.slice(0, i)).trim(); };
+  const tpl = fs.readFileSync(templatePath, 'utf8').split('{{project-name}}').join(projectName);
+  const proj = fs.readFileSync(projectPath, 'utf8');
+  return aboveMarker(tpl) === aboveMarker(proj) ? 'current' : 'drifted';
+}
+
+// Print the drift report for the two surfaces upgrade does NOT auto-merge: existing skills and the
+// tool adapters. Returns { skillDrift, adapterDrift } for tests. config.yaml/governance.md are
+// excluded — they're always project-specific, so reporting them as "drift" would be pure noise.
+function reportWorkspaceDrift(target) {
+  const workspaceDir = path.join(target, '.tcgstackflow');
+  const configPath = path.join(workspaceDir, 'config.yaml');
+  const nameMatch = fs.existsSync(configPath)
+    ? fs.readFileSync(configPath, 'utf8').match(/^\s{2}name:\s*"?([^"\n]*)"?/m) : null;
+  const projName = (nameMatch && nameMatch[1].trim()) || path.basename(path.resolve(target));
+
+  const skillDrift = reportDriftFromTemplate(
+    path.join(WORKSPACE_TEMPLATE, 'skills'), path.join(workspaceDir, 'skills'));
+
+  const adapterFiles = ['tools/claude/CLAUDE.md', 'tools/codex/AGENTS.md', 'tools/github/copilot-instructions.md'];
+  const adapterDrift = adapterFiles.filter(rel =>
+    adapterDrifted(path.join(WORKSPACE_TEMPLATE, rel), path.join(workspaceDir, rel), projName) === 'drifted');
+
+  const drifted = [...skillDrift.drifted.map(f => path.join('skills', f)), ...adapterDrift];
+  console.log('\nReview for upstream changes (NOT auto-merged — customization surfaces, ADR 0021):');
+  if (drifted.length === 0) {
+    console.log('  ✓ existing skills + tool adapters match the installed templates — nothing to merge.');
+  } else {
+    console.log('  These files differ from the installed templates — diff and merge what you want:');
+    for (const f of drifted) console.log(`    ~ ${f}`);
+    console.log(`  Template source: ${WORKSPACE_TEMPLATE}`);
+    console.log(`  e.g.  diff "${path.join(workspaceDir, drifted[0])}" "${path.join(WORKSPACE_TEMPLATE, drifted[0])}"`);
+  }
+  if (skillDrift.missing.length) {
+    console.log(`  New skills not yet installed: ${skillDrift.missing.map(f => path.join('skills', f)).join(', ')} — run \`geekstackflow upgrade\` to add them.`);
+  }
+  return { skillDrift, adapterDrift };
 }
 
 // --- Multi-project detection ---
@@ -792,6 +877,17 @@ async function main() {
     const name = path.basename(path.resolve(args.target));
     const result = registerProject(name, args.target);
     console.log(`${result} "${name}" (${path.resolve(args.target)}) → ${REGISTRY_PATH}`);
+    return;
+  }
+
+  if (args.drift) {
+    if (!isWorkspace(args.target)) {
+      console.error(`No .tcgstackflow/ found at ${args.target}. 'drift' reports which customization-surface files differ from the installed templates; run it inside an initialised project.`);
+      process.exit(1);
+    }
+    console.log('\nCreative GeekStack Flow — drift report');
+    console.log(`Target: ${args.target}   (installed tool v${TOOL_VERSION})`);
+    reportWorkspaceDrift(args.target);
     return;
   }
 
@@ -1088,6 +1184,7 @@ module.exports = {
   detectProjects, analyseProject, slugify, renderProjectsYaml, SKIP_DIRS,
   readWorkspaceSchema, stampWorkspaceVersion, upgradeWorkspace,
   readProjectRegistry, writeProjectRegistry, registerProject, isWorkspace, REGISTRY_PATH,
+  reportDriftFromTemplate, adapterDrifted, reportWorkspaceDrift,
   TOOL_VERSION, LATEST_SCHEMA, MIGRATIONS,
 };
 

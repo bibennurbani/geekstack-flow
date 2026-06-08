@@ -1,6 +1,6 @@
 ---
 name: tcgflow-upgrade
-description: Run `init.js --upgrade` to migrate an existing pre-v0.2 .tcgstackflow/ workspace to the current layout. Use when the user types `/tcgflow-upgrade` or asks "upgrade this workspace", "migrate to no-dotfiles convention", "rename .weekly to weekly". Non-destructive — renames dotted subfolders, moves workspace .gitignore content to project-root .gitignore, creates the Obsidian symlink. Does NOT touch tasks, wiki, agents, skills, or tool adapter content.
+description: Run `init.js --upgrade` to migrate an existing pre-v0.2 .tcgstackflow/ workspace to the current layout. Use when the user types `/tcgflow-upgrade` or asks "upgrade this workspace", "migrate to no-dotfiles convention", "rename .weekly to weekly". Non-destructive — runs layout + `wiki_search` migrations, refreshes tool-owned commands/agents (backing up drift to `.bak`), additively adds new skills, and prints a **drift report** of the existing skills + tool adapters that differ from the new templates (review/merge those, or re-check with `geekstackflow drift`). Never overwrites your tasks, wiki, governance.md, config.yaml, existing skills, or tool adapters.
 ---
 
 # `/tcgflow-upgrade` — in-place upgrade of an existing workspace
@@ -29,7 +29,7 @@ The user typed `/tcgflow-upgrade` or said *"upgrade this workspace"*, *"migrate 
    - Creates the Obsidian symlink if missing
    - Leaves all user content (tasks, wiki, agents, skills, tool adapter overrides) **untouched**
 
-4. **Report the changes** the script made.
+4. **Report the changes** the script made — including the **drift report** it prints at the end: the existing skills and `tools/{claude,codex,github}/` adapters that differ from the new templates and were *not* auto-merged (these are the files to review). New skills not yet installed are flagged too.
 
 5. **Bootstrap qmd wiki-search after the schema-2→3 migration.** That migration injects the `wiki_search` config block into the existing workspace (ADR 0030); `init.js` the script does **not** install qmd. So once the migration has run: if qmd is absent, run the setup — `qmd --version`, and if missing `npm install -g @tobilu/qmd` (a **HIGH action** per `governance.md` — global npm install + ~2 GB models, Node ≥ 22, `brew install sqlite` on macOS — issue a permission request first), then register collections (`qmd collection add .tcgstackflow/wiki --name wiki`, plus `qmd collection add docs --name docs` when a `docs/` dir exists). Then **re-embed** with `qmd embed` so the index reflects the upgraded workspace.
 
@@ -41,7 +41,7 @@ The user typed `/tcgflow-upgrade` or said *"upgrade this workspace"*, *"migrate 
       ```
       Then restart any other open Claude Code session so it sees the refreshed skills.
 
-   b. **Refresh tool adapter content** at `.tcgstackflow/tools/{claude,codex,github}/` — only if the user wants the latest skill tables and convention docs. **NOT recommended via `--force`** because that also resets agents/skills templates the user may have customised. Suggest a manual diff-and-merge against `templates/workspace/.tcgstackflow/tools/` from the geekstack-flow repo.
+   b. **Merge drifted skills + tool adapters** — the drift report (from step 4, or re-run `geekstackflow drift .` anytime) lists exactly which existing skills and `.tcgstackflow/tools/{claude,codex,github}/` files differ from the new templates. Diff and merge those (the report prints a ready-to-use `diff` example). **NOT via `--force`** — that resets agents/skills templates the user may have customised. The drift check normalises the `{{project-name}}` placeholder and ignores below-marker overrides, so it only flags genuine upstream differences.
 
 ## Anti-patterns
 

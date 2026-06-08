@@ -24,6 +24,10 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 - **`workspace_schema` bumped to 3** — a schema-2 → 3 migration injects the `wiki_search` config block into existing workspaces; `upgrade` installs/registers/embeds qmd for them.
 - Now **6 agent roles, 17 skills, 17 commands**.
 
+### Added — `drift` report for targeted upgrades
+
+- **`geekstackflow drift [project]`** + a drift report printed at the end of every `upgrade` — lists exactly which **existing skills** and **tool adapters** differ from the installed templates (the customization surfaces `upgrade` won't auto-merge per ADR 0021), so merging upstream changes is targeted instead of "diff the whole `templates/` tree and guess." Adapter comparison **normalises the `{{project-name}}` placeholder and ignores content below the override marker**, so it never reports false drift; new-but-not-yet-installed skills are flagged separately. Read-only — writes nothing. New `init.js` helpers `reportDriftFromTemplate` / `adapterDrifted` / `reportWorkspaceDrift` (exported for tests).
+
 ### Documentation
 
 - Added a full **`docs/`** set: [`docs/README.md`](docs/README.md) (index), [`INSTALL.md`](docs/INSTALL.md) (prerequisites, npm/clone install, Cockpit build, optional integrations), [`QUICKSTART.md`](docs/QUICKSTART.md) (zero-to-working in ~5 min), and [`USAGE.md`](docs/USAGE.md) (the full daily workflow, Cockpit, wiki/memory, timesheets, Jira sync, signal→task, governance, multi-project, migration, upgrade, global memory, troubleshooting, reference tables). Top-level README rewritten and links to the guides.
