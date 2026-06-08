@@ -7,7 +7,7 @@ V1's "personal-first → team-usable → OSS-ready" ladder (ADR 0001) reaches th
 | File | Purpose |
 |---|---|
 | `LICENSE` | MIT — matches the README's stated intent, makes redistribution unambiguous |
-| `package.json` | `name: geekstackflow`, `bin: { geekstackflow, tcgflow }`, `files: [init.js, templates/, docs/, ...]`, Node 18+ engine, MIT license |
+| `package.json` | `name: geekstackflow`, `bin: { geekstackflow, tcgflow }`, `files: [init.js, templates/, docs/, ...]`, Node 22+ engine (raised from 18+ for qmd — ADR 0030), MIT license |
 | `CONTRIBUTING.md` | Local setup, ADR conventions, how to add skills / slash commands / tool adapters, style guide |
 | `CHANGELOG.md` | Keep-a-Changelog format, semver, initial `0.1.0` entry |
 

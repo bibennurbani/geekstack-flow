@@ -17,6 +17,8 @@ _(Per-project description — what is this codebase, who uses it, the projects i
 Before any non-trivial action, read in this order:
 
 1. **Search the wiki via the `wiki-search` skill (qmd)** — the mandatory discovery layer. qmd finds *which* pages are relevant (`qmd query "..." -c wiki --json`); you then open them and follow `[[wikilinks]]` one hop. It **complements** `.tcgstackflow/wiki/index.md` — the Map of Content and the always-current fallback when the index is stale or qmd is unavailable. qmd is installed and the wiki indexed during setup (`/tcgflow-init`).
+   - Wiki frontmatter schema: `title`, `summary`, `tags`, `aliases`, `priority`, `created`, `updated`, `status`.
+   - qmd chunks pages at headings — author pages with clear `##`/`###` sections and a lead summary sentence (see the ingest skill's "Wiki page authoring" section).
 2. **`.tcgstackflow/governance.md`** — the four-level risk taxonomy and the permission-request recipe. HIGH/CRITICAL actions require an inline permission request.
 3. **`.tcgstackflow/agents/{role}.md`** — the role profile you are acting as.
 

@@ -1,6 +1,6 @@
 ---
 name: lint-wiki
-description: Periodic health-check of the LLM-wiki. Detects contradictions across pages, stale claims newer Raw has superseded, orphan pages with no inbound links, important concepts mentioned without their own page, missing cross-references, and data gaps. Produces a report appended to `wiki/log.md` and proposes fixes — never silently rewrites. Run on demand or weekly. Used by the Ingester agent.
+description: Periodic health-check of the LLM-wiki. Detects contradictions across pages, stale claims newer Raw has superseded, orphan pages with no inbound links, important concepts mentioned without their own page, missing cross-references, and data gaps — plus qmd-friendliness best-practice checks (missing summary, incomplete or off-taxonomy frontmatter, poor chunking structure, missing aliases) against the ingest skill's authoring standard. Produces a report appended to `wiki/log.md` and proposes fixes — never silently rewrites. Run on demand or weekly. Used by the Ingester agent.
 ---
 
 # Lint Wiki
@@ -87,6 +87,46 @@ A page mentions "see [[deployment]]" or "TODO: document the X flow" but the refe
 
 **Severity:** `major` for broken wikilinks (qmd uses paths as IDs); `nit` for TODO markers.
 
+The detectors below check pages against the authoring standard in the `ingest` skill's [Wiki page authoring (qmd-optimized)](../ingest/SKILL.md#wiki-page-authoring-qmd-optimized) section — the frontmatter schema, the tag taxonomy, and the qmd-chunking authoring rules. They are best-practice / search-quality checks, not factual-drift checks. They are **report-only** like every other detector: Lint flags them, the user decides, and the fix routes through `ingest`.
+
+#### 7. Missing or empty summary
+
+A page lacks the `summary:` frontmatter field, or has it empty/placeholder. Per the authoring standard every page needs a one-sentence `summary` because qmd's frontmatter indexing is not guaranteed — the summary sentence lands in the body's first chunk and gives BM25 and the embedding a strong, accurate signal (and doubles as the human-readable preview). Detected by:
+
+- Checking each page's frontmatter for a non-empty `summary:` value.
+- Cross-checking that the lead paragraph under the `# Title` restates the summary in prose (the strongest-embedding first chunk). A page with the field but no lead paragraph is a partial finding.
+
+**Severity:** `major` — a missing summary measurably degrades retrieval for that page.
+
+#### 8. Incomplete or off-taxonomy frontmatter
+
+A page's frontmatter is missing a required field, or its `tags` drift from the recommended taxonomy. Detected by:
+
+- **Missing required fields** — check each page for `title`, `tags`, `status`, and `updated`. (`summary` is covered by detector 7.)
+- **Off-taxonomy tags** — flag pages whose `tags` contain no recognised **kind** tag (`overview` · `architecture` · `domain` · `feature` · `integration` · `operations` · `decision` · `testing` · `meta`), or carry more than ~4 tags (tag sprawl).
+- **Near-duplicate tags** — compare tags across the whole wiki for near-duplicates that should be consolidated (e.g. `frontend` vs `front-end` vs `ui`, singular vs plural). Consistency beats coverage.
+
+**Severity:** `major` for a missing required field; `nit` for off-taxonomy or near-duplicate tags (proposes consolidation).
+
+#### 9. Poor chunking structure
+
+A page won't chunk cleanly for qmd, which breaks Markdown into ~900-token pieces at headings and code fences. Detected by:
+
+- **Wall of prose** — a section (or a whole page) with a long run of body text and no `##`/`###` subheadings to break it into coherent chunks. Flag sections that run well past ~900 tokens (roughly a few screens) without a subheading.
+- **Missing lead summary paragraph** — no 1–2 sentence prose paragraph directly under the `# Title` (the page's strongest-embedding first chunk). Overlaps with detector 7's lead-paragraph check; report under whichever is the primary gap.
+- **Oversized code block** — a single fenced code block large enough to dominate a chunk and crowd out prose.
+
+**Severity:** `nit` — proposes adding `##`/`###` subheadings to split the section, or splitting a sprawling page into linked sub-pages.
+
+#### 10. Missing aliases for synonyms
+
+A page whose `title` has common synonyms or alternate names carries no `aliases:` frontmatter (and doesn't surface those synonyms in the body prose). Per the authoring standard, synonyms belong both in `aliases` and in the body so keyword search resolves them. Detected by:
+
+- For each page, checking whether other pages, `log.md` entries, or the page's own prose refer to its concept by an alternate name not listed in `aliases`.
+- Flagging acronym/expansion pairs (e.g. a page titled "Monitoring Program" referenced elsewhere as "MP") that appear nowhere in `aliases` or body prose.
+
+**Severity:** `nit` — proposes adding the alternate names to `aliases` and surfacing them in prose.
+
 ### Output
 
 Short user-facing summary:
@@ -139,6 +179,19 @@ Short user-facing summary:
 
 ### Data gaps
 - `architecture.md` contains `TODO: document the AI fallback flow`. Proposed fix: re-ingest from `ai-fallback.md` to fill the gap.
+
+### Missing or empty summary
+- `meta-pixel.md` — no `summary:` frontmatter and no lead paragraph under the H1. Proposed fix: re-ingest, add a one-sentence summary + matching lead paragraph.
+
+### Incomplete or off-taxonomy frontmatter
+- `data-model.md` — missing `updated:` field. Proposed fix: re-ingest, add `updated:`.
+- `strava-integration.md` — tags `[strava, oauth, fitness, sync, api]` have no recognised kind tag and sprawl past 4. Proposed fix: consolidate to `[integration, api]`.
+
+### Poor chunking structure
+- `architecture.md` — the "Background" section runs ~1,400 tokens of unbroken prose with no `##`/`###` subheadings. Proposed fix: re-ingest, split into focused subsections.
+
+### Missing aliases for synonyms
+- `monitoring-program.md` — referenced as "MP" in `architecture.md` but `aliases` is empty. Proposed fix: add `MP` to `aliases` and surface it in prose.
 
 **Decision:** Surfaced to user. User to choose which to route through `ingest`.
 ```

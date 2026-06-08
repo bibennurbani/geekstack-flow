@@ -52,11 +52,15 @@ wiki_search:
   engine: qmd                       # https://github.com/tobi/qmd — local hybrid (BM25 + vector + rerank)
   interface: cli                    # 'cli' is canonical/tool-portable; the qmd MCP (mcp.recommended) is an optional Claude convenience
   embed_on_ingest: true             # the Ingester re-embeds all collections after each ingest/lint
+  mask: "*.md"                      # qmd indexes only Markdown (qmd collection add --mask)
   collections:                      # init registers these; a docs/ entry is added only when the directory exists
     - name: wiki
       path: .tcgstackflow/wiki      # mandatory
+      # context: a one-line description set via `qmd context add qmd://wiki "..."` to improve retrieval (set by /tcgflow-init)
+      context: "Project knowledge wiki — architecture, domain glossary, features, decisions (ADRs), operations. The authoritative AI-maintained memory."
     # - name: docs
     #   path: docs                  # added by /tcgflow-init when a docs/ dir is present (per sub-project in multi-project)
+    #   context: "In-repo developer docs (READMEs, guides, /docs)."
 
 governance:
   mode: strict                      # strict | relaxed

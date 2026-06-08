@@ -287,11 +287,14 @@ const MIGRATIONS = [
         '  engine: qmd                       # https://github.com/tobi/qmd — local hybrid (BM25 + vector + rerank)',
         "  interface: cli                    # 'cli' is canonical/tool-portable; the qmd MCP is an optional Claude convenience",
         '  embed_on_ingest: true             # the Ingester re-embeds all collections after each ingest/lint',
+        '  mask: "*.md"                      # qmd indexes only Markdown',
         '  collections:                      # a docs/ entry is added only when the directory exists',
         '    - name: wiki',
         '      path: .tcgstackflow/wiki      # mandatory',
+        '      context: "Project knowledge wiki — architecture, domain glossary, features, decisions (ADRs), operations. The authoritative AI-maintained memory."',
         '    # - name: docs',
-        '    #   path: docs                  # added by /tcgflow-init when a docs/ dir is present',
+        '    #   path: docs                  # added by /tcgflow-init when a docs/ dir is present (per sub-project in multi-project)',
+        '    #   context: "In-repo developer docs (READMEs, guides, /docs)."',
         '',
       ].join('\n');
       // Insert before the `skills:` block to match the template layout; else before governance:; else append.
@@ -764,6 +767,13 @@ async function main() {
     return;
   }
 
+  // geekstackflow targets Node >=22 (the mandatory qmd wiki-search layer needs it). The CLI
+  // itself runs on older Node, so this is an advisory, not a hard gate.
+  const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
+  if (nodeMajor < 22) {
+    console.warn(`\n⚠ Node ${process.versions.node} detected — geekstackflow targets Node >=22 (the mandatory qmd wiki-search layer needs it). init will still run; install and run qmd on Node >=22.`);
+  }
+
   if (args.upgrade) {
     await upgradeWorkspace(args.target);
     return;
@@ -1059,7 +1069,7 @@ async function main() {
   console.log('  3. Set up wiki search (qmd) — the mandatory discovery layer over the wiki & docs/ (ADR 0030).');
   console.log('       Easiest: in your AI tool run `/tcgflow-init` (or "set up qmd wiki search") — it installs qmd and');
   console.log('       indexes the wiki & docs/ for you, asking permission for the global install (~2GB models).');
-  console.log('       Manual: npm i -g @tobilu/qmd  &&  qmd collection add .tcgstackflow/wiki --name wiki  &&  qmd embed');
+  console.log('       Manual: npm i -g @tobilu/qmd  &&  qmd collection add .tcgstackflow/wiki --name wiki --mask "*.md"  &&  qmd embed');
   console.log('       (requires Node >=22; on macOS: brew install sqlite)');
   if (enableClaudeCommands) {
     console.log('  4. Try a slash command in Claude Code: /tcgflow-plan, /tcgflow-refactor, /tcgflow-lint, /tcgflow-audit, etc.');

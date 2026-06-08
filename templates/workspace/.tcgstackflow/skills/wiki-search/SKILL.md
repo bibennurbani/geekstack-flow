@@ -15,12 +15,16 @@ This is the **discovery layer**, not a replacement for the wiki's structure: qmd
 
 ## Instructions
 
+### How qmd indexes (why structure matters)
+
+qmd chunks each Markdown file into ~900-token pieces, breaking at headings (H1/H2 score highest) and code fences; frontmatter indexing is *not* guaranteed. So retrieval quality is driven by structure: clear `##`/`###` sections (each a clean, self-contained chunk under ~900 tokens) and a lead summary sentence in the body's first chunk both retrieve far better than walls of prose. This applies to anything you index, not just the wiki — well-sectioned docs and ad-hoc collections search well, monolithic ones don't. For the full page convention (frontmatter `summary`, tag taxonomy, authoring rules), see the [ingest skill](../ingest/SKILL.md) — its **"Wiki page authoring (qmd-optimized)"** section is the source of truth.
+
 ### 1. Ensure qmd is ready (cheap precondition check)
 
 The workspace is set up by `init`/`upgrade` so qmd is normally already installed and the collections embedded. Verify, in order:
 
 1. **Binary present?** `qmd --version`. If the command is missing, qmd is not installed. Installing it (`npm install -g @tobilu/qmd`, ~2 GB of local models) is a **HIGH action** per `governance.md` — issue a permission request before running it. If the user declines or install fails, **fall back to `index.md` navigation** (read `wiki/index.md`, follow `[[wikilinks]]`) and tell the user "qmd unavailable — using the Map-of-Content fallback." Do not fabricate search results.
-2. **Collections registered?** `qmd collection list`. The workspace expects a `wiki` collection (`.tcgstackflow/wiki/`) and, when the project has a `docs/` directory, a `docs` collection. Register any missing one with `qmd collection add <path> --name <name>`.
+2. **Collections registered?** `qmd collection list`. The workspace expects a `wiki` collection (`.tcgstackflow/wiki/`) and, when the project has a `docs/` directory, a `docs` collection. Register any missing one with `qmd collection add <path> --name <name> --mask "*.md"` (the `--mask` keeps qmd indexing Markdown only, not stray files). `init` also runs `qmd context add qmd://<name> "<desc>"` for the wiki/docs collections — a one-line collection description that improves retrieval; set one if a collection is missing it.
 3. **Index fresh?** The Ingester re-embeds after every ingest, so reads are normally current. If you have reason to believe the index is stale (you just edited pages, or a search returns obviously missing content), run an incremental `qmd embed`.
 
 ### 2. Search (CLI is canonical)
@@ -44,6 +48,22 @@ qmd vsearch "<concept>"      -c wiki --json          # pure semantic — for fuz
 1. Open the top-ranked pages qmd returned (`qmd get "<filepath>"` or read the file directly).
 2. Follow their `[[wikilinks]]` **one hop** to catch directly-related pages.
 3. If results look thin or stale, fall back to `wiki/index.md` and navigate the Map of Content by hand — it is always current.
+
+### Index anything (ad-hoc)
+
+qmd is not limited to the wiki/docs collections — point it at any folder of Markdown to make it searchable. The recipe:
+
+```bash
+qmd collection add <path> --name <name> --mask "*.md"   # register the folder (Markdown only)
+qmd context add qmd://<name> "<one-line description>"   # optional — a collection description that improves retrieval
+qmd embed                                                # build/refresh the embeddings
+qmd query "<your question>" -c <name> --json             # search the new collection
+```
+
+Health and maintenance:
+
+- `qmd status` — collection health (counts, embed freshness); run it when results look off.
+- `qmd update` — re-index a collection after its files change (or `qmd embed` for an incremental embed).
 
 ### Output
 

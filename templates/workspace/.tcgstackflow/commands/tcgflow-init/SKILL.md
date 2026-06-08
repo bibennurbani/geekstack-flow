@@ -33,8 +33,17 @@ The user typed `/tcgflow-init` or said something equivalent: *"set up geekstackf
 
 6. **Bootstrap qmd wiki-search** (realizes the `wiki_search` config block `init.js` scaffolds — ADR 0030; `init.js` the *script* stays dependency-free and does **not** install qmd):
    - **Ensure qmd is installed.** Run `qmd --version`. If missing, install it — `npm install -g @tobilu/qmd`. This is a **HIGH action** per `governance.md` (global npm install + ~2 GB of local models): issue a permission request first. Needs Node ≥ 22, ~2 GB disk for models, and `brew install sqlite` on macOS.
-   - **Register collections.** `qmd collection add .tcgstackflow/wiki --name wiki` (mandatory), plus `qmd collection add docs --name docs` when a `docs/` directory exists — per sub-project `docs/` in a multi-project workspace.
-   - **Run the first embed.** `qmd embed` so the collections are indexed and the `wiki-search` skill works on first use.
+   - **Register collections + set a retrieval context per collection** (the `--mask` and `context` values come from config.yaml's `wiki_search` block). The `wiki` collection is mandatory:
+     ```bash
+     qmd collection add .tcgstackflow/wiki --name wiki --mask "*.md"
+     qmd context add qmd://wiki "Project knowledge wiki — architecture, domain glossary, features, decisions (ADRs), operations"
+     ```
+     Add the `docs` collection + context too when a `docs/` directory exists — per sub-project `docs/` in a multi-project workspace:
+     ```bash
+     qmd collection add docs --name docs --mask "*.md"
+     qmd context add qmd://docs "In-repo developer docs (READMEs, guides, /docs)"
+     ```
+   - **Run the first embed and confirm.** `qmd embed` so the collections are indexed and the `wiki-search` skill works on first use, then `qmd status` to confirm the collections registered and embedded.
 
 7. **Suggest the next move:** invoke `/tcgflow-plan` for a first task (commonly a scan-and-populate task to fill `wiki/project-overview.md` and `wiki/architecture.md` from the codebase).
 

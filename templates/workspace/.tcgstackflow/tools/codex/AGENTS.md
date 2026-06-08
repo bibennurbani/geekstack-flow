@@ -95,7 +95,8 @@ When you (Codex) receive any of these phrases, read the relevant `.tcgstackflow/
 ## Wiki conventions
 
 - Flat directory of Markdown with `[[wikilinks]]`.
-- Frontmatter: `title`, `tags`, `aliases`, `priority`, `created`, `updated`, `status`.
+- Frontmatter: `title`, `summary`, `tags`, `aliases`, `priority`, `created`, `updated`, `status`.
+- qmd chunks pages at headings — author pages with clear `##`/`###` sections and a lead summary sentence (see the ingest skill's "Wiki page authoring" section).
 - Pattern: [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 - **Search is mandatory via the `wiki-search` skill** — [qmd](https://github.com/tobi/qmd) is the discovery layer over the wiki and the project's `docs/`. The CLI is canonical (`qmd query "..." -c wiki --json`); the qmd MCP is an optional Claude convenience. qmd finds *which* pages are relevant; it complements `index.md` (the always-current fallback), not replaces it. Set up by `/tcgflow-init`.
 

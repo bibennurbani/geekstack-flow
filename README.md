@@ -58,7 +58,7 @@ npm link                 # puts `geekstackflow` + `tcgflow` on your PATH
 cd ui && npm install && npm run build   # build the Cockpit SPA (one-time)
 ```
 
-Two binaries are installed, identical: **`geekstackflow`** and the short alias **`tcgflow`**. The CLI itself has **zero runtime dependencies** (pure Node ≥18); only the Cockpit UI has dependencies, isolated under `ui/`.
+Two binaries are installed, identical: **`geekstackflow`** and the short alias **`tcgflow`**. The CLI itself has **zero runtime dependencies** (pure Node ≥22 — the baseline since the mandatory qmd wiki-search layer needs it); only the Cockpit UI has dependencies, isolated under `ui/`.
 
 ---
 

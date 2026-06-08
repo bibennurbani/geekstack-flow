@@ -1,6 +1,7 @@
 ---
 title: System Architecture
-tags: [architecture, design]
+summary: The high-level system design — the major components, how code is laid out, and how a request flows through the system.
+tags: [architecture]
 aliases: [system-design, high-level-architecture, arch]
 priority: P0
 created: 2026-05-30
@@ -9,6 +10,8 @@ status: stub
 ---
 
 # System Architecture
+
+The system's structural spine: the boxes-and-arrows diagram, where each component's code lives, the shape of the data model, the canonical request lifecycle, and the external services the system talks to. Deep topics link out to their own pages rather than bloating this one.
 
 > **Stub.** Filled in by the Ingester from the first scan-and-document task or from a dropped architecture doc in `raw/`.
 

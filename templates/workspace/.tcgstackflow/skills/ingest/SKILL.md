@@ -90,3 +90,68 @@ The user sees three things, in order:
 
 **Decision:** Recommended Frequency is now a first-class form field; old "computed from schedule" behaviour is preserved as auto-sync but the user can override. Removed the chip-based template since 1 MP → 1 Schedule is the canonical relationship.
 ```
+
+## Wiki page authoring (qmd-optimized)
+
+Every page you create or update is indexed by **qmd**, which chunks Markdown into ~900-token pieces, breaking at headings (H1/H2 score highest) and code fences. Well-sectioned pages retrieve far better than walls of prose — writing each section as a clean, self-contained chunk is the single biggest lever on search quality. (See [wiki-search](../wiki-search/SKILL.md) for how the index is searched.)
+
+### Frontmatter schema (every page)
+
+```yaml
+---
+title: {Specific, descriptive page title}      # qmd extracts this; it shows in results — be specific
+summary: {One sentence — what this page is and why it exists}   # prose signal in the first chunk + human/result preview
+tags: [{kind}, {area?}]                          # controlled vocabulary (see below); lowercase, kebab-case, 2–4 tags
+aliases: [{synonyms / alternate names}]          # also surface these in the body prose
+priority: P0|P1|P2                               # P0 core · P1 important · P2 reference
+status: current|stub|archived
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+# project: {name}                                # optional — multi-project workspaces only; match a projects[].name
+---
+```
+
+`summary` is new and important: qmd's frontmatter indexing is not guaranteed, but the `summary` sentence sits in the body's first chunk, so it gives both BM25 and the embedding a strong, accurate signal — and it doubles as the page's one-line preview for humans.
+
+### Tag taxonomy (lightweight, recommended — not enforced)
+
+- One **kind** tag: `overview` · `architecture` · `domain` · `feature` · `integration` · `operations` · `decision` · `testing` · `meta`
+- Optional **area / sub-project** tag (e.g. `frontend`, `api`, or a `projects[].name`).
+- Keep tags lowercase, kebab-case, and few (2–4). **Consistency beats coverage** — reuse existing tags before inventing new ones (Lint surfaces tag sprawl).
+
+### Authoring rules (because qmd chunks at headings)
+
+1. **Lead with a 1–2 sentence summary paragraph** right under the `# Title`, restating the page concept in prose (mirror the `summary` field). This is the page's strongest-embedding first chunk.
+2. **Structure with `##`/`###` headings; keep each section focused and under ~900 tokens** so it becomes one coherent chunk. Split a page that grows past a few screens into linked sub-pages rather than one giant page.
+3. **Surface synonyms / alternate terms in the body**, not only in `aliases` — keyword search matches body text reliably.
+4. **Keep code blocks reasonably sized** — qmd keeps them intact when it can, but an oversized block can dominate a chunk.
+5. **Descriptive kebab-case filename = the qmd docid.** Stable; on rename, add an `aliases:` entry so backlinks and retrieval resolve.
+6. **Link generously with `[[wikilinks]]`** so the qmd-first → one-hop reading pattern works.
+
+### Page template
+
+```markdown
+---
+title: {Specific Page Title}
+summary: {One sentence — what this page is and why it exists}
+tags: [{kind}, {area?}]
+aliases: [{synonym}, {alt-name}]
+priority: P1
+status: current
+created: {YYYY-MM-DD}
+updated: {YYYY-MM-DD}
+---
+
+# {Specific Page Title}
+
+{1–2 sentence summary paragraph — the page concept in prose. This is the first chunk qmd embeds.}
+
+## {Focused section heading}
+
+{Self-contained content, ideally under ~900 tokens. Use synonyms in prose.}
+
+## Related pages
+
+- [[some-related-page]]
+- [[another-page]]
+```

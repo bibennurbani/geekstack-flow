@@ -79,7 +79,8 @@ The wiki is flat, Obsidian-flavoured Markdown with `[[wikilinks]]`. Pattern is [
 - Start at `wiki/index.md` when qmd is unavailable.
 - Follow `[[wikilinks]]` only to pages relevant to the current topic.
 - Bump `updated:` frontmatter whenever you touch a page during ingestion.
-- Frontmatter schema: `title`, `tags`, `aliases`, `priority` (P0/P1/P2), `created`, `updated`, `status` (`current` | `stub` | `archived`).
+- Frontmatter schema: `title`, `summary`, `tags`, `aliases`, `priority` (P0/P1/P2), `created`, `updated`, `status` (`current` | `stub` | `archived`).
+- qmd chunks pages at headings — author pages with clear `##`/`###` sections and a lead summary sentence (see the ingest skill's "Wiki page authoring" section).
 
 ## Cross-tool handoff
 

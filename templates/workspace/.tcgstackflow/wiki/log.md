@@ -1,5 +1,6 @@
 ---
 title: Wiki Operations Log
+summary: An append-only chronological record of every wiki maintenance operation (ingest, lint, query, restructure) — the wiki's history-of-itself.
 tags: [meta, audit]
 aliases: [operations-log, wiki-log]
 priority: P2

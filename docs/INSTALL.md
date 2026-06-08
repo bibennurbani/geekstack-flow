@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- **Node.js ≥ 18** (uses built-in `fetch`, `fs`, etc. — `node --version` to check).
+- **Node.js ≥ 22** (the baseline since the mandatory qmd wiki-search layer needs it; the CLI itself uses only built-in `fetch`, `fs`, etc. — `node --version` to check).
 - **git** (for the recommended install and for safe rollbacks during migration).
 - An AI coding tool that reads project instructions — **Claude Code**, **Codex**, and/or **GitHub Copilot**.
 - **[qmd](https://github.com/tobi/qmd)** — the mandatory wiki search layer (see [Wiki search (qmd)](#wiki-search-qmd) below). Needs **Node.js ≥ 22** and **~2 GB disk** for its local models; on macOS, `brew install sqlite`.
@@ -71,8 +71,10 @@ To set it up by hand:
 
 ```bash
 npm i -g @tobilu/qmd
-qmd collection add .tcgstackflow/wiki --name wiki    # add a `docs` collection too if the project has docs/
+qmd collection add .tcgstackflow/wiki --name wiki --mask "*.md"   # add a `docs` collection too if the project has docs/
+qmd context add qmd://wiki "Project knowledge wiki — architecture, domain glossary, features, decisions, operations"
 qmd embed                                            # build the index
+qmd status                                           # confirm collections + chunk counts
 ```
 
 The Ingester re-embeds after every ingest, so the index stays fresh. If you decline the install, the workspace falls back to `index.md` Map-of-Content navigation.
