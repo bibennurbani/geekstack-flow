@@ -82,3 +82,26 @@ tags: [feature, vue, schema]
 | `tags` | no | Free-form labels — common ones: `feature`, `fix`, `refactor`, `test`, `docs`, `infra`. |
 | `governance` | when HIGH/CRITICAL action taken | Records the approval that authorised the action. |
 | `blocker` | when subtask is blocked | Records why the work stopped and what's needed to unblock. |
+| `via` | on a Cockpit-written entry | The surface that wrote the entry — `cockpit` for a Status override done from the UI (ADR 0032). Absent for normal agent/human entries. |
+| `status_from` | on a Cockpit status override | The status the task had before the override. |
+| `status_to` | on a Cockpit status override | The status the override set. Equals the rewritten `Status:` line. |
+
+### Cockpit Status-override entry
+
+When a user changes a task's status from the Cockpit (ADR 0032), the server appends an entry of this exact shape (the Cockpit, not a human, writes it). The `author` is `human` (the person clicked it) and `via: cockpit` marks the surface:
+
+```yaml
+### ENTRY START
+timestamp: '2026-06-09T09:15:00Z'
+author: 'human'
+via: cockpit
+summary: 'Status override: IN_PROGRESS → BLOCKED'
+status_from: IN_PROGRESS
+status_to: BLOCKED
+why: 'Manual status change from the Cockpit'
+validation:
+  - 'None — status-only change'
+tags: [status-override]
+```
+
+A free-form override accepts any status (no transition gating — ADR 0032). The `parseTaskLogTimeline` reader in the Cockpit surfaces `via`/`status_from`/`status_to` so the override is visible in the task's log timeline.

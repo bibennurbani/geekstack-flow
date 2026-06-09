@@ -65,12 +65,13 @@ const GLOBAL_TEMPLATE = path.join(SCRIPT_DIR, 'templates/global/.tcgstackflow');
 // schema 1 = original dotted layout (.weekly/, .archived/, workspace .gitignore)
 // schema 2 = no-dotfiles layout (weekly/, archived/, root .gitignore block, symlink) — ADR 0017
 // schema 3 = wiki_search (qmd) config block in config.yaml — ADR 0030
+// schema 4 = runs/ area for the Orchestrator + orchestrator.roles tool map — ADR 0024/0025/0032/0033
 function readToolVersion() {
   try { return JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, 'package.json'), 'utf8')).version || '0.0.0'; }
   catch { return '0.0.0'; }
 }
 const TOOL_VERSION = readToolVersion();
-const LATEST_SCHEMA = 3;
+const LATEST_SCHEMA = 4;
 
 function parseArgs(argv) {
   const args = { force: false, help: false, upgrade: false, register: false, drift: false, ui: false, port: null, migrateFrom: null, target: process.cwd() };
@@ -316,7 +317,66 @@ const MIGRATIONS = [
       return 1;
     },
   },
-  // Future: { from: 3, to: 4, label: 'add runs/ area for Orchestrator', apply… }
+  {
+    from: 3, to: 4,
+    label: 'add runs/ area + orchestrator.roles tool map for the Orchestrator (ADR 0024/0025/0033)',
+    apply(target, workspaceDir) {
+      let n = 0;
+
+      // a. Create the runs/ area + README (only when absent — never clobber an existing
+      //    runs/ dir or a user's run records). Sources the README from the workspace template,
+      //    falling back to a minimal stub if the template is unavailable.
+      const runsDir = path.join(workspaceDir, 'runs');
+      const runsReadme = path.join(runsDir, 'README.md');
+      if (!fs.existsSync(runsReadme)) {
+        fs.mkdirSync(runsDir, { recursive: true });
+        const templateReadme = path.join(WORKSPACE_TEMPLATE, 'runs', 'README.md');
+        const body = fs.existsSync(templateReadme)
+          ? fs.readFileSync(templateReadme, 'utf8')
+          : '# runs/ — Orchestrator run records\n\nOne file per Run at `runs/{task-id}/{run-id}.md` (ADR 0024/0033).\n';
+        fs.writeFileSync(runsReadme, body);
+        console.log('    ✓ created .tcgstackflow/runs/ + README.md (Orchestrator run records)');
+        n++;
+      }
+
+      // b. Add the orchestrator.roles tool map to config.yaml (idempotent). Default all-claude
+      //    (ADR 0025); a role can be set to 'codex' once the Codex runner lands.
+      const configPath = path.join(workspaceDir, 'config.yaml');
+      if (fs.existsSync(configPath)) {
+        let yaml = fs.readFileSync(configPath, 'utf8');
+        if (!/^orchestrator:/m.test(yaml)) {
+          const block = [
+            '',
+            '# Orchestrator — per-role runner tool map (ADR 0025). The Cockpit Orchestrator launches',
+            '# the agent for each role using the tool named here. Default all-claude; set a role to',
+            "# 'codex' to spread cost once the Codex runner lands (currently deferred — Claude only).",
+            'orchestrator:',
+            '  roles:',
+            '    planner: claude',
+            '    coder: claude',
+            '    reviewer: claude',
+            '    tester: claude',
+            '    ingester: claude',
+            '    refactorer: claude',
+            '',
+          ].join('\n');
+          // Insert before governance: to match the template layout; else before tools:; else append.
+          if (/^governance:/m.test(yaml)) {
+            yaml = yaml.replace(/^governance:/m, block.replace(/^\n/, '') + '\ngovernance:');
+          } else if (/^tools:/m.test(yaml)) {
+            yaml = yaml.replace(/^tools:/m, block.replace(/^\n/, '') + '\ntools:');
+          } else {
+            yaml = yaml.replace(/\s*$/, '\n') + block;
+          }
+          fs.writeFileSync(configPath, yaml);
+          console.log('    ✓ added orchestrator.roles tool map to config.yaml (default all-claude)');
+          n++;
+        }
+      }
+
+      return n;
+    },
+  },
 ];
 
 // Launch the Cockpit: spawn the zero-dep local server as a child process and open the browser.

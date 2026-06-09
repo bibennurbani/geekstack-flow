@@ -26,7 +26,8 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "smoke": "node init.js --help && echo '✓ init.js is parseable'"
+    "smoke": "node init.js --help && echo '✓ init.js is parseable'",
+    "test": "node --test"
   },
   "keywords": [
     "ai",

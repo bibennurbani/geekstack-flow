@@ -20,6 +20,46 @@ const DIST = path.join(__dirname, '..', 'dist');
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 4729;
 
+// --- Orchestrator wiring (Phase 4 + 5) ---
+const { createRunManager, scanOrphanedRuns } = require('./run-manager.cjs');
+const { createApprovals } = require('./approvals.cjs');
+const runMod = require('./run.cjs');
+
+// GOV-4 governance config. controlUrl is filled once the server binds a port (in start()).
+const governance = {
+  mcpServerPath: path.join(__dirname, 'governance-mcp.cjs'),
+  controlUrl: null,
+  allowedTools: 'Read,Grep,Glob,LS',
+};
+
+let executor;
+const runManager = createRunManager({ launch: (run) => executor.launch(run) });
+executor = runMod.createExecutor({ runManager, governance });
+
+// GOV-6 — record an in-run approval decision in the task log via the canonical writer (no 2nd writer).
+function gov6Record(rec, decision) {
+  if (!rec.project_path || !rec.task_id) return;
+  const found = read.findTaskFolder(path.join(rec.project_path, '.tcgstackflow'), rec.task_id);
+  if (!found) return;
+  try {
+    read.appendLogEntry(found.folder, rec.task_id, {
+      timestamp: new Date().toISOString(), author: 'orchestrator',
+      summary: decision === 'approved' ? `Governance: ${rec.risk} action approved — ${rec.action}` : `${rec.action} deferred to human`,
+      why: 'In-run governance decision (ADR 0027/0008).',
+      validation: ['None — governance record'],
+      tags: ['governance', decision],
+      governance: { action: rec.action, risk: rec.risk, decision: decision === 'approved' ? 'approved' : 'deferred', via: 'cockpit' },
+    });
+  } catch { /* recording must not break the run */ }
+}
+const approvals = createApprovals({ emit: executor.pushEvent, record: gov6Record });
+
+// API-8 / GOV-4 — the gate is now wired, so orchestrated runs are ENABLED. Kept as an explicit,
+// toggleable flag (POST /api/run refuses with 503 when false).
+let governanceGateReady = true;
+function setGovernanceGateReady(v) { governanceGateReady = !!v; }
+function isWorkspace(p) { try { return !!p && fs.existsSync(path.join(p, '.tcgstackflow', 'config.yaml')); } catch { return false; } }
+
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
@@ -30,6 +70,26 @@ function sendJSON(res, status, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
+}
+
+// SRV-6 — the single shared JSON request-body parser (the server is otherwise GET-only).
+// Zero-dependency; caps body size and rejects oversize/invalid input with an Error the
+// caller maps to a 400 (rather than buffering unbounded input or crashing).
+function readJsonBody(req, maxBytes = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > maxBytes) { reject(new Error('body-too-large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8').trim();
+      try { resolve(raw ? JSON.parse(raw) : {}); }
+      catch { reject(new Error('invalid-json')); }
+    });
+    req.on('error', reject);
+  });
 }
 
 function serveStatic(res, urlPath) {
@@ -67,7 +127,88 @@ const server = http.createServer((req, res) => {
     if (p === '/api/project') {
       const proj = u.searchParams.get('path');
       if (!proj) return sendJSON(res, 400, { error: 'missing path param' });
-      return sendJSON(res, 200, read.buildProjectDetail(proj));
+      // RUN-4 — inject the run-manager's transient overlay; read.cjs stays a pure file projection.
+      return sendJSON(res, 200, read.buildProjectDetail(proj, runManager.overlayFor(proj)));
+    }
+    // SRV-9 — task detail (plan body + log timeline + token breakdown).
+    if (p === '/api/project/task') {
+      const proj = u.searchParams.get('path'); const id = u.searchParams.get('id');
+      if (!proj || !id) return sendJSON(res, 400, { error: 'missing path or id' });
+      return sendJSON(res, 200, read.buildTaskDetail(proj, id));
+    }
+    // SRV-8 — manual Status override (the canonical task-file write, ADR 0032).
+    if (p === '/api/project/task/status') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { path: proj, id, status } = body || {};
+        if (!proj || !id || !status) return sendJSON(res, 400, { error: 'missing path/id/status' });
+        try {
+          read.writeTaskStatus(proj, id, status);
+          return sendJSON(res, 200, read.buildTaskDetail(proj, id));
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          const code = msg === 'task-not-found' ? 404
+            : msg === 'not-a-workspace' || msg === 'empty-status' || msg === 'status-too-long' ? 400 : 500;
+          return sendJSON(res, code, { error: msg });
+        }
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+    }
+    // --- Orchestrator run endpoints (Phase 4: RUN-5 reads + API-6 launch/stream) ---
+    if (p === '/api/runs') { // all in-memory runs grouped by project (Home cross-project view)
+      return sendJSON(res, 200, { runs: runManager.list(), governance_ready: governanceGateReady });
+    }
+    if (p === '/api/run/stream') { // SSE live stream for one run
+      const runId = u.searchParams.get('run_id');
+      if (!runId) return sendJSON(res, 400, { error: 'missing run_id' });
+      return executor.subscribe(runId, res);
+    }
+    if (p === '/api/run') {
+      if (req.method === 'GET') {
+        const id = u.searchParams.get('id');
+        if (!id) return sendJSON(res, 400, { error: 'missing id' });
+        const run = runManager.get(id);
+        return run ? sendJSON(res, 200, run) : sendJSON(res, 404, { error: 'unknown-run' });
+      }
+      if (req.method === 'POST') { // start a run = enqueue + promote (D2: one launch door)
+        return readJsonBody(req).then((body) => {
+          const { project_path, task_id, role } = body || {};
+          if (!project_path || !task_id || !role) return sendJSON(res, 400, { error: 'missing project_path/task_id/role' });
+          if (!runMod.ROLES.includes(role)) return sendJSON(res, 400, { error: 'unknown-role', role });
+          if (!isWorkspace(project_path)) return sendJSON(res, 400, { error: 'not-a-workspace' });
+          const tool = runMod.readRoleTool(path.join(project_path, '.tcgstackflow'), role);
+          if (tool === 'codex') return sendJSON(res, 501, { error: 'runner-not-implemented', tool: 'codex' }); // ADR 0025 — Codex deferred
+          if (!governanceGateReady) return sendJSON(res, 503, { error: 'governance-gate-not-ready' }); // API-8
+          const run = runManager.enqueue(project_path, task_id, role);
+          return sendJSON(res, 200, { run_id: run.run_id, state: run.state });
+        }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+      }
+      return sendJSON(res, 405, { error: 'method-not-allowed' });
+    }
+    // GOV-2 — loopback intake from the MCP gate: register a pending approval and HOLD the response
+    // open (long-poll, no timeout) until the browser decides. Token-authenticated, loopback-only.
+    if (p === '/api/run/approval-request') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { run_id, token, action, risk } = body || {};
+        const run = runManager.get(run_id);
+        if (!run) return sendJSON(res, 404, { error: 'unknown-run' });
+        if (!token || token !== executor.tokenFor(run_id)) return sendJSON(res, 403, { error: 'bad-token' });
+        return approvals.register({
+          run_id, task_id: run.task_id, project_path: run.project_path,
+          action, risk, why: body.why, files: body.files, rollback: body.rollback,
+        }).then((decision) => sendJSON(res, 200, { decision }));
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+    }
+    // GOV-2 — browser decision (approve/deny) resolves a pending approval.
+    if (p === '/api/run/approval') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { approval_id, decision } = body || {};
+        if (!approval_id || !decision) return sendJSON(res, 400, { error: 'missing approval_id/decision' });
+        return approvals.resolve(approval_id, decision)
+          ? sendJSON(res, 200, { ok: true })
+          : sendJSON(res, 404, { error: 'unknown-approval' });
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
     if (p.startsWith('/api/')) return sendJSON(res, 404, { error: 'unknown endpoint' });
     return serveStatic(res, req.url);
@@ -129,11 +270,40 @@ async function loadProject(path){
 loadHome();
 </script></body></html>`;
 
+// RUN-8 — on startup, reconcile orphaned runs across every registered workspace (append a durable
+// "aborted at pause point" entry per ADR 0027). Best-effort; idempotent.
+function reconcileAllProjects() {
+  let entries = [];
+  try { entries = gsf.readProjectRegistry(); } catch { entries = []; }
+  for (const entry of entries) {
+    const ws = path.join(entry.path, '.tcgstackflow');
+    if (!fs.existsSync(path.join(ws, 'config.yaml'))) continue;
+    try {
+      const n = runMod.reconcileOrphanedRuns(ws, scanOrphanedRuns);
+      if (n) console.log(`  reconciled ${n} orphaned run(s) in ${entry.name}`);
+    } catch { /* skip a project that won't reconcile */ }
+  }
+}
+
+// API-9 — on server stop, kill in-flight children and mark their runs aborted (a killed run does
+// NOT advance its task; statusSafetyNet only runs on a clean exit).
+function shutdown() {
+  for (const slot of Object.values(runManager.list())) {
+    const a = slot.active;
+    if (a && a._child) { try { a._child.kill('SIGTERM'); } catch { /* already dead */ } runManager.abort(a.run_id); }
+  }
+}
+
 function start(port) {
+  reconcileAllProjects();
+  process.once('SIGINT', () => { shutdown(); process.exit(0); });
+  process.once('SIGTERM', () => { shutdown(); process.exit(0); });
   server.listen(port, HOST, () => {
     const addr = `http://${HOST}:${port}`;
+    governance.controlUrl = addr; // GOV-4 — the MCP gate posts approval requests back here
     console.log(`Cockpit running at ${addr}  (tool v${gsf.TOOL_VERSION}, latest schema ${gsf.LATEST_SCHEMA})`);
-    console.log(`Endpoints: /api/health  /api/projects  /api/project?path=…`);
+    console.log(`Endpoints: /api/health  /api/projects  /api/project  /api/project/task  POST /api/project/task/status  POST /api/run  /api/runs  /api/run/stream`);
+    console.log(`Orchestrator: runs ${governanceGateReady ? 'ENABLED' : 'gated until governance wired (Phase 5)'}`);
     if (!fs.existsSync(DIST)) console.log(`(serving built-in fallback UI — run \`cd ui && npm i && npm run build\` for the Vue SPA)`);
   });
 }
@@ -143,4 +313,4 @@ if (require.main === module) {
   start(portArg ? parseInt(portArg, 10) : DEFAULT_PORT);
 }
 
-module.exports = { server, start, DEFAULT_PORT, HOST };
+module.exports = { server, start, DEFAULT_PORT, HOST, runManager, executor, setGovernanceGateReady };

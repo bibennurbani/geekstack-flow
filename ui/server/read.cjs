@@ -1,7 +1,10 @@
-// Cockpit data layer — pure, zero-dependency, read-only projections over .tcgstackflow/ files.
+// Cockpit data layer — zero-dependency projections over .tcgstackflow/ files.
 // Reuses the CLI's shared logic (init.js) so registry/version parsing has ONE source.
-// Everything here is best-effort and never throws on malformed/missing files — the Cockpit
+// READ helpers are best-effort and never throw on malformed/missing files — the Cockpit
 // is a viewer; a broken file becomes an empty/partial panel, not a crash.
+// The WRITE helpers (writeTaskStatus / appendLogEntry — the Orchestrator's ONE canonical
+// task-file writer, ADR 0032) DELIBERATELY surface errors; a silent failed write is a
+// correctness hole, so callers turn thrown errors into 4xx/5xx.
 
 const fs = require('fs');
 const path = require('path');
@@ -238,7 +241,10 @@ function buildProjectsList() {
 }
 
 // --- public: full detail for one project ---
-function buildProjectDetail(projectPath) {
+// `overlay` (RUN-4) is an optional map task_id -> { run_state, run_id, role } injected by the
+// server from the run-manager's in-memory state. Default {} keeps this a pure file projection
+// (read.cjs never imports the run-manager — the direction of dependency is server → both).
+function buildProjectDetail(projectPath, overlay = {}) {
   const workspaceDir = path.join(projectPath, '.tcgstackflow');
   if (!fs.existsSync(path.join(workspaceDir, 'config.yaml'))) {
     return { error: 'not-a-workspace', path: projectPath };
@@ -250,6 +256,7 @@ function buildProjectDetail(projectPath) {
   // action queue; Jira status is the client-side business state — they can drift.
   const jira = readJiraCache(workspaceDir);
   for (const t of tasks) {
+    t.tokens_total = readRunsForTask(workspaceDir, t.id).total; // SRV-5 — additive per-task token total
     const j = jira.issues[t.id];
     if (j) {
       t.jira_status = j.status || null;
@@ -262,6 +269,12 @@ function buildProjectDetail(projectPath) {
   const action_queue = tasks
     .filter(t => t.bucket === 'active' && t.next_agent && t.next_agent !== 'human')
     .map(t => ({ task_id: t.id, title: t.title, status: t.status, agent: t.next_agent, jira_status: t.jira_status || null, jira_drift: !!t.jira_drift }));
+
+  // RUN-4 — annotate with transient run_state from the injected overlay; the durable file-derived
+  // status/next_agent are left untouched (ADR 0024 layering). With the default {} nothing changes.
+  for (const t of tasks) { const o = overlay[t.id]; if (o) { t.run_state = o.run_state; t.run_id = o.run_id; } }
+  for (const a of action_queue) { const o = overlay[a.task_id]; if (o) { a.run_state = o.run_state; a.run_id = o.run_id; } }
+
   return {
     path: projectPath,
     config,
@@ -281,4 +294,212 @@ function buildProjectDetail(projectPath) {
   };
 }
 
-module.exports = { buildProjectsList, buildProjectDetail, STATUS_NEXT_AGENT };
+// ---------------------------------------------------------------------------
+// Orchestrator additions (schema 4 / ADR 0032/0033).
+// ---------------------------------------------------------------------------
+
+function safeIsDir(p) { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
+
+// SRV-1 — locate a task folder across active/completed/archive (incl. archive category subfolders).
+function findTaskFolder(workspaceDir, id) {
+  for (const bucket of ['active', 'completed']) {
+    const folder = path.join(workspaceDir, 'tasks', bucket, id);
+    if (safeIsDir(folder)) return { bucket, folder };
+  }
+  const archiveBase = path.join(workspaceDir, 'tasks', 'archive');
+  const direct = path.join(archiveBase, id);
+  if (safeIsDir(direct)) return { bucket: 'archive', folder: direct };
+  for (const entry of safeList(archiveBase)) {
+    if (!entry.isDirectory()) continue;
+    const nested = path.join(archiveBase, entry.name, id);
+    if (safeIsDir(nested)) return { bucket: 'archive', folder: nested };
+  }
+  return null;
+}
+
+// SRV-2 — frontmatter parser (leading ---...--- block) + per-Run token aggregation.
+function coerceScalar(v) {
+  const s = String(v).trim().replace(/^["']|["']$/g, '');
+  return /^-?\d+$/.test(s) ? Number(s) : s;
+}
+function parseFrontmatter(text) {
+  if (!text) return {};
+  const m = String(text).match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!m) return {};
+  const out = {}; let parent = null;
+  for (const raw of m[1].split('\n')) {
+    if (!raw.trim() || raw.trim().startsWith('#')) continue;
+    const indent = raw.length - raw.trimStart().length;
+    const kv = raw.trim().match(/^([^:]+):\s*(.*)$/);
+    if (!kv) continue;
+    const key = kv[1].trim(); const val = kv[2].trim();
+    if (indent >= 2 && parent) {
+      if (typeof out[parent] !== 'object' || out[parent] === null) out[parent] = {};
+      out[parent][key] = coerceScalar(val);
+    } else if (val === '') { out[key] = {}; parent = key; }
+    else { out[key] = coerceScalar(val); parent = null; }
+  }
+  return out;
+}
+const ZERO_TOKENS = () => ({ input: 0, output: 0, cache_read: 0, cache_creation: 0 });
+function readRunsForTask(workspaceDir, id) {
+  const dir = path.join(workspaceDir, 'runs', id);
+  const total = ZERO_TOKENS(); const by_role = {}; const runs = [];
+  for (const entry of safeList(dir)) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    const fm = parseFrontmatter(safeRead(path.join(dir, entry.name)));
+    const role = fm.role || 'unknown';
+    const t = (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : {};
+    const tokens = ZERO_TOKENS();
+    for (const k of Object.keys(tokens)) tokens[k] = Number.isFinite(+t[k]) ? +t[k] : 0;
+    for (const k of Object.keys(total)) total[k] += tokens[k];
+    if (!by_role[role]) by_role[role] = ZERO_TOKENS();
+    for (const k of Object.keys(tokens)) by_role[role][k] += tokens[k];
+    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: fm.session_id || null, state: fm.state || null, tokens });
+  }
+  return { total, by_role, runs };
+}
+
+// SRV-3 — parse `### ENTRY START` YAML blocks of an implementation log into an ordered timeline.
+function unquote(v) {
+  const s = String(v).trim();
+  const arr = s.match(/^\[(.*)\]$/);
+  if (arr) return arr[1].split(',').map(x => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  return s.replace(/^["']|["']$/g, '');
+}
+function parseYamlBlock(block) {
+  const out = {}; const lines = block.split('\n'); let i = 0;
+  while (i < lines.length) {
+    const raw = lines[i];
+    if (!raw.trim() || raw.trim().startsWith('#') || raw.trimStart().startsWith('### ')) { i++; continue; }
+    if ((raw.length - raw.trimStart().length) > 0) { i++; continue; } // stray indented line w/o parent
+    const kv = raw.trim().match(/^([^:]+):\s*(.*)$/);
+    if (!kv) { i++; continue; }
+    const key = kv[1].trim(); const val = kv[2].trim();
+    if (val === '') {
+      const child = []; let j = i + 1;
+      while (j < lines.length) {
+        const cr = lines[j];
+        if (!cr.trim()) { j++; continue; }
+        if ((cr.length - cr.trimStart().length) === 0) break;
+        child.push(cr.trim()); j++;
+      }
+      if (child.length && child[0].startsWith('- ')) out[key] = child.map(c => c.replace(/^-\s*/, '').replace(/^["']|["']$/g, ''));
+      else if (child.length) { const o = {}; for (const c of child) { const m2 = c.match(/^([^:]+):\s*(.*)$/); if (m2) o[m2[1].trim()] = unquote(m2[2]); } out[key] = o; }
+      else out[key] = '';
+      i = j;
+    } else { out[key] = unquote(val); i++; }
+  }
+  return out;
+}
+function parseTaskLogTimeline(text) {
+  if (!text) return [];
+  const logIdx = text.search(/^##\s+Implementation Log/m);
+  const scope = logIdx >= 0 ? text.slice(logIdx) : text;
+  const parts = scope.split(/^###\s+ENTRY START\s*$/m);
+  const entries = [];
+  for (let k = 1; k < parts.length; k++) {
+    const obj = parseYamlBlock(parts[k]);
+    if (Object.keys(obj).length) entries.push(obj);
+  }
+  return entries;
+}
+
+// SRV-4 — full task detail: plan body + log timeline + token breakdown.
+function buildTaskDetail(projectPath, id) {
+  const workspaceDir = path.join(projectPath, '.tcgstackflow');
+  if (!fs.existsSync(path.join(workspaceDir, 'config.yaml'))) return { error: 'not-a-workspace', path: projectPath };
+  const found = findTaskFolder(workspaceDir, id);
+  if (!found) return { error: 'task-not-found', id };
+  const log = safeRead(path.join(found.folder, `TASK ${id}.md`));
+  const details = safeRead(path.join(found.folder, `TASK details ${id}.md`));
+  const rawStatus = firstMatch(log, /^Status:\s*(.+)$/m) || firstMatch(details, /^Status:\s*(.+)$/m) || 'PLANNED';
+  const status = normalizeStatus(rawStatus);
+  const title = firstMatch(log, /^#\s*TASK\s+\S+\s+[—-]\s+(.+)$/m) || id;
+  return {
+    id, bucket: found.bucket, status,
+    next_agent: STATUS_NEXT_AGENT[status] === undefined ? null : STATUS_NEXT_AGENT[status],
+    title, details_body: details,
+    timeline: parseTaskLogTimeline(log),
+    tokens: readRunsForTask(workspaceDir, id),
+  };
+}
+
+// SRV-7 — the ONE canonical task-file writer (Status rewrite + ### ENTRY START append).
+function localDate() {
+  const d = new Date(); const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function yqs(s) { return `'${String(s).replace(/'/g, "''")}'`; } // YAML single-quoted scalar
+function serializeEntry(f) {
+  const L = ['### ENTRY START', `timestamp: ${yqs(f.timestamp)}`, `author: ${yqs(f.author)}`];
+  if (f.via) L.push(`via: ${f.via}`);
+  L.push(`summary: ${yqs(f.summary)}`);
+  if (f.status_from !== undefined) L.push(`status_from: ${f.status_from || "''"}`);
+  if (f.status_to !== undefined) L.push(`status_to: ${f.status_to}`);
+  if (f.why) L.push(`why: ${yqs(f.why)}`);
+  if (f.files && f.files.length) { L.push('files:'); for (const x of f.files) L.push(`  - ${x}`); }
+  const val = (f.validation && f.validation.length) ? f.validation : ['None'];
+  L.push('validation:'); for (const v of val) L.push(`  - ${yqs(v)}`);
+  if (f.tags && f.tags.length) L.push(`tags: [${f.tags.join(', ')}]`);
+  if (f.governance) { // GOV-6 — in-run approval record (ADR 0027/0008)
+    const gv = f.governance;
+    L.push('governance:');
+    if (gv.action !== undefined) L.push(`  action: ${yqs(gv.action)}`);
+    if (gv.risk !== undefined) L.push(`  risk: ${gv.risk}`);
+    if (gv.decision !== undefined) L.push(`  decision: ${gv.decision}`);
+    if (gv.via !== undefined) L.push(`  via: ${gv.via}`);
+  }
+  return L.join('\n');
+}
+// Pure: append an entry at EOF (entries accumulate under ## Implementation Log) + bump Last updated.
+function applyEntryAndStamp(text, entry) {
+  let out = text;
+  if (out.indexOf('## Implementation Log') < 0) out = out.replace(/\s*$/, '\n') + `\n## Implementation Log\n`;
+  out = out.replace(/\s*$/, '\n') + '\n' + entry + '\n';
+  if (/^Last updated:\s*.*$/m.test(out)) out = out.replace(/^(Last updated:\s*).*$/m, `$1${localDate()}`);
+  return out;
+}
+// Lower-level primitive reused by the executor flush (API-7), governance recorder (GOV-6), RUN-8.
+function appendLogEntry(folder, id, fields) {
+  const file = path.join(folder, `TASK ${id}.md`);
+  const text = fs.readFileSync(file, 'utf8'); // surfaces ENOENT — NOT best-effort
+  fs.writeFileSync(file, applyEntryAndStamp(text, serializeEntry(fields)));
+}
+function writeTaskStatus(projectPath, id, newStatus, opts = {}) {
+  newStatus = String(newStatus == null ? '' : newStatus).trim();
+  if (!newStatus) throw new Error('empty-status');
+  if (newStatus.length > 40) throw new Error('status-too-long');
+  const workspaceDir = path.join(projectPath, '.tcgstackflow');
+  if (!fs.existsSync(path.join(workspaceDir, 'config.yaml'))) throw new Error('not-a-workspace');
+  const found = findTaskFolder(workspaceDir, id);
+  if (!found) throw new Error('task-not-found');
+  const file = path.join(found.folder, `TASK ${id}.md`);
+  let text = fs.readFileSync(file, 'utf8');
+  const oldStatus = (text.match(/^Status:\s*(.+)$/m) || [, ''])[1].trim();
+  if (/^Status:\s*.+$/m.test(text)) text = text.replace(/^Status:\s*.+$/m, `Status: ${newStatus}`);
+  else if (/^Last updated:.*$/m.test(text)) text = text.replace(/^(Last updated:.*)$/m, `$1\nStatus: ${newStatus}`);
+  else text = text.replace(/^(#\s.*)$/m, `$1\nStatus: ${newStatus}`);
+  // Defaults model a Cockpit override (author: human / via: cockpit); the orchestrator safety-net
+  // (API-7) passes author: 'orchestrator', via: null to record a run-driven advance instead.
+  const entry = serializeEntry({
+    timestamp: new Date().toISOString(),
+    author: opts.author || 'human',
+    via: opts.via === null ? undefined : (opts.via || 'cockpit'),
+    summary: opts.summary || `Status override: ${oldStatus || '(none)'} -> ${newStatus}`,
+    status_from: oldStatus || '', status_to: newStatus,
+    why: opts.why || 'Manual status change from the Cockpit',
+    validation: opts.validation || ['None — status-only change'],
+    tags: opts.tags || ['status-override'],
+  });
+  fs.writeFileSync(file, applyEntryAndStamp(text, entry));
+  return { id, status: normalizeStatus(newStatus), old_status: oldStatus, bucket: found.bucket };
+}
+
+module.exports = {
+  buildProjectsList, buildProjectDetail, STATUS_NEXT_AGENT,
+  // Orchestrator (schema 4): reads
+  findTaskFolder, parseFrontmatter, readRunsForTask, parseTaskLogTimeline, buildTaskDetail,
+  // Orchestrator: the one canonical task-file writer
+  appendLogEntry, writeTaskStatus,
+};

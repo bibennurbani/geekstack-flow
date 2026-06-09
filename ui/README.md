@@ -26,7 +26,20 @@ The server binds `127.0.0.1` only — single local user, no auth (ADR 0020). It 
 |---|---|
 | `GET /api/health` | `{ ok, tool_version, latest_schema }` |
 | `GET /api/projects` | registry list, each with `workspace_schema` + `update_available` |
-| `GET /api/project?path=…` | one project: config, version, action_queue, tasks, wiki summary |
+| `GET /api/project?path=…` | one project: config, version, action_queue, tasks (+`tokens_total`, +`run_state` overlay), wiki summary |
+
+### Orchestrator endpoints (consumed by the SPA — Phase 4/5/6)
+
+| Endpoint | Returns / does |
+|---|---|
+| `GET /api/project/task?path=…&id=…` | task detail: `details_body` (plan markdown), `timeline[]` (parsed `### ENTRY START` entries: `timestamp, author, summary, files[], why, validation[], tags[]`, optional `governance{}`/`blocker{}`, and `via`/`status_from`/`status_to` for cockpit overrides), `tokens.by_role{role→{input,output,cache_read,cache_creation}}`, `tokens.total{…}` |
+| `POST /api/project/task/status` | body `{path,id,status}` → rewrites the canonical `Status:` line + auto-appends a `human`/`via:cockpit` log entry (ADR 0032). The **UI does not write the log itself.** |
+| `POST /api/run` | body `{project_path,task_id,role}` → enqueue+launch → `{run_id,state}`. `503` until governance is wired; `501` if the role maps to `codex` |
+| `GET /api/run/stream?run_id=…` | **SSE.** Events: `delta` (text chunk), `tokens` (running `{input,output,cache_read,cache_creation}`), `status` (`started`/`error`…), `approval_request` (pause card: `approval_id,action,risk,why,files[],rollback`), `approval_resolved`, `done` (final `{session_id,tokens}`) |
+| `GET /api/runs` · `GET /api/run?id=…` | all in-memory runs grouped by project · one run's transient record |
+| `POST /api/run/approval` | body `{run_id,approval_id,decision}` (browser decision) |
+
+**Tokens are raw counts only** — no $-cost, no cross-project aggregate (ADR 0033). **SSE note:** the Vite dev proxy (`/api → :4729`) streams responses (http-proxy does not buffer), so the live `delta`/`tokens` stream works under `npm run dev`; the production Node server streams natively.
 
 ## Run it
 

@@ -5,7 +5,7 @@
 #   tcgflow_version  : the tool semver that last touched this workspace (informational).
 #   workspace_schema : layout version; `upgrade` runs migrations keyed off it. See ADR 0021.
 tcgflow_version: "0.0.0"             # stamped by init
-workspace_schema: 2                  # current layout (schema 2 = no-dotfiles, ADR 0017)
+workspace_schema: 4                  # current layout (schema 4 = runs/ area + orchestrator.roles, ADR 0024/0025/0032/0033)
 
 project:
   name: ""                          # filled by init
@@ -61,6 +61,18 @@ wiki_search:
     # - name: docs
     #   path: docs                  # added by /tcgflow-init when a docs/ dir is present (per sub-project in multi-project)
     #   context: "In-repo developer docs (READMEs, guides, /docs)."
+
+# Orchestrator — per-role runner tool map (ADR 0025). The Cockpit Orchestrator launches
+# the agent for each role using the tool named here. Default all-claude; set a role to
+# 'codex' to spread cost once the Codex runner lands (currently deferred — Claude only).
+orchestrator:
+  roles:
+    planner: claude
+    coder: claude
+    reviewer: claude
+    tester: claude
+    ingester: claude
+    refactorer: claude
 
 governance:
   mode: strict                      # strict | relaxed
