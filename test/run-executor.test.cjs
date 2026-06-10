@@ -45,8 +45,16 @@ function fakeSpawn(lines, code = 0) {
   };
 }
 function fakeRunManager() {
-  const calls = { complete: [], fail: [] };
-  return { complete: (id) => calls.complete.push(id), fail: (id, m) => calls.fail.push([id, m]), calls };
+  const calls = { complete: [], fail: [], abort: [] };
+  const runs = {};
+  return {
+    complete: (id) => calls.complete.push(id),
+    fail: (id, m) => calls.fail.push([id, m]),
+    abort: (id) => calls.abort.push(id),
+    get: (id) => runs[id] || null,
+    _register: (run) => { runs[run.run_id] = run; },
+    calls,
+  };
 }
 
 // API-1 — prompt builder is byte-identical to the Copy-prompt clipboard text.
@@ -114,6 +122,66 @@ test('launch (non-zero exit): fails the run, writes failed record, does NOT adva
     const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-2.md'), 'utf8'));
     assert.strictEqual(fm.state, 'failed');
     assert.strictEqual(read.buildTaskDetail(proj, 'T-1').status, 'IN_PROGRESS', 'failed run must not advance the task');
+  } finally { cleanup(proj); }
+});
+
+// regression: text_delta + the whole assistant message must not double-count the text
+test('no double-count of assistant text', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's' }),
+      JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello world' } } }),
+      JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-4-8', content: [{ type: 'text', text: 'Hello world' }] } }),
+      JSON.stringify({ type: 'result', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }),
+    ];
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(lines, 0), claudeBin: 'fake', maxIters: 1 });
+    exec.launch({ run_id: 'r-dd', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(60);
+    const rec = read.readRunTranscript(ws, 'T-1', 'r-dd');
+    assert.strictEqual((rec.transcript.match(/Hello world/g) || []).length, 1, 'text appears exactly once');
+  } finally { cleanup(proj); }
+});
+
+// chat: resume a session with a message and capture the streamed reply
+test('chat() resumes a session and captures the reply', async () => {
+  const rm = fakeRunManager();
+  const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake' });
+  const chatId = exec.chat({ project_path: '/x', session_id: 'sess-1', message: 'what did you do?' });
+  assert.match(chatId, /^chat-/);
+  await tick(50);
+  const L = exec.getLive(chatId);
+  assert.ok(L, 'live state for the chat exists');
+  assert.strictEqual(L.tokens.input, 6073, 'captured the reply token usage');
+  assert.ok(L.transcript.length > 0, 'captured the reply transcript');
+});
+
+// abortRun: stop a running run from the UI — kills the child, marks aborted, no task advance
+test('abortRun stops the run and marks it aborted (not failed, no advance)', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    // a child that emits a little then HANGS until kill() → close(143)
+    const hangingSpawn = () => {
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+      child.kill = () => { setImmediate(() => child.emit('close', 143)); };
+      setImmediate(() => { child.stdout.emit('data', Buffer.from(FIXTURE_LINES[0] + '\n')); });
+      return child;
+    };
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: hangingSpawn, claudeBin: 'fake', maxIters: 3 });
+    const run = { run_id: 'r-abort', task_id: 'T-1', role: 'coder', project_path: proj };
+    rm._register(run);
+    exec.launch(run);
+    await tick(40);
+    assert.strictEqual(exec.abortRun('r-abort'), true);
+    await tick(80);
+    assert.strictEqual(rm.calls.fail.length, 0, 'abort is not a failure');
+    assert.ok(rm.calls.abort.includes('r-abort'), 'runManager.abort called');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-abort.md'), 'utf8'));
+    assert.strictEqual(fm.state, 'aborted');
+    assert.strictEqual(read.buildTaskDetail(proj, 'T-1').status, 'IN_PROGRESS', 'aborted run does not advance the task');
+    assert.strictEqual(exec.abortRun('nope'), false, 'unknown run → false');
   } finally { cleanup(proj); }
 });
 

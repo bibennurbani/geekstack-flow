@@ -85,10 +85,10 @@ async function openTask(t) {
   // Action-queue entries carry `task_id`; Tasks-list entries carry `id`. Accept either.
   const id = t.id || t.task_id;
   if (!id) return;
-  selectedTask.value = id; taskDetail.value = null; statusError.value = ''; resetRun(); closeReport();
+  selectedTask.value = id; taskDetail.value = null; statusError.value = ''; resetRun(); closeReport(); resetChat();
   taskDetail.value = await api(taskUrl());
 }
-function closeTask() { selectedTask.value = null; taskDetail.value = null; statusError.value = ''; closeStream(); resetRun(); closeReport(); closeRun(); }
+function closeTask() { selectedTask.value = null; taskDetail.value = null; statusError.value = ''; closeStream(); resetRun(); closeReport(); closeRun(); resetChat(); }
 async function refreshTask() { if (selectedTask.value) taskDetail.value = await api(taskUrl()); }
 
 async function changeStatus(e) {
@@ -118,9 +118,18 @@ async function startRun() {
   es.addEventListener('tokens', (ev) => { liveTokens.value = JSON.parse(ev.data); });
   es.addEventListener('approval_request', (ev) => { pendingApproval.value = JSON.parse(ev.data); criticalAck.value = false; runState.value = 'paused'; });
   es.addEventListener('approval_resolved', () => { pendingApproval.value = null; runState.value = 'running'; });
-  es.addEventListener('status', (ev) => { const d = JSON.parse(ev.data); if (d.state === 'error') { runState.value = 'error'; runError.value = d.error || ('exit ' + (d.code ?? '?')); } });
+  es.addEventListener('status', (ev) => {
+    const d = JSON.parse(ev.data);
+    if (d.state === 'error') { runState.value = 'error'; runError.value = d.error || ('exit ' + (d.code ?? '?')); }
+    else if (d.state === 'aborting') { runError.value = 'stopping…'; }
+    else if (d.state === 'aborted') { runState.value = 'error'; runError.value = 'stopped by you'; closeStream(); refreshTask(); }
+  });
   es.addEventListener('done', async () => { runState.value = 'done'; closeStream(); await refreshTask(); });
   es.onerror = () => { if (runState.value === 'running') { runState.value = 'error'; runError.value = 'stream lost'; } closeStream(); };
+}
+async function stopRun() {
+  if (!runId.value) return;
+  await postJSON('/api/run/abort', { run_id: runId.value });
 }
 async function decide(decision) {
   if (!pendingApproval.value) return;
@@ -152,6 +161,40 @@ async function openRun(runId) {
   runLoading.value = false;
 }
 function closeRun() { runView.value = null; }
+// "Open in terminal": copy a command to resume a run's session interactively in your own CLI.
+function copyResume(projectPath, sessionId, key) {
+  if (!sessionId) return;
+  navigator.clipboard.writeText(`cd "${projectPath}" && claude --resume ${sessionId}`);
+  copiedKey.value = key; setTimeout(() => { if (copiedKey.value === key) copiedKey.value = ''; }, 1600);
+}
+
+// --- discuss with the agent (turn-based, read-only resume of the latest run's session) ---
+const chatMessages = ref([]); // { role: 'you' | 'agent', text }
+const chatInput = ref('');
+const chatBusy = ref(false);
+let chatEs = null;
+const chatSession = computed(() => {
+  const runs = (taskDetail.value && taskDetail.value.tokens && taskDetail.value.tokens.runs) || [];
+  const r = runs.find((x) => x.session_id);
+  return r ? r.session_id : null;
+});
+function closeChat() { if (chatEs) { chatEs.close(); chatEs = null; } }
+function resetChat() { closeChat(); chatMessages.value = []; chatInput.value = ''; chatBusy.value = false; }
+async function sendChat() {
+  const msg = chatInput.value.trim();
+  if (!msg || !chatSession.value || chatBusy.value) return;
+  chatInput.value = ''; chatBusy.value = true;
+  chatMessages.value.push({ role: 'you', text: msg });
+  const idx = chatMessages.value.push({ role: 'agent', text: '' }) - 1;
+  const res = await postJSON('/api/run/message', { project_path: selected.value, session_id: chatSession.value, message: msg });
+  if (!res.ok) { chatMessages.value[idx].text = '[failed to start — ' + res.status + ']'; chatBusy.value = false; return; }
+  const { chat_id } = await res.json();
+  closeChat();
+  chatEs = new EventSource('/api/run/stream?run_id=' + encodeURIComponent(chat_id));
+  chatEs.addEventListener('delta', (ev) => { chatMessages.value[idx].text += (JSON.parse(ev.data).text || ''); });
+  chatEs.addEventListener('done', () => { chatBusy.value = false; closeChat(); refreshTask(); });
+  chatEs.addEventListener('status', (ev) => { const d = JSON.parse(ev.data); if (d.state === 'error') { chatMessages.value[idx].text += (chatMessages.value[idx].text ? '\n' : '') + '[error: ' + (d.error || d.code || '?') + ']'; chatBusy.value = false; closeChat(); } });
+}
 // Jump straight from a task card into its report (loads the task first so "Back to task" works).
 async function openReportFor(t) {
   const id = t.id || t.task_id;
@@ -258,7 +301,7 @@ function relTime(iso) {
 }
 
 onMounted(async () => { await loadProjects(); await loadHome(); });
-onUnmounted(() => closeStream());
+onUnmounted(() => { closeStream(); closeChat(); });
 </script>
 
 <template>
@@ -311,6 +354,7 @@ onUnmounted(() => closeStream());
               <span><span class="badge" :class="r.state === 'done' ? 'st-COMPLETED' : r.state === 'failed' ? 'st-BLOCKED' : 'soft'">{{ r.state || '?' }}</span></span>
               <span class="tc-act">
                 <span class="mono muted" style="font-size:11px">{{ fmtTok((r.tokens.input||0)+(r.tokens.output||0)+(r.tokens.cache_read||0)+(r.tokens.cache_creation||0)) }} tok</span>
+                <button v-if="r.session_id" class="btn" style="padding:3px 9px;font-size:11px" :class="{ 'btn-copied': copiedKey === 'hterm' + r.run_id }" title="Resume this session in your terminal" @click.stop="copyResume(r.project_path, r.session_id, 'hterm' + r.run_id)">{{ copiedKey === 'hterm' + r.run_id ? '✓' : '⌥ term' }}</button>
                 <button class="btn" style="padding:3px 9px;font-size:11px" @click.stop="openReportHtmlFor(r.project_path, r.task_id, r.run_id)">report ↗</button>
               </span>
             </div>
@@ -537,8 +581,9 @@ onUnmounted(() => closeStream());
 
               <!-- live run stream -->
               <template v-if="runState !== 'idle'">
-                <div class="section">Live run
+                <div class="section" style="display:flex;align-items:center;gap:8px">Live run
                   <span class="badge" :class="{ 'st-IN_PROGRESS': runState==='running', 'st-BLOCKED': runState==='error'||runState==='paused', 'st-COMPLETED': runState==='done' }">{{ runState }}</span>
+                  <button v-if="runState === 'running' || runState === 'paused'" class="btn" style="padding:3px 11px;font-size:12px" @click="stopRun" title="Stop this run">■ Stop</button>
                 </div>
                 <div v-if="runError" class="badge st-BLOCKED">{{ runError }}</div>
                 <div v-if="liveTokens" class="chips" style="margin:8px 0">
@@ -574,9 +619,28 @@ onUnmounted(() => closeStream());
                   <span class="agent" :class="'agent-' + r.role">{{ r.role }}</span>
                   <span class="mono muted" style="font-size:12px;margin-left:8px">{{ r.run_id.slice(0, 8) }}…</span>
                 </div>
+                <button v-if="r.session_id" class="btn" style="padding:3px 9px;font-size:11px" :class="{ 'btn-copied': copiedKey === 'term' + r.run_id }"
+                  title="Copy a command to resume this session in your own terminal" @click.stop="copyResume(selected, r.session_id, 'term' + r.run_id)">{{ copiedKey === 'term' + r.run_id ? '✓ copied' : '⌥ terminal' }}</button>
                 <span class="mono muted" style="font-size:12px">{{ fmtTok((r.tokens.input||0)+(r.tokens.output||0)+(r.tokens.cache_read||0)+(r.tokens.cache_creation||0)) }} tok</span>
                 <span class="badge" :class="r.state === 'done' ? 'st-COMPLETED' : r.state === 'failed' ? 'st-BLOCKED' : 'soft'">{{ r.state || '?' }}</span>
               </div>
+
+              <!-- discuss with the agent (turn-based, read-only resume) -->
+              <div class="section">Discuss <span style="font-weight:400;letter-spacing:0;text-transform:none;color:var(--text-3)">· resumes the latest run's session, read-only</span></div>
+              <div v-if="!chatSession" class="empty">No session to discuss yet — run this task first.</div>
+              <template v-else>
+                <div v-if="chatMessages.length" class="chat-log">
+                  <div v-for="(m, i) in chatMessages" :key="i" class="chat-msg" :class="'chat-' + m.role">
+                    <div class="chat-who">{{ m.role === 'you' ? 'you' : 'agent' }}</div>
+                    <pre class="chat-text">{{ m.text || (chatBusy && i === chatMessages.length - 1 ? '…' : '') }}</pre>
+                  </div>
+                </div>
+                <div class="chat-input-row">
+                  <input v-model="chatInput" class="fsearch" style="flex:1" placeholder="Ask the agent about this task…" :disabled="chatBusy" @keyup.enter="sendChat" />
+                  <button class="btn btn-primary" :disabled="chatBusy || !chatInput.trim()" @click="sendChat">{{ chatBusy ? 'Thinking…' : 'Send' }}</button>
+                </div>
+                <p class="muted" style="font-size:11.5px;margin-top:6px">Read-only — the agent can inspect the project and answer, but can't edit. For changes, run the task.</p>
+              </template>
 
               <!-- plan (UI-2) -->
               <div class="section">Plan</div>
@@ -902,6 +966,14 @@ onUnmounted(() => closeStream());
 .agent-tok .v { font-family: ui-monospace, monospace; font-size: 20px; font-weight: 600; }
 .agent-tok .k { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 @media (max-width: 760px) { .agent-tok { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- discuss / chat ---------- */
+.chat-log { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.chat-msg { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; background: var(--surface); }
+.chat-msg.chat-you { background: var(--surface-2); }
+.chat-who { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted-2); margin-bottom: 4px; }
+.chat-text { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font); font-size: 13px; line-height: 1.55; color: var(--text); }
+.chat-input-row { display: flex; gap: 8px; align-items: center; }
 
 /* ---------- session report (dark editorial) ---------- */
 .sreport { --srbg:#0f1730; --srpanel:#16203c; --srline:#23304f; --srmuted:#8794b4; --coral2:#f25c54; --amber2:#f5b031;

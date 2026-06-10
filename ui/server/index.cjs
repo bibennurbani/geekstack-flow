@@ -218,6 +218,25 @@ const server = http.createServer((req, res) => {
       }
       return sendJSON(res, 405, { error: 'method-not-allowed' });
     }
+    // Discuss with the agent: resume a session with a message, stream the reply (read-only).
+    if (p === '/api/run/message') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { project_path, session_id, message } = body || {};
+        if (!project_path || !session_id || !message) return sendJSON(res, 400, { error: 'missing project_path/session_id/message' });
+        if (!isWorkspace(project_path)) return sendJSON(res, 400, { error: 'not-a-workspace' });
+        return sendJSON(res, 200, { chat_id: executor.chat({ project_path, session_id, message }) });
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+    }
+    // Stop a run from the UI (kill the live child; finalize as aborted).
+    if (p === '/api/run/abort') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { run_id } = body || {};
+        if (!run_id) return sendJSON(res, 400, { error: 'missing run_id' });
+        return executor.abortRun(run_id) ? sendJSON(res, 200, { ok: true }) : sendJSON(res, 404, { error: 'unknown-run' });
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+    }
     // GOV-2 — loopback intake from the MCP gate: register a pending approval and HOLD the response
     // open (long-poll, no timeout) until the browser decides. Token-authenticated, loopback-only.
     if (p === '/api/run/approval-request') {

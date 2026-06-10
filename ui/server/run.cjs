@@ -129,10 +129,13 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     if (!L.session_id && o.session_id) { L.session_id = o.session_id; run.session_id = o.session_id; }
     const ev = o.event || o; // stream_event wraps the inner event in .event
     if (ev && ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
-      const txt = ev.delta.text || ''; L.transcript += txt; emit(run.run_id, 'delta', { text: txt });
+      const txt = ev.delta.text || ''; L._sawDelta = true; L.transcript += txt; emit(run.run_id, 'delta', { text: txt });
     }
+    // The whole assistant message arrives too — only use it when NO partial deltas streamed for it
+    // (e.g. runs without --include-partial-messages), otherwise we'd double-count the text.
     if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
-      for (const b of o.message.content) if (b.type === 'text' && b.text) { L.transcript += b.text; emit(run.run_id, 'delta', { text: b.text }); }
+      if (!L._sawDelta) for (const b of o.message.content) if (b.type === 'text' && b.text) { L.transcript += b.text; emit(run.run_id, 'delta', { text: b.text }); }
+      L._sawDelta = false; // reset for the next turn
     }
     if (o.type === 'result' && o.usage) {
       // Accumulate across continuation iterations (one result event per invocation).
@@ -191,10 +194,11 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     const workspaceDir = path.join(run.project_path, '.tcgstackflow');
     let code = 0, iters = 0;
     for (let iter = 0; iter < maxIters; iter++) {
+      if (L.aborted) break;                                    // stopped by the user between iterations
       iters = iter + 1;
       const before = L.transcript.length;
       code = await spawnOnce(run, L, workspaceDir, iter);
-      if (code !== 0) break;                                   // spawn/exit failure
+      if (L.aborted || code !== 0) break;                      // aborted, or spawn/exit failure
       let advanced = false;                                    // self-handoff: agent set Status to IN_REVIEW+?
       try { const d = read.buildTaskDetail(run.project_path, run.task_id); advanced = !d.error && ADVANCED.has(d.status); } catch { /* ignore */ }
       if (advanced) break;
@@ -202,7 +206,11 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       if (iter + 1 < maxIters) emit(run.run_id, 'status', { state: 'continuing', iter: iter + 1 });
     }
     L.iterations = iters;
-    if (code === 0) {
+    if (L.aborted) { // user stop — not a failure; does NOT advance the task
+      writeRunRecord(workspaceDir, run, L, 'aborted');
+      emit(run.run_id, 'status', { state: 'aborted' });
+      runManager.abort(run.run_id);
+    } else if (code === 0) {
       writeRunRecord(workspaceDir, run, L, 'done');
       statusSafetyNet(run.project_path, run.task_id);
       emit(run.run_id, 'done', { session_id: L.session_id, tokens: L.tokens, iterations: iters });
@@ -214,8 +222,40 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     }
   }
 
+  // Turn-based discussion: resume an existing session with a user message and stream the reply.
+  // READ-ONLY by design (--allowedTools to read tools, no permission-prompt-tool) so a chat can't
+  // mutate the project — for real changes, launch a Run. The reply appends to the SAME session
+  // JSONL, so the Session Report naturally grows. Returns a chat_id to subscribe the SSE on.
+  function chat({ project_path, session_id, message }) {
+    const chat_id = 'chat-' + crypto.randomUUID();
+    const run = { run_id: chat_id, project_path, task_id: null, role: 'chat' };
+    const L = ensure(run);
+    L.session_id = session_id;
+    emit(chat_id, 'status', { state: 'started' });
+    const args = ['-p', message, '--resume', session_id, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'default', '--allowedTools', 'Read,Grep,Glob,LS'];
+    let child;
+    try { child = spawn(claudeBin, args, { cwd: project_path, env: process.env }); }
+    catch (e) { emit(chat_id, 'status', { state: 'error', error: 'spawn-failed', detail: String((e && e.message) || e) }); return chat_id; }
+    child.on('error', () => emit(chat_id, 'status', { state: 'error', error: 'spawn-failed' }));
+    let buf = '';
+    child.stdout.on('data', (chunk) => { buf += chunk.toString('utf8'); let nl; while ((nl = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); handleLine(L, run, line.trim()); } });
+    child.on('close', (code) => { if (buf.trim()) handleLine(L, run, buf.trim()); emit(chat_id, code === 0 ? 'done' : 'status', code === 0 ? { session_id: L.session_id, tokens: L.tokens } : { state: 'error', code }); });
+    return chat_id;
+  }
+
+  // Stop a run from the UI: flag it aborted + kill the live child. The loop finalizes as 'aborted'.
+  function abortRun(run_id) {
+    const L = live.get(run_id);
+    if (!L) return false;
+    L.aborted = true;
+    const run = runManager.get(run_id);
+    if (run && run._child) { try { run._child.kill('SIGTERM'); } catch { /* already gone */ } }
+    emit(run_id, 'status', { state: 'aborting' });
+    return true;
+  }
+
   return {
-    launch, subscribe, getLive: (id) => live.get(id) || null, ROLES,
+    launch, subscribe, abortRun, chat, getLive: (id) => live.get(id) || null, ROLES,
     pushEvent: (id, type, data) => emit(id, type, data),   // GOV-2 — approvals push onto the run's SSE
     tokenFor: (id) => { const L = live.get(id); return L ? L.token : null; }, // GOV-4 — intake auth
   };
