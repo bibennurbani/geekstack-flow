@@ -72,7 +72,7 @@ test('launch (clean exit): captures real tokens+session, writes runs/ record, ad
   const { proj, ws } = makeWs();
   try {
     const rm = fakeRunManager();
-    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake' });
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 1 });
     const run = { run_id: 'r-1', task_id: 'T-1', role: 'coder', project_path: proj };
     exec.launch(run);
     await tick();
@@ -106,7 +106,7 @@ test('launch (non-zero exit): fails the run, writes failed record, does NOT adva
   const { proj, ws } = makeWs();
   try {
     const rm = fakeRunManager();
-    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 1), claudeBin: 'fake' });
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 1), claudeBin: 'fake', maxIters: 1 });
     exec.launch({ run_id: 'r-2', task_id: 'T-1', role: 'coder', project_path: proj });
     await tick();
     assert.strictEqual(rm.calls.fail.length, 1, 'runManager.fail called');
@@ -114,6 +114,35 @@ test('launch (non-zero exit): fails the run, writes failed record, does NOT adva
     const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-2.md'), 'utf8'));
     assert.strictEqual(fm.state, 'failed');
     assert.strictEqual(read.buildTaskDetail(proj, 'T-1').status, 'IN_PROGRESS', 'failed run must not advance the task');
+  } finally { cleanup(proj); }
+});
+
+// continuation loop: resume until the agent hands off (sets IN_REVIEW), accumulating tokens
+test('continuation loop resumes until hand-off and sums tokens', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    // a fake that replays the fixture each call, and on the 2nd call advances Status to IN_REVIEW
+    let calls = 0;
+    const advancingSpawn = () => {
+      const me = ++calls;
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(() => {
+        for (const l of FIXTURE_LINES) child.stdout.emit('data', Buffer.from(l + '\n'));
+        if (me >= 2) fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace(/^Status: .*$/m, 'Status: IN_REVIEW'));
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: advancingSpawn, claudeBin: 'fake', maxIters: 5 });
+    exec.launch({ run_id: 'r-loop', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(120);
+    assert.deepStrictEqual(rm.calls.complete, ['r-loop'], 'completed once');
+    assert.strictEqual(calls, 2, 'stopped after the agent handed off on iteration 2');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-loop.md'), 'utf8'));
+    assert.strictEqual(fm.tokens.input, 6073 * 2, 'tokens summed across 2 iterations');
+    assert.strictEqual(read.buildTaskDetail(proj, 'T-1').status, 'IN_REVIEW', 'agent hand-off preserved');
   } finally { cleanup(proj); }
 });
 

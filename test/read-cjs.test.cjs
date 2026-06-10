@@ -200,6 +200,35 @@ test('writeTaskStatus rejects empty status and unknown task', () => {
   } finally { cleanup(proj); }
 });
 
+// Verbose Status lines (real-world): "IN PROGRESS (notes…)" normalizes to the leading token.
+test('buildTaskDetail normalizes a verbose Status line', () => {
+  const { proj, ws } = makeWs();
+  try {
+    fs.writeFileSync(
+      path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md'),
+      '# TASK T-1 — Demo\n\nStatus: IN PROGRESS (RCA FEATURE IMPLEMENTED, DOCUMENTATION SYNCED)\n\n## Implementation Log\n_(x)_\n'
+    );
+    const d = read.buildTaskDetail(proj, 'T-1');
+    assert.strictEqual(d.status, 'IN_PROGRESS', 'parenthetical notes stripped → canonical IN_PROGRESS');
+    assert.strictEqual(d.next_agent, 'coder');
+  } finally { cleanup(proj); }
+});
+
+// readRunTranscript — frontmatter fields + raw body, and the missing-run case.
+test('readRunTranscript returns frontmatter + transcript body; error on missing', () => {
+  const { proj, ws } = makeWs();
+  try {
+    const dir = path.join(ws, 'runs', 'T-1'); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'r1.md'), '---\ntask: T-1\nrole: coder\nsession_id: sess-9\nstate: done\n---\nline one\nline two\n');
+    const r = read.readRunTranscript(ws, 'T-1', 'r1');
+    assert.strictEqual(r.role, 'coder');
+    assert.strictEqual(r.session_id, 'sess-9');
+    assert.strictEqual(r.state, 'done');
+    assert.strictEqual(r.transcript, 'line one\nline two');
+    assert.strictEqual(read.readRunTranscript(ws, 'T-1', 'nope').error, 'run-not-found');
+  } finally { cleanup(proj); }
+});
+
 // RUN-4 — overlay injection is additive; empty overlay = byte-identical (pure-projection guard).
 test('buildProjectDetail: empty overlay is byte-identical; populated overlay annotates run_state', () => {
   const { proj } = makeWs();

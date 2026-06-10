@@ -100,7 +100,7 @@ function reconcileOrphanedRuns(workspaceDir, scanOrphanedRuns) {
 // `spawn` and `claudeBin` are injectable so the spawn→parse→flush path is testable with a fake CLI.
 // `governance` (GOV-4), when provided, wires the in-run permission gate into every spawn:
 //   { mcpServerPath, controlUrl (mutable — set once the server binds a port), allowedTools }.
-function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null } = {}) {
+function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6 } = {}) {
   const live = new Map(); // run_id -> { events:[], subs:Set<res>, transcript, tokens, session_id, token }
 
   function ensure(run) {
@@ -135,82 +135,83 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       for (const b of o.message.content) if (b.type === 'text' && b.text) { L.transcript += b.text; emit(run.run_id, 'delta', { text: b.text }); }
     }
     if (o.type === 'result' && o.usage) {
-      L.tokens = {
-        input: num(o.usage.input_tokens), output: num(o.usage.output_tokens),
-        cache_read: num(o.usage.cache_read_input_tokens), cache_creation: num(o.usage.cache_creation_input_tokens),
-      };
+      // Accumulate across continuation iterations (one result event per invocation).
+      L.tokens.input += num(o.usage.input_tokens);
+      L.tokens.output += num(o.usage.output_tokens);
+      L.tokens.cache_read += num(o.usage.cache_read_input_tokens);
+      L.tokens.cache_creation += num(o.usage.cache_creation_input_tokens);
       emit(run.run_id, 'tokens', L.tokens);
     }
   }
 
-  // The injected launch(run) target for the run-manager seam (RUN-6).
+  const CONTINUE_PROMPT = 'Continue this task from where you left off. Finish each remaining subtask; when every acceptance criterion is met, update the implementation log and set the task Status to IN_REVIEW to hand off. If you are blocked, say so clearly and stop.';
+
+  // One claude invocation. Resolves with the exit code; streams deltas + accumulates tokens/session
+  // into L. iter 0 sends the role prompt; later iters --resume the session with a continue nudge.
+  function spawnOnce(run, L, workspaceDir, iter) {
+    return new Promise((resolve) => {
+      const prompt = iter === 0 ? buildRunPrompt(run.task_id, run.role) : CONTINUE_PROMPT;
+      const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
+      if (iter > 0 && L.session_id) args.push('--resume', L.session_id);
+      const env = { ...process.env };
+      // GOV-4 gate (re-applied each iteration; per-run token generated once and reused).
+      let govCfgPath = null;
+      if (governance && governance.mcpServerPath && governance.controlUrl) {
+        if (!L.token) { L.token = crypto.randomUUID(); run._token = L.token; }
+        govCfgPath = path.join(os.tmpdir(), `gsf-gov-${run.run_id}-${iter}.json`);
+        try {
+          fs.writeFileSync(govCfgPath, JSON.stringify({ mcpServers: { tcgflow_governance: { command: process.execPath, args: [governance.mcpServerPath] } } }));
+          args.push('--mcp-config', govCfgPath, '--permission-prompt-tool', 'mcp__tcgflow_governance__approve', '--permission-mode', 'default', '--allowedTools', governance.allowedTools || 'Read,Grep,Glob,LS');
+          env.GSF_WORKSPACE_DIR = workspaceDir; env.GSF_CONTROL_URL = governance.controlUrl; env.GSF_RUN_ID = run.run_id; env.GSF_RUN_TOKEN = L.token;
+        } catch { govCfgPath = null; }
+      }
+      let child;
+      try { child = spawn(claudeBin, args, { cwd: run.project_path, env }); }
+      catch (e) { if (govCfgPath) { try { fs.unlinkSync(govCfgPath); } catch { /* ignore */ } } return resolve(-1); }
+      run._child = child;
+      child.on('error', () => resolve(-1)); // ENOENT etc.
+      let buf = '';
+      child.stdout.on('data', (chunk) => { buf += chunk.toString('utf8'); let nl; while ((nl = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); handleLine(L, run, line.trim()); } });
+      child.on('close', (code) => { if (buf.trim()) handleLine(L, run, buf.trim()); run._child = null; if (govCfgPath) { try { fs.unlinkSync(govCfgPath); } catch { /* ignore */ } } resolve(code); });
+    });
+  }
+
+  // The injected launch(run) target for the run-manager seam (RUN-6). Drives the continuation loop.
   function launch(run) {
     const L = ensure(run);
-    const workspaceDir = path.join(run.project_path, '.tcgstackflow');
-    const prompt = buildRunPrompt(run.task_id, run.role);
-    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
-    const env = { ...process.env };
-
-    // GOV-4 — wire the in-run governance gate + sandbox ceiling. --allowedTools whitelists read-only
-    // tools (they skip the prompt entirely); EVERYTHING else routes through the approve MCP tool,
-    // which auto-allows LOW/MEDIUM and pauses HIGH/CRITICAL. permission-mode stays 'default' (NEVER
-    // bypassPermissions). A per-run opaque token authenticates the MCP child's intake POSTs.
-    let govCfgPath = null;
-    if (governance && governance.mcpServerPath && governance.controlUrl) {
-      const token = crypto.randomUUID();
-      run._token = token; L.token = token;
-      govCfgPath = path.join(os.tmpdir(), `gsf-gov-${run.run_id}.json`);
-      try {
-        fs.writeFileSync(govCfgPath, JSON.stringify({ mcpServers: { tcgflow_governance: { command: process.execPath, args: [governance.mcpServerPath] } } }));
-        args.push('--mcp-config', govCfgPath,
-          '--permission-prompt-tool', 'mcp__tcgflow_governance__approve',
-          '--permission-mode', 'default',
-          '--allowedTools', governance.allowedTools || 'Read,Grep,Glob,LS');
-        env.GSF_WORKSPACE_DIR = workspaceDir;
-        env.GSF_CONTROL_URL = governance.controlUrl;
-        env.GSF_RUN_ID = run.run_id;
-        env.GSF_RUN_TOKEN = token;
-      } catch { govCfgPath = null; }
-    }
-
-    let child;
-    try {
-      child = spawn(claudeBin, args, { cwd: run.project_path, env });
-    } catch (e) {
-      if (govCfgPath) { try { fs.unlinkSync(govCfgPath); } catch { /* ignore */ } }
-      emit(run.run_id, 'status', { state: 'error', error: 'runner-spawn-failed', detail: String((e && e.message) || e) });
-      return runManager.fail(run.run_id, 'spawn-failed');
-    }
-    run._child = child;
-    run._govCfgPath = govCfgPath;
     emit(run.run_id, 'status', { state: 'started' });
-    child.on('error', (e) => { // ENOENT: claude not on PATH
-      emit(run.run_id, 'status', { state: 'error', error: 'runner-spawn-failed', detail: String((e && e.code) || e) });
-      runManager.fail(run.run_id, 'spawn-error');
-    });
-    let buf = '', stderr = '';
-    child.stdout.on('data', (chunk) => {
-      buf += chunk.toString('utf8');
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); handleLine(L, run, line.trim()); }
-    });
-    if (child.stderr) child.stderr.on('data', (c) => { stderr += c.toString('utf8'); });
-    child.on('close', (code) => {
-      if (buf.trim()) handleLine(L, run, buf.trim()); // flush trailing partial line
-      run._child = null;
-      if (run._govCfgPath) { try { fs.unlinkSync(run._govCfgPath); } catch { /* ignore */ } run._govCfgPath = null; }
-      if (code === 0) {
-        writeRunRecord(workspaceDir, run, L, 'done');
-        statusSafetyNet(run.project_path, run.task_id);
-        emit(run.run_id, 'done', { session_id: L.session_id, tokens: L.tokens });
-        runManager.complete(run.run_id);
-      } else {
-        writeRunRecord(workspaceDir, run, L, 'failed'); // partial transcript for forensics
-        emit(run.run_id, 'status', { state: 'error', code, detail: stderr.slice(0, 500) });
-        runManager.fail(run.run_id, 'exit-' + code);
-      }
+    runLoop(run, L).catch((e) => {
+      emit(run.run_id, 'status', { state: 'error', error: 'runner-error', detail: String((e && e.message) || e) });
+      runManager.fail(run.run_id, 'error');
     });
     return run;
+  }
+
+  async function runLoop(run, L) {
+    const workspaceDir = path.join(run.project_path, '.tcgstackflow');
+    let code = 0, iters = 0;
+    for (let iter = 0; iter < maxIters; iter++) {
+      iters = iter + 1;
+      const before = L.transcript.length;
+      code = await spawnOnce(run, L, workspaceDir, iter);
+      if (code !== 0) break;                                   // spawn/exit failure
+      let advanced = false;                                    // self-handoff: agent set Status to IN_REVIEW+?
+      try { const d = read.buildTaskDetail(run.project_path, run.task_id); advanced = !d.error && ADVANCED.has(d.status); } catch { /* ignore */ }
+      if (advanced) break;
+      if (L.transcript.length === before) break;               // produced nothing new → stop spinning
+      if (iter + 1 < maxIters) emit(run.run_id, 'status', { state: 'continuing', iter: iter + 1 });
+    }
+    L.iterations = iters;
+    if (code === 0) {
+      writeRunRecord(workspaceDir, run, L, 'done');
+      statusSafetyNet(run.project_path, run.task_id);
+      emit(run.run_id, 'done', { session_id: L.session_id, tokens: L.tokens, iterations: iters });
+      runManager.complete(run.run_id);
+    } else {
+      writeRunRecord(workspaceDir, run, L, 'failed'); // partial transcript for forensics
+      emit(run.run_id, 'status', { state: 'error', code });
+      runManager.fail(run.run_id, 'exit-' + code);
+    }
   }
 
   return {

@@ -29,7 +29,10 @@ const STATUS_NEXT_AGENT = {
 // Normalize free-form status strings (different projects write "In Progress", "Done", "WIP", …)
 // to the canonical set so the action queue + status badges work across real-world workspaces.
 function normalizeStatus(raw) {
-  const s = (raw || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  // Real task files often carry verbose Status lines, e.g. "IN PROGRESS (RCA IMPLEMENTED, DOCS SYNCED)".
+  // Keep the leading status token (drop parenthetical/bracketed notes) so it maps + gets a status color.
+  const head = String(raw || '').split(/[(\[]/)[0].trim();
+  const s = head.toUpperCase().replace(/[\s-]+/g, '_');
   const map = {
     DRAFT: 'DRAFT',
     TODO: 'PLANNED', NOT_STARTED: 'PLANNED', BACKLOG: 'PLANNED', READY: 'PLANNED', PLANNED: 'PLANNED',
@@ -255,8 +258,14 @@ function buildProjectDetail(projectPath, overlay = {}) {
   // Attach Jira status from the project-local cache (if synced). Workspace status drives the
   // action queue; Jira status is the client-side business state — they can drift.
   const jira = readJiraCache(workspaceDir);
+  // Per-project agents summary: tokens + runs by role (this project only), queue filled below.
+  const agents = {};
+  const ensureRole = (r) => (agents[r] || (agents[r] = { role: r, queue: 0, runs: 0, tokens: ZERO_TOKENS() }));
   for (const t of tasks) {
-    t.tokens_total = readRunsForTask(workspaceDir, t.id).total; // SRV-5 — additive per-task token total
+    const rr = readRunsForTask(workspaceDir, t.id); // SRV-5 — reused for per-task total + per-role agents summary
+    t.tokens_total = rr.total;
+    for (const [role, tk] of Object.entries(rr.by_role)) { const a = ensureRole(role); for (const k of Object.keys(a.tokens)) a.tokens[k] += tk[k]; }
+    for (const run of rr.runs) if (run.role) ensureRole(run.role).runs++;
     const j = jira.issues[t.id];
     if (j) {
       t.jira_status = j.status || null;
@@ -269,6 +278,7 @@ function buildProjectDetail(projectPath, overlay = {}) {
   const action_queue = tasks
     .filter(t => t.bucket === 'active' && t.next_agent && t.next_agent !== 'human')
     .map(t => ({ task_id: t.id, title: t.title, status: t.status, agent: t.next_agent, jira_status: t.jira_status || null, jira_drift: !!t.jira_drift }));
+  for (const a of action_queue) ensureRole(a.agent).queue++; // queue counts per agent (this project)
 
   // RUN-4 — annotate with transient run_state from the injected overlay; the durable file-derived
   // status/next_agent are left untouched (ADR 0024 layering). With the default {} nothing changes.
@@ -286,6 +296,7 @@ function buildProjectDetail(projectPath, overlay = {}) {
     },
     jira_synced: jira.synced,
     action_queue,
+    agents, // per-role { queue, runs, tokens } for this project (agent cards on the Overview tab)
     tasks,
     wiki: readWiki(workspaceDir),
     governance: readGovernance(workspaceDir),
@@ -358,6 +369,20 @@ function readRunsForTask(workspaceDir, id) {
     runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: fm.session_id || null, state: fm.state || null, tokens });
   }
   return { total, by_role, runs };
+}
+
+// Read one run's record: frontmatter fields + the raw transcript body (after the --- block).
+function readRunTranscript(workspaceDir, taskId, runId) {
+  const text = safeRead(path.join(workspaceDir, 'runs', taskId, runId + '.md'));
+  if (!text) return { error: 'run-not-found', run_id: runId };
+  const fm = parseFrontmatter(text);
+  const m = text.match(/^---\s*\n[\s\S]*?\n---\s*\n?([\s\S]*)$/);
+  return {
+    run_id: runId, role: fm.role || null, session_id: fm.session_id || null,
+    state: fm.state || null, ended_at: fm.ended_at || null,
+    tokens: (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : null,
+    transcript: (m ? m[1] : text).trim(),
+  };
 }
 
 // SRV-3 — parse `### ENTRY START` YAML blocks of an implementation log into an ordered timeline.
@@ -496,10 +521,98 @@ function writeTaskStatus(projectPath, id, newStatus, opts = {}) {
   return { id, status: normalizeStatus(newStatus), old_status: oldStatus, bucket: found.bucket };
 }
 
+// --- Agents overview (cross-project, grouped by role) ---
+const AGENT_ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
+
+// Parse an agents/{role}.md profile into { name, role (one-liner), description, skills[] }.
+// Extract the body of a `## {heading}` section (robust split — no fragile multiline regex).
+function agentSection(text, name) {
+  const parts = String(text).split(/^##\s+/m); // parts[0] = preamble; others begin "Heading\n…"
+  for (const p of parts.slice(1)) {
+    const nl = p.indexOf('\n');
+    const head = (nl < 0 ? p : p.slice(0, nl)).trim();
+    if (head.toLowerCase() === name.toLowerCase()) return (nl < 0 ? '' : p.slice(nl + 1)).trim();
+  }
+  return '';
+}
+function parseAgentProfile(text) {
+  if (!text) return null;
+  const fm = parseFrontmatter(text);
+  const roleBody = agentSection(text, 'Role');
+  const description = roleBody ? roleBody.split(/\n\s*\n/)[0].replace(/\s+/g, ' ').trim() : (fm.role || '');
+  const skillsBody = agentSection(text, 'Skills used');
+  const skills = [...new Set((skillsBody.match(/`[^`]+`/g) || []).map((s) => s.replace(/`/g, '')))];
+  return { name: fm.name || '', role: fm.role || '', description, skills };
+}
+
+// Walk the registry: per role, collect its action queue across projects + tokens spent + run count
+// + a representative profile. Powers the Home "grouped by agent" view and the agent detail pages.
+function buildAgentsOverview(opts = {}) {
+  const roles = {};
+  const mk = (r) => ({ role: r, queue: [], tokens: ZERO_TOKENS(), runs: 0, projects: 0, profile: null });
+  for (const r of AGENT_ROLES) roles[r] = mk(r);
+
+  let registry = [];
+  try { registry = opts.registry || gsf.readProjectRegistry(); } catch { registry = []; }
+  for (const entry of registry) {
+    const workspaceDir = path.join(entry.path, '.tcgstackflow');
+    if (!fs.existsSync(path.join(workspaceDir, 'config.yaml'))) continue;
+    const seen = new Set();
+    for (const t of listTasks(workspaceDir)) {
+      if (t.bucket === 'active' && t.next_agent && roles[t.next_agent]) {
+        roles[t.next_agent].queue.push({ project: entry.name, project_path: entry.path, task_id: t.id, title: t.title, status: t.status });
+      }
+      const rr = readRunsForTask(workspaceDir, t.id);
+      for (const [role, tk] of Object.entries(rr.by_role)) {
+        if (!roles[role]) roles[role] = mk(role);
+        for (const k of Object.keys(roles[role].tokens)) roles[role].tokens[k] += tk[k];
+        seen.add(role);
+      }
+      for (const run of rr.runs) if (roles[run.role]) roles[run.role].runs++;
+    }
+    for (const r of seen) roles[r].projects++;
+    for (const r of AGENT_ROLES) {
+      if (!roles[r].profile) {
+        const prof = parseAgentProfile(safeRead(path.join(workspaceDir, 'agents', r + '.md')));
+        if (prof && (prof.name || prof.description)) roles[r].profile = prof;
+      }
+    }
+  }
+  // ordered list for the UI (known roles first, then any extras)
+  const order = [...AGENT_ROLES, ...Object.keys(roles).filter((r) => !AGENT_ROLES.includes(r))];
+  return { roles, order };
+}
+
+// Workspace-wide run history: every run record across the registry, newest first.
+function buildRunsHistory(opts = {}) {
+  const out = [];
+  let registry = [];
+  try { registry = opts.registry || gsf.readProjectRegistry(); } catch { registry = []; }
+  for (const entry of registry) {
+    const runsBase = path.join(entry.path, '.tcgstackflow', 'runs');
+    for (const td of safeList(runsBase)) {
+      if (!td.isDirectory()) continue;
+      for (const f of safeList(path.join(runsBase, td.name))) {
+        if (!f.isFile() || !f.name.endsWith('.md')) continue;
+        const fm = parseFrontmatter(safeRead(path.join(runsBase, td.name, f.name)));
+        out.push({
+          project: entry.name, project_path: entry.path, task_id: td.name,
+          run_id: f.name.replace(/\.md$/, ''), role: fm.role || 'unknown',
+          state: fm.state || null, session_id: fm.session_id || null, ended_at: fm.ended_at || null,
+          tokens: (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : ZERO_TOKENS(),
+        });
+      }
+    }
+  }
+  return out.sort((a, b) => String(b.ended_at || '').localeCompare(String(a.ended_at || '')));
+}
+
 module.exports = {
   buildProjectsList, buildProjectDetail, STATUS_NEXT_AGENT,
   // Orchestrator (schema 4): reads
-  findTaskFolder, parseFrontmatter, readRunsForTask, parseTaskLogTimeline, buildTaskDetail,
+  findTaskFolder, parseFrontmatter, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
   // Orchestrator: the one canonical task-file writer
   appendLogEntry, writeTaskStatus,
+  // Agents overview + run history
+  buildAgentsOverview, parseAgentProfile, AGENT_ROLES, buildRunsHistory,
 };

@@ -24,6 +24,7 @@ const DEFAULT_PORT = 4729;
 const { createRunManager, scanOrphanedRuns } = require('./run-manager.cjs');
 const { createApprovals } = require('./approvals.cjs');
 const runMod = require('./run.cjs');
+const sessionReport = require('./session-report.cjs');
 
 // GOV-4 governance config. controlUrl is filled once the server binds a port (in start()).
 const governance = {
@@ -124,6 +125,10 @@ const server = http.createServer((req, res) => {
     if (p === '/api/projects') {
       return sendJSON(res, 200, { projects: read.buildProjectsList() });
     }
+    // Cross-project agents overview — queue + tokens + profile per role (Home grouping + agent pages).
+    if (p === '/api/agents') {
+      return sendJSON(res, 200, read.buildAgentsOverview());
+    }
     if (p === '/api/project') {
       const proj = u.searchParams.get('path');
       if (!proj) return sendJSON(res, 400, { error: 'missing path param' });
@@ -135,6 +140,32 @@ const server = http.createServer((req, res) => {
       const proj = u.searchParams.get('path'); const id = u.searchParams.get('id');
       if (!proj || !id) return sendJSON(res, 400, { error: 'missing path or id' });
       return sendJSON(res, 200, read.buildTaskDetail(proj, id));
+    }
+    // Session report — aggregate token/tool/cost telemetry from the task's session JSONLs.
+    if (p === '/api/project/task/report') {
+      const proj = u.searchParams.get('path'); const id = u.searchParams.get('id');
+      if (!proj || !id) return sendJSON(res, 400, { error: 'missing path or id' });
+      const ws = path.join(proj, '.tcgstackflow');
+      if (!fs.existsSync(path.join(ws, 'config.yaml'))) return sendJSON(res, 400, { error: 'not-a-workspace' });
+      return sendJSON(res, 200, sessionReport.buildTaskReport(ws, id, { onlyRun: u.searchParams.get('run') || undefined }));
+    }
+    // Standalone HTML export of the session report (one-click "Generate analysis"). `run` scopes to one run.
+    if (p === '/api/project/task/report.html') {
+      const proj = u.searchParams.get('path'); const id = u.searchParams.get('id'); const run = u.searchParams.get('run') || undefined;
+      if (!proj || !id) return sendJSON(res, 400, { error: 'missing path or id' });
+      const ws = path.join(proj, '.tcgstackflow');
+      if (!fs.existsSync(path.join(ws, 'config.yaml'))) return sendJSON(res, 400, { error: 'not-a-workspace' });
+      const html = sessionReport.renderReportHtml(sessionReport.buildTaskReport(ws, id, { onlyRun: run }), { task: run ? id + ' · run ' + run.slice(0, 8) : id, project: proj });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
+    // One run's transcript (runs/ viewer).
+    if (p === '/api/project/task/run') {
+      const proj = u.searchParams.get('path'); const id = u.searchParams.get('id'); const run = u.searchParams.get('run');
+      if (!proj || !id || !run) return sendJSON(res, 400, { error: 'missing path/id/run' });
+      const ws = path.join(proj, '.tcgstackflow');
+      if (!fs.existsSync(path.join(ws, 'config.yaml'))) return sendJSON(res, 400, { error: 'not-a-workspace' });
+      return sendJSON(res, 200, read.readRunTranscript(ws, id, run));
     }
     // SRV-8 — manual Status override (the canonical task-file write, ADR 0032).
     if (p === '/api/project/task/status') {
@@ -156,6 +187,9 @@ const server = http.createServer((req, res) => {
     // --- Orchestrator run endpoints (Phase 4: RUN-5 reads + API-6 launch/stream) ---
     if (p === '/api/runs') { // all in-memory runs grouped by project (Home cross-project view)
       return sendJSON(res, 200, { runs: runManager.list(), governance_ready: governanceGateReady });
+    }
+    if (p === '/api/runs/history') { // durable run records across the whole workspace, newest first
+      return sendJSON(res, 200, { runs: read.buildRunsHistory() });
     }
     if (p === '/api/run/stream') { // SSE live stream for one run
       const runId = u.searchParams.get('run_id');
@@ -220,20 +254,20 @@ const server = http.createServer((req, res) => {
 const FALLBACK_HTML = `<!doctype html><html><head><meta charset="utf-8">
 <title>GeekStack Flow — Cockpit</title>
 <style>
- html,body{background:#f1f5f9}
- body{font:14px/1.5 system-ui,sans-serif;margin:0;display:flex;height:100vh;color:#0f172a}
- main{background:#f1f5f9}
- nav{width:260px;background:#0f172a;color:#e2e8f0;padding:16px;overflow:auto}
- nav h1{font-size:15px;margin:0 0 12px;color:#94a3b8;letter-spacing:.05em;text-transform:uppercase}
- nav a{display:block;padding:8px 10px;border-radius:6px;color:#e2e8f0;text-decoration:none;cursor:pointer}
- nav a:hover{background:#1e293b}
- nav a .badge{float:right;background:#f59e0b;color:#000;border-radius:10px;padding:0 7px;font-size:11px}
+ html,body{background:#0a0f1e}
+ body{font:14px/1.5 system-ui,sans-serif;margin:0;display:flex;height:100vh;color:#e8eefb}
+ main{background:#0a0f1e}
+ nav{width:260px;background:#080d1a;color:#e8eefb;padding:16px;overflow:auto;border-right:1px solid #23304f}
+ nav h1{font-size:15px;margin:0 0 12px;color:#8794b4;letter-spacing:.05em;text-transform:uppercase}
+ nav a{display:block;padding:8px 10px;border-radius:6px;color:#aab6d4;text-decoration:none;cursor:pointer}
+ nav a:hover{background:#16203c;color:#e8eefb}
+ nav a .badge{float:right;background:#f5b031;color:#04121a;border-radius:10px;padding:0 7px;font-size:11px}
  main{flex:1;padding:24px 32px;overflow:auto}
- .muted{color:#64748b}.pill{display:inline-block;background:#e2e8f0;border-radius:10px;padding:1px 9px;font-size:12px;margin-right:6px}
- .card{border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin:10px 0}
- .run{float:right;background:#0f172a;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px}
- h2{margin:18px 0 6px}.agent{font-weight:600;color:#2563eb}
- code{background:#f1f5f9;padding:1px 5px;border-radius:4px}
+ .muted{color:#8794b4}.pill{display:inline-block;background:#16203c;border:1px solid #23304f;border-radius:10px;padding:1px 9px;font-size:12px;margin-right:6px}
+ .card{border:1px solid #23304f;background:#10182f;border-radius:10px;padding:14px 16px;margin:10px 0}
+ .run{float:right;background:#46c6e0;color:#04121a;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:600}
+ h2{margin:18px 0 6px}.agent{font-weight:600;color:#5b9cff}
+ code{background:#16203c;border:1px solid #23304f;padding:1px 5px;border-radius:4px}
 </style></head><body>
 <nav><h1>GeekStack Flow</h1>
  <a onclick="loadHome()">🏠 Home</a>

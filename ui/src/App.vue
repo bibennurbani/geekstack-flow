@@ -4,7 +4,10 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 const projects = ref([]);
 const selected = ref(null);      // null = Home; else project path
 const detail = ref(null);
-const homeQueue = ref([]);
+const agents = ref(null);        // /api/agents overview { roles, order }
+const selectedAgent = ref(null); // role string when viewing an agent detail page
+const showRuns = ref(false);     // global run-history view
+const runsHistory = ref([]);
 const loading = ref(true);
 const copiedKey = ref('');
 
@@ -34,19 +37,36 @@ async function loadProjects() {
 }
 
 async function loadHome() {
-  selected.value = null; detail.value = null; loading.value = true; closeTask();
-  const details = await Promise.all(
-    projects.value.filter(p => p.exists)
-      .map(p => api('/api/project?path=' + encodeURIComponent(p.path)).then(d => ({ p, d })))
-  );
-  const rows = [];
-  for (const { p, d } of details) for (const a of (d.action_queue || [])) rows.push({ project: p.name, ...a });
-  homeQueue.value = rows;
+  selected.value = null; detail.value = null; selectedAgent.value = null; showRuns.value = false; loading.value = true; closeTask();
+  agents.value = await api('/api/agents');
   loading.value = false;
 }
+async function loadRuns() {
+  selected.value = null; detail.value = null; selectedAgent.value = null; showRuns.value = true; loading.value = true; closeTask();
+  runsHistory.value = (await api('/api/runs/history')).runs || [];
+  loading.value = false;
+}
+function openReportHtmlFor(pp, id, runId) {
+  window.open('/api/project/task/report.html?path=' + encodeURIComponent(pp) + '&id=' + encodeURIComponent(id) + '&run=' + encodeURIComponent(runId), '_blank');
+}
+async function openRunGlobal(pp, id, runId) {
+  runLoading.value = true; runView.value = null;
+  runView.value = await api('/api/project/task/run?path=' + encodeURIComponent(pp) + '&id=' + encodeURIComponent(id) + '&run=' + encodeURIComponent(runId));
+  runLoading.value = false;
+}
+const agentTab = ref('queue'); // queue | profile | tokens
+function openAgent(role) { selectedAgent.value = role; agentTab.value = 'queue'; }
+function closeAgent() { selectedAgent.value = null; }
+async function openTaskInProject(projectPath, id) {
+  const p = projects.value.find((x) => x.path === projectPath);
+  if (!p) return;
+  await loadProject(p);   // switches to the project view
+  await openTask({ id }); // then opens the task detail
+}
+const tokSum = (t) => (t ? t.input + t.output + t.cache_read + t.cache_creation : 0);
 
 async function loadProject(p) {
-  selected.value = p.path; loading.value = true; closeTask();
+  selected.value = p.path; showRuns.value = false; loading.value = true; closeTask(); projectTab.value = 'overview'; taskAgent.value = 'all';
   detail.value = await api('/api/project?path=' + encodeURIComponent(p.path));
   loading.value = false;
 }
@@ -62,10 +82,13 @@ function copyPrompt(taskId, agent, key) {
 // --- task detail panel ---
 const taskUrl = () => '/api/project/task?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value);
 async function openTask(t) {
-  selectedTask.value = t.id; taskDetail.value = null; statusError.value = ''; resetRun();
+  // Action-queue entries carry `task_id`; Tasks-list entries carry `id`. Accept either.
+  const id = t.id || t.task_id;
+  if (!id) return;
+  selectedTask.value = id; taskDetail.value = null; statusError.value = ''; resetRun(); closeReport();
   taskDetail.value = await api(taskUrl());
 }
-function closeTask() { selectedTask.value = null; taskDetail.value = null; statusError.value = ''; closeStream(); resetRun(); }
+function closeTask() { selectedTask.value = null; taskDetail.value = null; statusError.value = ''; closeStream(); resetRun(); closeReport(); closeRun(); }
 async function refreshTask() { if (selectedTask.value) taskDetail.value = await api(taskUrl()); }
 
 async function changeStatus(e) {
@@ -106,6 +129,117 @@ async function decide(decision) {
   // the panel clears on the approval_resolved SSE event
 }
 
+// --- session report (token telemetry) ---
+const report = ref(null);
+const showReport = ref(false);
+const reportLoading = ref(false);
+async function openReport() {
+  showReport.value = true; reportLoading.value = true; report.value = null;
+  report.value = await api('/api/project/task/report?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value));
+  reportLoading.value = false;
+}
+function closeReport() { showReport.value = false; report.value = null; }
+// One-click: open the server-rendered standalone HTML report in a new tab.
+function openReportHtml() {
+  window.open('/api/project/task/report.html?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value), '_blank');
+}
+// --- runs / transcript viewer ---
+const runView = ref(null);
+const runLoading = ref(false);
+async function openRun(runId) {
+  runLoading.value = true; runView.value = null;
+  runView.value = await api('/api/project/task/run?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value) + '&run=' + encodeURIComponent(runId));
+  runLoading.value = false;
+}
+function closeRun() { runView.value = null; }
+// Jump straight from a task card into its report (loads the task first so "Back to task" works).
+async function openReportFor(t) {
+  const id = t.id || t.task_id;
+  if (!id) return;
+  await openTask(t);
+  await openReport();
+}
+// True when a task has orchestrated-run token data (so a report is worth showing).
+const hasRuns = (t) => { const x = t && t.tokens_total; return !!x && (x.input + x.output + x.cache_read + x.cache_creation) > 0; };
+function generateAnalysis() {
+  const sids = (report.value && report.value.sessions || []).filter(s => s.found).map(s => s.session_id);
+  const logs = sids.length ? sids.map(s => '~/.claude/projects/*/' + s + '.jsonl').join(', ') : '(no session logs found on this machine)';
+  const txt = `Author a session-telemetry post-mortem as a self-contained dark-themed HTML report (style of a "Where the tokens went" / session_report) for task ${selectedTask.value} in ${selected.value}. `
+    + `Parse these Claude Code session logs: ${logs}. Include: a narrative headline, a "what happened" summary, a token-class breakdown (cache read/write, output, fresh input) with estimated $ using Opus list pricing (input $15 / output $75 / cache-write $18.75 / cache-read $1.50 per M tokens), tool-calls-by-type, a per-turn cache-read trace, and ranked optimization recommendations with rough $ savings. Write the HTML to $TMPDIR and open it.`;
+  navigator.clipboard.writeText(txt);
+  copiedKey.value = 'report'; setTimeout(() => { if (copiedKey.value === 'report') copiedKey.value = ''; }, 1800);
+}
+const fmtTok = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'; return String(n); };
+const fmtUsd = (n) => { n = Number(n) || 0; return n >= 100 ? '$' + Math.round(n) : '$' + n.toFixed(2); };
+const costRows = computed(() => {
+  if (!report.value) return [];
+  const t = report.value.totals.tokens, c = report.value.totals.cost.by_class, total = report.value.totals.cost.total || 1e-9;
+  const rows = [
+    { name: 'Cache reads', tok: t.cache_read, usd: c.cache_read, hot: true },
+    { name: 'Output', tok: t.output, usd: c.output },
+    { name: 'Cache writes', tok: t.cache_creation, usd: c.cache_write },
+    { name: 'Fresh input', tok: t.input, usd: c.input },
+  ];
+  const max = Math.max(...rows.map(r => r.usd), 1e-9);
+  return rows.sort((a, b) => b.usd - a.usd).map(r => ({ ...r, pct: Math.round(r.usd / total * 100), w: Math.max(0.8, r.usd / max * 100) }));
+});
+const toolMax = computed(() => (report.value && report.value.tools_by_type[0] ? report.value.tools_by_type[0].count : 1));
+const tracePath = computed(() => {
+  const tl = (report.value && report.value.timeline) || []; if (!tl.length) return null;
+  const max = Math.max(...tl.map(p => p.cache_read), 1), n = tl.length;
+  const pts = tl.map((p, i) => { const x = n === 1 ? 1000 : (i / (n - 1)) * 1000; const y = 150 - (p.cache_read / max) * 138; return x.toFixed(1) + ',' + y.toFixed(1); });
+  return { line: 'M' + pts.join(' L'), area: 'M0,150 L' + pts.join(' L') + ' L1000,150 Z' };
+});
+const wallClock = computed(() => { const ms = (report.value && report.value.totals.wall_clock_ms) || 0; const m = Math.round(ms / 60000); return m >= 1 ? m + 'm' : Math.round(ms / 1000) + 's'; });
+
+// --- per-project tabs + task table ---
+const projectTab = ref('overview');
+const taskBucket = ref('active');   // active | completed | archive | all
+const taskStatus = ref('all');
+const taskSearch = ref('');
+const taskAgent = ref('all');       // next-agent filter (set by clicking a project agent card)
+const taskSort = ref({ col: 'id', dir: 1 });
+function toggleSort(col) { taskSort.value = taskSort.value.col === col ? { col, dir: -taskSort.value.dir } : { col, dir: 1 }; }
+function filterByAgent(role) { taskAgent.value = role; taskBucket.value = 'active'; projectTab.value = 'tasks'; }
+const projectTasks = computed(() => (detail.value && detail.value.tasks) || []);
+const taskStatuses = computed(() => [...new Set(projectTasks.value.map((t) => t.status))].sort());
+const bucketCounts = computed(() => { const c = { active: 0, completed: 0, archive: 0 }; for (const t of projectTasks.value) if (c[t.bucket] != null) c[t.bucket]++; return c; });
+const filteredTasks = computed(() => {
+  let ts = projectTasks.value.slice();
+  if (taskBucket.value !== 'all') ts = ts.filter((t) => t.bucket === taskBucket.value);
+  if (taskStatus.value !== 'all') ts = ts.filter((t) => t.status === taskStatus.value);
+  if (taskAgent.value !== 'all') ts = ts.filter((t) => t.next_agent === taskAgent.value);
+  const q = taskSearch.value.trim().toLowerCase();
+  if (q) ts = ts.filter((t) => (t.id + ' ' + t.title).toLowerCase().includes(q));
+  const { col, dir } = taskSort.value;
+  return ts.sort((a, b) => String(a[col] || '').localeCompare(String(b[col] || '')) * dir);
+});
+
+const ROLE_ORDER = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
+const agentList = computed(() => agents.value ? (agents.value.order || ROLE_ORDER).map((r) => agents.value.roles[r]).filter(Boolean) : []);
+const activeAgents = computed(() => agentList.value.filter((a) => (a.queue && a.queue.length) || a.runs || tokSum(a.tokens) > 0));
+const queueGroups = computed(() => agentList.value.filter((a) => a.queue && a.queue.length));
+const readyCount = computed(() => agentList.value.reduce((n, a) => n + (a.queue ? a.queue.length : 0), 0));
+const agentDetail = computed(() => (agents.value && selectedAgent.value) ? agents.value.roles[selectedAgent.value] : null);
+
+// Client-side cost estimate (Opus list pricing per M; matches the Session Report table).
+const PRICE = { input: 15, output: 75, cache_write: 18.75, cache_read: 1.5 };
+const costOfTokens = (t) => t ? (t.input / 1e6 * PRICE.input + t.output / 1e6 * PRICE.output + t.cache_creation / 1e6 * PRICE.cache_write + t.cache_read / 1e6 * PRICE.cache_read) : 0;
+const homeTotals = computed(() => {
+  const tk = { input: 0, output: 0, cache_read: 0, cache_creation: 0 }; let runs = 0, active = 0;
+  for (const a of agentList.value) {
+    for (const k in tk) tk[k] += (a.tokens && a.tokens[k]) || 0;
+    runs += a.runs || 0;
+    if ((a.queue && a.queue.length) || a.runs) active++;
+  }
+  return { tokens: tk.input + tk.output + tk.cache_read + tk.cache_creation, cost: costOfTokens(tk), runs, activeAgents: active };
+});
+// Per-project agent cards (Overview tab), ordered, only roles with load/spend.
+const projectAgents = computed(() => {
+  const m = (detail.value && detail.value.agents) || {};
+  return ROLE_ORDER.map((r) => m[r]).filter((a) => a && (a.queue || a.runs || tokSum(a.tokens) > 0));
+});
+
 const updateCount = computed(() => projects.value.filter(p => p.update_available).length);
 const prettyStatus = (s) => (s || '').replace(/_/g, ' ');
 const roleEntries = computed(() => taskDetail.value && taskDetail.value.tokens ? Object.entries(taskDetail.value.tokens.by_role || {}) : []);
@@ -131,9 +265,12 @@ onUnmounted(() => closeStream());
   <div class="layout">
     <nav>
       <div class="brand">⚡ GeekStack Flow</div>
-      <div class="nav-item" :class="{ active: selected === null }" @click="loadHome">
+      <div class="nav-item" :class="{ active: selected === null && !showRuns }" @click="loadHome">
         <span>🏠</span><span class="label">Home</span>
-        <span v-if="homeQueue.length" class="count">{{ homeQueue.length }}</span>
+        <span v-if="readyCount" class="count">{{ readyCount }}</span>
+      </div>
+      <div class="nav-item" :class="{ active: showRuns }" @click="loadRuns">
+        <span>📊</span><span class="label">Runs</span>
       </div>
       <div class="nav-section">Projects</div>
       <div
@@ -156,42 +293,228 @@ onUnmounted(() => closeStream());
       <div class="content">
         <p v-if="loading" class="muted">Loading…</p>
 
+        <!-- RUNS HISTORY (workspace-wide) -->
+        <template v-else-if="showRuns">
+          <div class="page-head">
+            <h1>Runs</h1>
+            <div class="meta"><span>{{ runsHistory.length }} run{{ runsHistory.length === 1 ? '' : 's' }} across the workspace · newest first</span></div>
+          </div>
+          <div v-if="!runsHistory.length" class="empty">No orchestrated runs yet. Launch one with the <b>Run</b> button on a task.</div>
+          <div v-else class="ttable">
+            <div class="tr th" style="grid-template-columns:1fr 120px 92px 88px auto">
+              <span>Task</span><span>Project</span><span>Role</span><span>State</span><span></span>
+            </div>
+            <div v-for="r in runsHistory" :key="r.project_path + r.run_id" class="tr trow" style="grid-template-columns:1fr 120px 92px 88px auto" @click="openRunGlobal(r.project_path, r.task_id, r.run_id)">
+              <span class="tc-task"><b class="task-id">{{ r.task_id }}</b> <span class="mono muted" style="font-size:11px">{{ r.run_id.slice(0, 8) }}…</span></span>
+              <span class="muted" style="font-size:12px;overflow:hidden;text-overflow:ellipsis">{{ r.project }}</span>
+              <span><span class="agent" :class="'agent-' + r.role">{{ r.role }}</span></span>
+              <span><span class="badge" :class="r.state === 'done' ? 'st-COMPLETED' : r.state === 'failed' ? 'st-BLOCKED' : 'soft'">{{ r.state || '?' }}</span></span>
+              <span class="tc-act">
+                <span class="mono muted" style="font-size:11px">{{ fmtTok((r.tokens.input||0)+(r.tokens.output||0)+(r.tokens.cache_read||0)+(r.tokens.cache_creation||0)) }} tok</span>
+                <button class="btn" style="padding:3px 9px;font-size:11px" @click.stop="openReportHtmlFor(r.project_path, r.task_id, r.run_id)">report ↗</button>
+              </span>
+            </div>
+          </div>
+        </template>
+
         <!-- HOME -->
         <template v-else-if="selected === null">
-          <div class="page-head">
-            <h1>Home</h1>
-            <div class="meta">
-              <span>Action queue across all projects</span>
-              <span v-if="updateCount" class="badge st-IN_PROGRESS">{{ updateCount }} update{{ updateCount > 1 ? 's' : '' }} available</span>
+
+          <!-- ===== AGENT DETAIL ===== -->
+          <template v-if="selectedAgent && agentDetail">
+            <div class="detail-head">
+              <button class="btn" @click="closeAgent">← Back</button>
+              <h1 style="text-transform:capitalize"><span class="agent" :class="'agent-' + agentDetail.role">{{ (agentDetail.profile && agentDetail.profile.name) || agentDetail.role }}</span></h1>
             </div>
-          </div>
-          <div v-if="!homeQueue.length" class="empty">Nothing ready to run. All caught up. ✓</div>
-          <div v-for="(row, i) in homeQueue" :key="row.project + row.task_id" class="card row interactive">
-            <div class="grow">
-              <span class="task-id">{{ row.task_id }}</span><span class="task-title">{{ row.title }}</span>
-              <div class="sub">
-                <span class="badge soft">{{ row.project }}</span>
-                <span class="badge" :class="'st-' + row.status">{{ prettyStatus(row.status) }}</span>
-                <span>→ <span class="agent" :class="'agent-' + row.agent">{{ row.agent }}</span></span>
+            <p v-if="agentDetail.profile && agentDetail.profile.role" class="muted" style="margin:-6px 0 12px;font-size:14px">{{ agentDetail.profile.role }}</p>
+
+            <div class="tabs">
+              <button class="tab" :class="{ active: agentTab === 'queue' }" @click="agentTab = 'queue'">Queue <span class="tab-n">{{ agentDetail.queue.length }}</span></button>
+              <button class="tab" :class="{ active: agentTab === 'profile' }" @click="agentTab = 'profile'">Profile</button>
+              <button class="tab" :class="{ active: agentTab === 'tokens' }" @click="agentTab = 'tokens'">Tokens</button>
+            </div>
+
+            <!-- QUEUE -->
+            <template v-if="agentTab === 'queue'">
+              <div v-if="!agentDetail.queue.length" class="empty">Nothing waiting for this agent.</div>
+              <div v-for="(q, i) in agentDetail.queue" :key="q.project_path + q.task_id" class="card row interactive" @click="openTaskInProject(q.project_path, q.task_id)">
+                <div class="grow">
+                  <span class="task-id">{{ q.task_id }}</span><span class="task-title">{{ q.title }}</span>
+                  <div class="sub"><span class="badge soft">{{ q.project }}</span><span class="badge" :class="'st-' + q.status">{{ prettyStatus(q.status) }}</span></div>
+                </div>
+                <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === 'a' + i }" @click.stop="copyPrompt(q.task_id, agentDetail.role, 'a' + i)">{{ copiedKey === 'a' + i ? '✓ Copied' : 'Copy prompt' }}</button>
+              </div>
+            </template>
+
+            <!-- PROFILE -->
+            <template v-else-if="agentTab === 'profile'">
+              <p v-if="agentDetail.profile && agentDetail.profile.description" style="max-width:72ch;color:var(--text-2)">{{ agentDetail.profile.description }}</p>
+              <div v-if="agentDetail.profile && agentDetail.profile.skills.length" class="chips" style="margin:14px 0 4px">
+                <span class="muted" style="font-size:12px">Skills used</span>
+                <span v-for="s in agentDetail.profile.skills" :key="s" class="badge soft">{{ s }}</span>
+              </div>
+              <div v-if="!agentDetail.profile" class="empty">No profile found for this role.</div>
+            </template>
+
+            <!-- TOKENS -->
+            <template v-else-if="agentTab === 'tokens'">
+              <p class="muted" style="font-size:12.5px;margin:0 0 14px">{{ agentDetail.runs }} run{{ agentDetail.runs === 1 ? '' : 's' }} across {{ agentDetail.projects }} project{{ agentDetail.projects === 1 ? '' : 's' }} · ~{{ fmtUsd(costOfTokens(agentDetail.tokens)) }} est.</p>
+              <div v-if="tokSum(agentDetail.tokens)" class="agent-tok">
+                <div><div class="v">{{ fmtTok(agentDetail.tokens.input) }}</div><div class="k">input</div></div>
+                <div><div class="v">{{ fmtTok(agentDetail.tokens.output) }}</div><div class="k">output</div></div>
+                <div><div class="v">{{ fmtTok(agentDetail.tokens.cache_read) }}</div><div class="k">cache read</div></div>
+                <div><div class="v">{{ fmtTok(agentDetail.tokens.cache_creation) }}</div><div class="k">cache write</div></div>
+              </div>
+              <div v-else class="empty">No orchestrated runs by this agent yet.</div>
+            </template>
+          </template>
+
+          <!-- ===== HOME GRID (grouped by agent) ===== -->
+          <template v-else>
+            <div class="hero">
+              <div>
+                <div class="hero-eyebrow">orchestration · {{ projects.length }} project{{ projects.length === 1 ? '' : 's' }}</div>
+                <h1 class="hero-h1">{{ readyCount }} task{{ readyCount === 1 ? '' : 's' }} ready<br><span class="hero-em">across your workspace</span></h1>
+              </div>
+              <div class="hero-big" title="Estimate from recorded run totals (Opus list pricing). Open a task's Session report for precise per-turn cost.">
+                <div class="hero-label">est. spend so far</div>
+                <div class="hero-n">{{ fmtUsd(homeTotals.cost) }}</div>
+                <small>{{ fmtTok(homeTotals.tokens) }} tokens · list est.</small>
               </div>
             </div>
-            <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === 'h'+i }"
-              @click="copyPrompt(row.task_id, row.agent, 'h'+i)">
-              {{ copiedKey === 'h'+i ? '✓ Copied' : 'Copy prompt' }}
-            </button>
-          </div>
+            <div class="hero-metrics">
+              <div><div class="v">{{ readyCount }}</div><div class="k">ready</div></div>
+              <div><div class="v">{{ homeTotals.activeAgents }}</div><div class="k">agents active</div></div>
+              <div><div class="v">{{ homeTotals.runs }}</div><div class="k">runs</div></div>
+              <div><div class="v">{{ fmtTok(homeTotals.tokens) }}</div><div class="k">tokens</div></div>
+              <div><div class="v" :style="{ color: updateCount ? 'var(--amber)' : '' }">{{ updateCount }}</div><div class="k">updates</div></div>
+            </div>
+
+            <div class="agent-cards">
+              <div v-for="a in activeAgents" :key="a.role" class="agent-card" :class="'ac-' + a.role" @click="openAgent(a.role)">
+                <div class="ac-name agent" :class="'agent-' + a.role">{{ (a.profile && a.profile.name) || a.role }}</div>
+                <div class="ac-stat"><b>{{ a.queue.length }}</b> ready</div>
+                <div class="ac-sub muted">{{ a.runs }} run{{ a.runs === 1 ? '' : 's' }} · {{ fmtTok(tokSum(a.tokens)) }} tok</div>
+              </div>
+            </div>
+            <div v-if="!activeAgents.length" class="empty">No agents have work or runs yet. ✓</div>
+
+            <template v-for="g in queueGroups" :key="g.role">
+              <div class="section agent-group-head" @click="openAgent(g.role)">
+                <span class="agent" :class="'agent-' + g.role" style="text-transform:capitalize">{{ (g.profile && g.profile.name) || g.role }}</span>
+                <span class="badge soft">{{ g.queue.length }}</span>
+                <span class="muted" style="font-weight:400;letter-spacing:0;text-transform:none;font-size:12px">view agent →</span>
+              </div>
+              <div v-for="(q, i) in g.queue" :key="q.project_path + q.task_id" class="card row interactive" @click="openTaskInProject(q.project_path, q.task_id)">
+                <div class="grow">
+                  <span class="task-id">{{ q.task_id }}</span><span class="task-title">{{ q.title }}</span>
+                  <div class="sub"><span class="badge soft">{{ q.project }}</span><span class="badge" :class="'st-' + q.status">{{ prettyStatus(q.status) }}</span></div>
+                </div>
+                <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === g.role + i }" @click.stop="copyPrompt(q.task_id, g.role, g.role + i)">{{ copiedKey === g.role + i ? '✓ Copied' : 'Copy prompt' }}</button>
+              </div>
+            </template>
+          </template>
         </template>
 
         <!-- PER-PROJECT -->
         <template v-else-if="detail">
           <!-- ===== TASK DETAIL PANEL (UI-1..6) ===== -->
           <template v-if="selectedTask && taskDetail">
+
+          <!-- ===== SESSION REPORT VIEW ===== -->
+          <template v-if="showReport">
+            <div class="detail-head">
+              <button class="btn" @click="closeReport">← Back to task</button>
+              <h1>Session report · <span class="task-id">{{ taskDetail.id }}</span></h1>
+              <span class="grow"></span>
+              <button class="btn" :class="{ 'btn-copied': copiedKey === 'report' }" @click="generateAnalysis"
+                title="Copy a prompt to author the full editorial report (narrative + recommendations) in your AI tool">
+                {{ copiedKey === 'report' ? '✓ Prompt copied' : 'AI editorial ↗' }}
+              </button>
+              <button class="btn btn-primary" @click="openReportHtml" title="Open the standalone HTML report in a new tab">Open report ↗</button>
+            </div>
+            <p v-if="reportLoading" class="muted">Reading session telemetry…</p>
+            <template v-else-if="report && !report.error">
+              <div class="sreport">
+                <div class="sr-hero">
+                  <div>
+                    <div class="sr-eyebrow">token telemetry · {{ report.sessions_found }}/{{ report.sessions.length }} session{{ report.sessions.length === 1 ? '' : 's' }} found</div>
+                    <div class="sr-tokens-processed">{{ fmtTok(report.totals.tokens_processed) }} <span>tokens processed</span></div>
+                    <div class="muted" style="font-size:12.5px;margin-top:4px">model {{ report.model || '—' }} · {{ report.totals.turns }} turns · {{ report.totals.records }} records</div>
+                  </div>
+                  <div class="sr-bignum">
+                    <div class="sr-label">est. cost</div>
+                    <div class="sr-n">{{ fmtUsd(report.totals.cost.total) }}</div>
+                    <small>list pricing · all token classes</small>
+                  </div>
+                </div>
+                <div class="sr-metrics">
+                  <div><div class="v">{{ wallClock }}</div><div class="k">wall-clock</div></div>
+                  <div><div class="v">{{ report.sessions.length }}</div><div class="k">runs</div></div>
+                  <div><div class="v">{{ report.totals.tool_calls }}</div><div class="k">tool calls</div></div>
+                  <div><div class="v">{{ fmtTok(report.totals.tokens_processed) }}</div><div class="k">tokens</div></div>
+                  <div><div class="v" :style="{ color: report.totals.mcp_calls ? '' : 'var(--coral2)' }">{{ report.totals.mcp_calls }}</div><div class="k">MCP calls</div></div>
+                </div>
+
+                <div class="sr-sec-head"><h2>Where the tokens went</h2></div>
+                <div class="sr-tgrid">
+                  <div class="sr-tcard hot"><div class="v">{{ fmtTok(report.totals.tokens.cache_read) }}</div><div class="n">Cache reads</div><div class="s">Context re-read each turn</div></div>
+                  <div class="sr-tcard"><div class="v">{{ fmtTok(report.totals.tokens.cache_creation) }}</div><div class="n">Cache writes</div><div class="s">New context committed to cache</div></div>
+                  <div class="sr-tcard"><div class="v">{{ fmtTok(report.totals.tokens.output) }}</div><div class="n">Output</div><div class="s">Tokens generated</div></div>
+                  <div class="sr-tcard"><div class="v">{{ fmtTok(report.totals.tokens.input) }}</div><div class="n">Fresh input</div><div class="s">Uncached prompt tokens</div></div>
+                </div>
+                <div class="sr-wf">
+                  <div v-for="r in costRows" :key="r.name" class="sr-wf-row">
+                    <div class="sr-wf-head">
+                      <span class="sr-wf-name">{{ r.name }} <span v-if="r.hot" class="sr-flag">cost driver</span></span>
+                      <span class="sr-wf-val">{{ fmtUsd(r.usd) }} <span class="sr-wf-pct">{{ r.pct }}%</span></span>
+                    </div>
+                    <div class="sr-bar"><span :style="{ width: r.w + '%', background: r.hot ? 'linear-gradient(90deg,var(--amber2),var(--coral2))' : '#34416a' }"></span></div>
+                    <div class="sr-wf-sub">{{ Number(r.tok).toLocaleString() }} tokens</div>
+                  </div>
+                </div>
+
+                <div class="sr-sec-head"><h2>Cache-read per turn</h2></div>
+                <div v-if="tracePath" class="sr-trace">
+                  <svg viewBox="0 0 1000 150" preserveAspectRatio="none">
+                    <defs><linearGradient id="srg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f25c54" stop-opacity=".5" /><stop offset="1" stop-color="#f25c54" stop-opacity="0" /></linearGradient></defs>
+                    <path :d="tracePath.area" fill="url(#srg)" />
+                    <path :d="tracePath.line" fill="none" stroke="#f25c54" stroke-width="1.5" />
+                  </svg>
+                  <div class="sr-axis"><span>turn 1</span><span>{{ report.totals.turns }} turns</span></div>
+                </div>
+                <div v-else class="empty">No per-turn trace — session logs not found on this machine (totals shown from run records).</div>
+
+                <div class="sr-sec-head"><h2>Tool calls by type</h2><span class="muted" style="margin-left:auto;font-size:12px">{{ report.totals.tool_calls }} calls · {{ report.tools_by_type.length }} tools</span></div>
+                <div v-if="report.tools_by_type.length" class="sr-tools">
+                  <div v-for="t in report.tools_by_type" :key="t.name" class="sr-tool-row" :class="t.category">
+                    <span class="sr-tool-name">{{ t.name }}</span>
+                    <span class="sr-tool-bar"><i :style="{ width: (t.count / toolMax * 100) + '%' }"></i></span>
+                    <span class="sr-tool-count">{{ t.count }}</span>
+                  </div>
+                  <div class="sr-tlegend">
+                    <span><i class="orchestration"></i>orchestration</span><span><i class="coordination"></i>coordination</span>
+                    <span><i class="io"></i>file I/O</span><span><i class="mcp"></i>MCP</span><span><i class="other"></i>other</span>
+                  </div>
+                </div>
+                <div v-else class="empty">No tool calls recorded.</div>
+
+                <p class="muted" style="font-size:11.5px;margin-top:18px">{{ report.pricing.note }} · Generate analysis ↗ copies a prompt to author the full editorial report (narrative + recommendations) in your AI tool.</p>
+              </div>
+            </template>
+            <div v-else class="empty">No report data for this task.</div>
+          </template>
+
+          <!-- ===== TASK DETAIL ===== -->
+          <template v-else>
             <div class="detail-head">
               <button class="btn" @click="closeTask">← Back</button>
               <h1>
                 <span class="task-id">{{ taskDetail.id }}</span>
                 <span class="task-title">{{ taskDetail.title }}</span>
               </h1>
+              <span class="grow"></span>
+              <button v-if="!taskDetail.error" class="btn" @click="openReport">Session report ↗</button>
               <span v-if="taskDetail.error" class="badge st-BLOCKED">{{ taskDetail.error }}</span>
             </div>
 
@@ -243,6 +566,18 @@ onUnmounted(() => closeStream());
               </div>
               <div v-else class="empty">No tokens yet — only orchestrated <b>Run</b>s contribute (manual/copy-prompt runs don't).</div>
 
+              <!-- runs (transcript viewer) -->
+              <div class="section">Runs <span v-if="taskDetail.tokens.runs.length" style="font-weight:400;letter-spacing:0;text-transform:none;color:var(--text-3)">· click to read the transcript</span></div>
+              <div v-if="!taskDetail.tokens.runs.length" class="empty">No orchestrated runs yet.</div>
+              <div v-for="r in taskDetail.tokens.runs" :key="r.run_id" class="card row interactive" @click="openRun(r.run_id)">
+                <div class="grow">
+                  <span class="agent" :class="'agent-' + r.role">{{ r.role }}</span>
+                  <span class="mono muted" style="font-size:12px;margin-left:8px">{{ r.run_id.slice(0, 8) }}…</span>
+                </div>
+                <span class="mono muted" style="font-size:12px">{{ fmtTok((r.tokens.input||0)+(r.tokens.output||0)+(r.tokens.cache_read||0)+(r.tokens.cache_creation||0)) }} tok</span>
+                <span class="badge" :class="r.state === 'done' ? 'st-COMPLETED' : r.state === 'failed' ? 'st-BLOCKED' : 'soft'">{{ r.state || '?' }}</span>
+              </div>
+
               <!-- plan (UI-2) -->
               <div class="section">Plan</div>
               <pre v-if="taskDetail.details_body && taskDetail.details_body.trim()" class="plan">{{ taskDetail.details_body }}</pre>
@@ -276,6 +611,7 @@ onUnmounted(() => closeStream());
               <div v-else class="empty">No log entries yet.</div>
             </template>
           </template>
+          </template>
 
           <!-- ===== PROJECT OVERVIEW ===== -->
           <template v-else>
@@ -292,86 +628,147 @@ onUnmounted(() => closeStream());
               </div>
             </div>
 
-            <template v-if="detail.config.projects && detail.config.projects.length">
-              <div class="section">Sub-projects</div>
-              <div class="chips">
-                <span v-for="sp in detail.config.projects" :key="sp.name" class="badge soft">
-                  <b>{{ sp.name }}</b><span class="muted" v-if="sp.stack"> · {{ sp.stack }}</span>
+            <!-- tabs -->
+            <div class="tabs">
+              <button class="tab" :class="{ active: projectTab === 'overview' }" @click="projectTab = 'overview'">Overview</button>
+              <button class="tab" :class="{ active: projectTab === 'tasks' }" @click="projectTab = 'tasks'">Tasks <span class="tab-n">{{ detail.tasks.length }}</span></button>
+              <button class="tab" :class="{ active: projectTab === 'wiki' }" @click="projectTab = 'wiki'">Wiki</button>
+              <button class="tab" :class="{ active: projectTab === 'governance' }" @click="projectTab = 'governance'">Governance</button>
+              <button class="tab" :class="{ active: projectTab === 'timesheet' }" @click="projectTab = 'timesheet'">Timesheet</button>
+              <button class="tab" :class="{ active: projectTab === 'tools' }" @click="projectTab = 'tools'">Tools</button>
+            </div>
+
+            <!-- OVERVIEW -->
+            <template v-if="projectTab === 'overview'">
+              <template v-if="detail.config.projects && detail.config.projects.length">
+                <div class="section">Sub-projects</div>
+                <div class="chips" style="margin-bottom:8px">
+                  <span v-for="sp in detail.config.projects" :key="sp.name" class="badge soft">
+                    <b>{{ sp.name }}</b><span class="muted" v-if="sp.stack"> · {{ sp.stack }}</span>
+                  </span>
+                </div>
+              </template>
+
+              <template v-if="projectAgents.length">
+                <div class="section">Agents</div>
+                <div class="agent-cards">
+                  <div v-for="a in projectAgents" :key="a.role" class="agent-card" :class="'ac-' + a.role" @click="filterByAgent(a.role)" title="Show this agent's tasks">
+                    <div class="ac-name agent" :class="'agent-' + a.role">{{ a.role }}</div>
+                    <div class="ac-stat"><b>{{ a.queue }}</b> ready</div>
+                    <div class="ac-sub muted">{{ a.runs }} run{{ a.runs === 1 ? '' : 's' }} · {{ fmtTok(tokSum(a.tokens)) }} tok</div>
+                  </div>
+                </div>
+              </template>
+
+              <div class="section">Action queue</div>
+              <div v-if="!detail.action_queue.length" class="empty">Queue empty — nothing ready for an agent.</div>
+              <div v-for="(a, i) in detail.action_queue" :key="a.task_id" class="card row interactive" @click="openTask(a)">
+                <div class="grow">
+                  <span class="task-id">{{ a.task_id }}</span><span class="task-title">{{ a.title }}</span>
+                  <div class="sub">
+                    <span class="badge" :class="'st-' + a.status">{{ prettyStatus(a.status) }}</span>
+                    <span>→ <span class="agent" :class="'agent-' + a.agent">{{ a.agent }}</span></span>
+                    <span v-if="a.run_state" class="badge st-IN_PROGRESS">● {{ a.run_state }}</span>
+                    <span v-if="a.jira_status" class="badge jira">Jira: {{ a.jira_status }}</span>
+                    <span v-if="a.jira_drift" class="badge st-BLOCKED" title="Workspace and Jira disagree on done-ness">⚠ drift</span>
+                  </div>
+                </div>
+                <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === 'q'+i }"
+                  @click.stop="copyPrompt(a.task_id, a.agent, 'q'+i)">
+                  {{ copiedKey === 'q'+i ? '✓ Copied' : 'Copy prompt' }}
+                </button>
+              </div>
+            </template>
+
+            <!-- TASKS -->
+            <template v-else-if="projectTab === 'tasks'">
+              <div class="tfilters">
+                <div class="chips">
+                  <button v-for="b in ['active','completed','archive','all']" :key="b" class="chip" :class="{ active: taskBucket === b }" @click="taskBucket = b">
+                    {{ b }}<span v-if="b !== 'all'" class="chip-n">{{ bucketCounts[b] || 0 }}</span>
+                  </button>
+                </div>
+                <select v-model="taskStatus" class="fsel">
+                  <option value="all">all statuses</option>
+                  <option v-for="s in taskStatuses" :key="s" :value="s">{{ prettyStatus(s) }}</option>
+                </select>
+                <input v-model="taskSearch" class="fsearch" placeholder="search id / title…" />
+                <button v-if="taskAgent !== 'all'" class="chip active" style="text-transform:none" @click="taskAgent = 'all'">→ {{ taskAgent }} ✕</button>
+                <span class="muted" style="font-size:12px;margin-left:auto">{{ filteredTasks.length }} shown</span>
+              </div>
+              <div class="ttable">
+                <div class="tr th">
+                  <span @click="toggleSort('id')">Task</span>
+                  <span @click="toggleSort('status')">Status</span>
+                  <span @click="toggleSort('next_agent')">Next</span>
+                  <span @click="toggleSort('bucket')">Bucket</span>
+                  <span></span>
+                </div>
+                <div v-for="t in filteredTasks" :key="t.bucket + t.id" class="tr trow" @click="openTask(t)">
+                  <span class="tc-task"><b class="task-id">{{ t.id }}</b> <span class="task-title">{{ t.title }}</span></span>
+                  <span><span class="badge" :class="'st-' + t.status">{{ prettyStatus(t.status) }}</span></span>
+                  <span><span v-if="t.next_agent" class="agent" :class="'agent-' + t.next_agent">{{ t.next_agent }}</span><span v-else class="muted">—</span></span>
+                  <span class="muted" style="font-size:12px">{{ t.bucket }}</span>
+                  <span class="tc-act">
+                    <span v-if="t.run_state" class="badge st-IN_PROGRESS">● {{ t.run_state }}</span>
+                    <span v-if="t.jira_drift" class="badge st-BLOCKED" title="Workspace and Jira disagree on done-ness">⚠</span>
+                    <a v-if="t.jira_status" class="badge jira" :href="t.jira_url || undefined" target="_blank" rel="noopener" @click.stop>{{ t.jira_status }}</a>
+                    <button v-if="hasRuns(t)" class="btn" style="padding:3px 9px;font-size:11px" @click.stop="openReportFor(t)">Report ↗</button>
+                  </span>
+                </div>
+                <div v-if="!filteredTasks.length" class="empty">No tasks match these filters.</div>
+              </div>
+            </template>
+
+            <!-- WIKI -->
+            <template v-else-if="projectTab === 'wiki'">
+              <div class="section">Recent activity · {{ detail.wiki.page_count }} pages</div>
+              <div class="card" v-if="detail.wiki.recent_log.length">
+                <div v-for="(l, idx) in detail.wiki.recent_log" :key="idx" class="log-line">{{ l }}</div>
+              </div>
+              <div v-else class="empty">No log entries yet.</div>
+            </template>
+
+            <!-- GOVERNANCE -->
+            <template v-else-if="projectTab === 'governance'">
+              <div class="section">Project-specific rules</div>
+              <template v-if="detail.governance && detail.governance.rules.length">
+                <div v-for="(r, idx) in detail.governance.rules" :key="idx" class="card">{{ r }}</div>
+              </template>
+              <div v-else class="empty">No project-specific rules. Risk levels LOW · MEDIUM · HIGH · CRITICAL apply by default.</div>
+            </template>
+
+            <!-- TIMESHEET -->
+            <template v-else-if="projectTab === 'timesheet'">
+              <div class="section">This week</div>
+              <div v-if="detail.timesheet && detail.timesheet.present" class="card row">
+                <code class="grow">{{ detail.timesheet.latest }}</code>
+                <span class="badge" :class="detail.timesheet.submitted ? 'st-COMPLETED' : 'st-IN_PROGRESS'">
+                  {{ detail.timesheet.submitted ? 'submitted' : 'draft' }}
                 </span>
               </div>
+              <div v-else class="empty">No timesheet this week. Run <code>generate-timesheet</code>.</div>
             </template>
 
-            <div class="section">Action queue</div>
-            <div v-if="!detail.action_queue.length" class="empty">Queue empty — nothing ready for an agent.</div>
-            <div v-for="(a, i) in detail.action_queue" :key="a.task_id" class="card row interactive" @click="openTask(a)">
-              <div class="grow">
-                <span class="task-id">{{ a.task_id }}</span><span class="task-title">{{ a.title }}</span>
-                <div class="sub">
-                  <span class="badge" :class="'st-' + a.status">{{ prettyStatus(a.status) }}</span>
-                  <span>→ <span class="agent" :class="'agent-' + a.agent">{{ a.agent }}</span></span>
-                  <span v-if="a.run_state" class="badge st-IN_PROGRESS">● {{ a.run_state }}</span>
-                  <span v-if="a.jira_status" class="badge jira">Jira: {{ a.jira_status }}</span>
-                  <span v-if="a.jira_drift" class="badge st-BLOCKED" title="Workspace and Jira disagree on done-ness">⚠ drift</span>
+            <!-- TOOLS -->
+            <template v-else-if="projectTab === 'tools'">
+              <div class="section">Tools &amp; MCP</div>
+              <div class="card">
+                <div class="chips" style="margin-bottom:10px">
+                  <span class="muted" style="font-size:12px">Tools</span>
+                  <span v-for="(on, name) in detail.tools_mcp.tools" :key="name"
+                    class="badge" :class="on ? 'st-COMPLETED' : 'soft'">{{ name }} {{ on ? '✓' : '' }}</span>
+                </div>
+                <div class="chips" v-if="detail.tools_mcp.mcp_recommended.length" style="margin-bottom:8px">
+                  <span class="muted" style="font-size:12px">MCP recommended</span>
+                  <span v-for="m in detail.tools_mcp.mcp_recommended" :key="m" class="badge soft">{{ m }}</span>
+                </div>
+                <div class="chips" v-if="detail.tools_mcp.mcp_optional.length">
+                  <span class="muted" style="font-size:12px">MCP optional</span>
+                  <span v-for="m in detail.tools_mcp.mcp_optional" :key="m" class="badge soft">{{ m }}</span>
                 </div>
               </div>
-              <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === 'q'+i }"
-                @click.stop="copyPrompt(a.task_id, a.agent, 'q'+i)">
-                {{ copiedKey === 'q'+i ? '✓ Copied' : 'Copy prompt' }}
-              </button>
-            </div>
-
-            <div class="section">Tasks ({{ detail.tasks.length }})</div>
-            <div v-if="!detail.tasks.length" class="empty">No tasks yet.</div>
-            <div v-for="t in detail.tasks" :key="t.bucket + t.id" class="card row interactive" @click="openTask(t)">
-              <div class="grow">
-                <span class="task-id">{{ t.id }}</span><span class="task-title">{{ t.title }}</span>
-              </div>
-              <span v-if="t.run_state" class="badge st-IN_PROGRESS">● {{ t.run_state }}</span>
-              <span v-if="t.jira_drift" class="badge st-BLOCKED" title="Workspace and Jira disagree on done-ness">⚠</span>
-              <a v-if="t.jira_status" class="badge jira" :href="t.jira_url || undefined" target="_blank" rel="noopener"
-                 :title="t.jira_url ? 'Open in Jira' : ''" @click.stop>Jira: {{ t.jira_status }}</a>
-              <span class="badge soft">{{ t.bucket }}</span>
-              <span class="badge" :class="'st-' + t.status">{{ prettyStatus(t.status) }}</span>
-            </div>
-
-            <div class="section">Wiki — recent activity</div>
-            <div class="card" v-if="detail.wiki.recent_log.length">
-              <div v-for="(l, idx) in detail.wiki.recent_log" :key="idx" class="log-line">{{ l }}</div>
-            </div>
-            <div v-else class="empty">No log entries yet.</div>
-            <p class="muted" style="margin-top:6px;font-size:12px">{{ detail.wiki.page_count }} wiki pages.</p>
-
-            <div class="section">Governance</div>
-            <template v-if="detail.governance && detail.governance.rules.length">
-              <div v-for="(r, idx) in detail.governance.rules" :key="idx" class="card">{{ r }}</div>
             </template>
-            <div v-else class="empty">No project-specific rules. Risk levels LOW · MEDIUM · HIGH · CRITICAL apply by default.</div>
-
-            <div class="section">Timesheet — this week</div>
-            <div v-if="detail.timesheet && detail.timesheet.present" class="card row">
-              <code class="grow">{{ detail.timesheet.latest }}</code>
-              <span class="badge" :class="detail.timesheet.submitted ? 'st-COMPLETED' : 'st-IN_PROGRESS'">
-                {{ detail.timesheet.submitted ? 'submitted' : 'draft' }}
-              </span>
-            </div>
-            <div v-else class="empty">No timesheet this week. Run <code>generate-timesheet</code>.</div>
-
-            <div class="section">Tools &amp; MCP</div>
-            <div class="card">
-              <div class="chips" style="margin-bottom:10px">
-                <span class="muted" style="font-size:12px">Tools</span>
-                <span v-for="(on, name) in detail.tools_mcp.tools" :key="name"
-                  class="badge" :class="on ? 'st-COMPLETED' : 'soft'">{{ name }} {{ on ? '✓' : '' }}</span>
-              </div>
-              <div class="chips" v-if="detail.tools_mcp.mcp_recommended.length" style="margin-bottom:8px">
-                <span class="muted" style="font-size:12px">MCP recommended</span>
-                <span v-for="m in detail.tools_mcp.mcp_recommended" :key="m" class="badge soft">{{ m }}</span>
-              </div>
-              <div class="chips" v-if="detail.tools_mcp.mcp_optional.length">
-                <span class="muted" style="font-size:12px">MCP optional</span>
-                <span v-for="m in detail.tools_mcp.mcp_optional" :key="m" class="badge soft">{{ m }}</span>
-              </div>
-            </div>
           </template>
         </template>
       </div>
@@ -400,6 +797,26 @@ onUnmounted(() => closeStream());
         <p class="muted" style="font-size:11.5px;margin:10px 0 0">Deny is non-fatal — the run records the action deferred to human and continues with what it can.</p>
       </div>
     </div>
+
+    <!-- ===== RUN TRANSCRIPT MODAL ===== -->
+    <div v-if="runView || runLoading" class="modal-backdrop" @click.self="closeRun">
+      <div class="modal" style="width:min(840px,94vw)">
+        <div class="section" style="margin-top:0;display:flex;align-items:center;gap:8px">Run transcript
+          <span v-if="runView && runView.role" class="agent" :class="'agent-' + runView.role" style="text-transform:none">{{ runView.role }}</span>
+        </div>
+        <p v-if="runLoading" class="muted">Loading…</p>
+        <template v-else-if="runView && !runView.error">
+          <div class="chips" style="margin-bottom:10px">
+            <span class="badge soft">{{ runView.run_id.slice(0, 8) }}…</span>
+            <span v-if="runView.session_id" class="badge soft">session {{ runView.session_id.slice(0, 8) }}…</span>
+            <span v-if="runView.state" class="badge" :class="runView.state === 'done' ? 'st-COMPLETED' : 'soft'">{{ runView.state }}</span>
+          </div>
+          <pre class="stream-pane" style="max-height:62vh">{{ runView.transcript || '(empty transcript)' }}</pre>
+        </template>
+        <div v-else class="empty">Transcript not found.</div>
+        <div class="modal-actions"><button class="btn" @click="closeRun">Close</button></div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -424,4 +841,117 @@ onUnmounted(() => closeStream());
 .modal-row { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); align-items: baseline; }
 .modal-row b { width: 78px; flex-shrink: 0; color: var(--text-3); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+
+/* ---------- home editorial hero ---------- */
+.hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 32px; flex-wrap: wrap; padding: 6px 0 22px; border-bottom: 1px solid var(--line); }
+.hero-eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted-2); }
+.hero-h1 { font-family: var(--font-head); font-size: clamp(28px, 4vw, 44px); line-height: 1.05; font-weight: 700; margin: 12px 0 0; letter-spacing: -.02em; }
+.hero-em { color: var(--primary); }
+.hero-big { text-align: right; }
+.hero-label { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted-2); }
+.hero-n { font-family: var(--font-head); font-weight: 700; font-size: clamp(38px, 6vw, 60px); line-height: 1; background: linear-gradient(180deg, #fff, var(--amber)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero-big small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.hero-metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin: 22px 0 10px; }
+.hero-metrics > div { background: var(--surface); padding: 16px; }
+.hero-metrics .v { font-family: var(--mono); font-size: 22px; font-weight: 600; }
+.hero-metrics .k { font-size: 11px; color: var(--muted); margin-top: 4px; }
+@media (max-width: 760px) { .hero-big { text-align: left; } .hero-metrics { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- per-project tabs + task table ---------- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 16px 0 18px; flex-wrap: wrap; }
+.tab { font-family: var(--font); background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-3); padding: 9px 14px; font-size: 13.5px; font-weight: 600; cursor: pointer; margin-bottom: -1px; transition: color .12s, border-color .12s; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--primary); }
+.tab-n { font-family: var(--mono); font-size: 11px; color: var(--muted-2); margin-left: 4px; }
+.tab.active .tab-n { color: var(--primary); }
+
+.tfilters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.chip { font-family: var(--font); text-transform: capitalize; background: var(--surface); border: 1px solid var(--line); color: var(--text-2); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
+.chip:hover { border-color: var(--line-2); color: var(--text); }
+.chip.active { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.chip-n { font-family: var(--mono); font-size: 10.5px; margin-left: 5px; opacity: .8; }
+.fsel, .fsearch { background: var(--surface); border: 1px solid var(--line); color: var(--text); border-radius: var(--radius-sm); padding: 6px 10px; font-size: 13px; }
+.fsearch { flex: 0 1 240px; }
+.fsel:focus, .fsearch:focus { outline: none; border-color: var(--primary); }
+
+.ttable { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
+.tr { display: grid; grid-template-columns: minmax(0, 1fr) 132px 96px 88px auto; align-items: center; gap: 12px; padding: 10px 16px; }
+.tr.th { background: var(--surface-2); border-bottom: 1px solid var(--line); }
+.tr.th span { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-2); cursor: pointer; user-select: none; }
+.tr.th span:hover { color: var(--text-2); }
+.tr.trow { border-bottom: 1px solid var(--line); cursor: pointer; transition: background .1s; }
+.tr.trow:last-child { border-bottom: 0; }
+.tr.trow:hover { background: var(--surface-2); }
+.tc-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-act { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+@media (max-width: 760px) { .tr { grid-template-columns: 1fr auto; } .tr > span:nth-child(3), .tr > span:nth-child(4) { display: none; } }
+
+/* ---------- agents (home grouping + agent detail) ---------- */
+.agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.agent-card { border: 1px solid var(--border); border-top: 3px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; cursor: pointer; box-shadow: var(--shadow); transition: box-shadow .12s, transform .12s; }
+.agent-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-1px); }
+.agent-card .ac-name { font-weight: 700; font-size: 14px; text-transform: capitalize; }
+.agent-card .ac-stat { font-size: 13px; margin-top: 8px; color: var(--text-2); }
+.agent-card .ac-stat b { font-size: 22px; color: var(--text); font-variant-numeric: tabular-nums; }
+.agent-card .ac-sub { font-size: 11.5px; margin-top: 3px; }
+.ac-planner { border-top-color: #0f766e; } .ac-coder { border-top-color: var(--primary); } .ac-reviewer { border-top-color: #7c3aed; }
+.ac-tester { border-top-color: #0e7490; } .ac-ingester { border-top-color: #b45309; } .ac-refactorer { border-top-color: #64748b; }
+.agent-group-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.agent-tok { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.agent-tok > div { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); padding: 12px 14px; box-shadow: var(--shadow); }
+.agent-tok .v { font-family: ui-monospace, monospace; font-size: 20px; font-weight: 600; }
+.agent-tok .k { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+@media (max-width: 760px) { .agent-tok { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- session report (dark editorial) ---------- */
+.sreport { --srbg:#0f1730; --srpanel:#16203c; --srline:#23304f; --srmuted:#8794b4; --coral2:#f25c54; --amber2:#f5b031;
+  background: var(--srbg); color: #e8eefb; border-radius: var(--radius); padding: 24px 26px; margin-top: 4px; }
+.sr-eyebrow { font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--srmuted); }
+.sr-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; padding-bottom: 18px; border-bottom: 1px solid var(--srline); }
+.sr-tokens-processed { font-size: 34px; font-weight: 700; margin-top: 8px; letter-spacing: -.01em; }
+.sr-tokens-processed span { font-size: 14px; font-weight: 500; color: var(--srmuted); }
+.sr-bignum { text-align: right; }
+.sr-label { font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--srmuted); }
+.sr-n { font-size: 46px; font-weight: 700; line-height: 1; background: linear-gradient(180deg,#fff,var(--amber2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sr-bignum small { display: block; color: var(--srmuted); font-size: 11.5px; margin-top: 4px; }
+.sr-metrics { display: grid; grid-template-columns: repeat(5,1fr); gap: 1px; background: var(--srline); border: 1px solid var(--srline); border-radius: 12px; overflow: hidden; margin-top: 20px; }
+.sr-metrics > div { background: var(--srbg); padding: 14px; }
+.sr-metrics .v { font-family: ui-monospace, monospace; font-size: 20px; font-weight: 600; }
+.sr-metrics .k { font-size: 11px; color: var(--srmuted); margin-top: 3px; }
+.sr-sec-head { display: flex; align-items: baseline; margin: 26px 0 14px; }
+.sr-sec-head h2 { font-size: 18px; font-weight: 600; margin: 0; color: #e8eefb; }
+.sr-tgrid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+.sr-tcard { border: 1px solid var(--srline); border-radius: 12px; padding: 16px; background: var(--srpanel); }
+.sr-tcard.hot { border-color: #f5b03155; }
+.sr-tcard .v { font-family: ui-monospace, monospace; font-size: 26px; font-weight: 600; }
+.sr-tcard.hot .v { background: linear-gradient(120deg,var(--amber2),var(--coral2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sr-tcard .n { font-weight: 600; margin-top: 6px; font-size: 13.5px; }
+.sr-tcard .s { color: var(--srmuted); font-size: 11.5px; margin-top: 3px; }
+.sr-wf { border: 1px solid var(--srline); border-radius: 12px; background: var(--srpanel); padding: 6px 20px; margin-top: 16px; }
+.sr-wf-row { padding: 14px 0; border-bottom: 1px solid var(--srline); }
+.sr-wf-row:last-child { border-bottom: 0; }
+.sr-wf-head { display: flex; justify-content: space-between; align-items: baseline; }
+.sr-wf-name { font-size: 13.5px; }
+.sr-flag { font-family: ui-monospace, monospace; font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--coral2); border: 1px solid #f25c5455; border-radius: 5px; padding: 1px 6px; margin-left: 6px; }
+.sr-wf-val { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 600; }
+.sr-wf-pct { color: var(--srmuted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+.sr-bar { height: 8px; border-radius: 5px; background: #0b1226; margin: 8px 0 4px; overflow: hidden; }
+.sr-bar span { display: block; height: 100%; border-radius: 5px; }
+.sr-wf-sub { font-family: ui-monospace, monospace; font-size: 11px; color: var(--srmuted); }
+.sr-trace { border: 1px solid var(--srline); border-radius: 12px; background: linear-gradient(180deg,var(--srpanel),var(--srbg)); padding: 16px; }
+.sr-trace svg { width: 100%; height: 120px; display: block; }
+.sr-axis { display: flex; justify-content: space-between; font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--srmuted); margin-top: 6px; }
+.sr-tools { border: 1px solid var(--srline); border-radius: 12px; background: var(--srpanel); padding: 16px 20px; }
+.sr-tool-row { display: grid; grid-template-columns: 160px 1fr 36px; align-items: center; gap: 10px; padding: 4px 0; }
+.sr-tool-name { font-family: ui-monospace, monospace; font-size: 12px; }
+.sr-tool-bar { height: 7px; background: #0b1226; border-radius: 4px; overflow: hidden; }
+.sr-tool-bar i { display: block; height: 100%; border-radius: 4px; background: var(--srmuted); }
+.sr-tool-row.orchestration i { background: #9d8cf0; } .sr-tool-row.coordination i { background: #46c6e0; }
+.sr-tool-row.io i { background: #5ee0c2; } .sr-tool-row.mcp i { background: var(--amber2); } .sr-tool-row.other i { background: var(--srmuted); }
+.sr-tool-count { font-family: ui-monospace, monospace; font-size: 12px; color: var(--srmuted); text-align: right; }
+.sr-tlegend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; font-size: 11px; color: var(--srmuted); }
+.sr-tlegend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; }
+.sr-tlegend .orchestration { background: #9d8cf0; } .sr-tlegend .coordination { background: #46c6e0; }
+.sr-tlegend .io { background: #5ee0c2; } .sr-tlegend .mcp { background: var(--amber2); } .sr-tlegend .other { background: var(--srmuted); }
+@media (max-width: 760px) { .sr-metrics { grid-template-columns: repeat(2,1fr); } .sr-tgrid { grid-template-columns: repeat(2,1fr); } }
 </style>
