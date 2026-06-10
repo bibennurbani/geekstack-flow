@@ -68,6 +68,7 @@ const tokSum = (t) => (t ? t.input + t.output + t.cache_read + t.cache_creation 
 async function loadProject(p) {
   selected.value = p.path; showRuns.value = false; loading.value = true; closeTask(); projectTab.value = 'overview'; taskAgent.value = 'all';
   detail.value = await api('/api/project?path=' + encodeURIComponent(p.path));
+  initSettings();
   loading.value = false;
 }
 
@@ -88,7 +89,7 @@ async function openTask(t) {
   selectedTask.value = id; taskDetail.value = null; statusError.value = ''; resetRun(); closeReport(); resetChat();
   taskDetail.value = await api(taskUrl());
 }
-function closeTask() { selectedTask.value = null; taskDetail.value = null; statusError.value = ''; closeStream(); resetRun(); closeReport(); closeRun(); resetChat(); }
+function closeTask() { selectedTask.value = null; taskDetail.value = null; statusError.value = ''; closeStream(); resetRun(); closeReport(); closeRun(); resetChat(); closeDiff(); }
 async function refreshTask() { if (selectedTask.value) taskDetail.value = await api(taskUrl()); }
 
 async function changeStatus(e) {
@@ -97,6 +98,7 @@ async function changeStatus(e) {
   const res = await postJSON('/api/project/task/status', { path: selected.value, id: selectedTask.value, status });
   if (!res.ok) { statusError.value = `Status write failed (${res.status})`; e.target.value = prev; await refreshTask(); return; }
   taskDetail.value = await res.json();
+  toast('Status → ' + prettyStatus(status), 'ok');
 }
 
 // --- live run ---
@@ -120,11 +122,11 @@ async function startRun() {
   es.addEventListener('approval_resolved', () => { pendingApproval.value = null; runState.value = 'running'; });
   es.addEventListener('status', (ev) => {
     const d = JSON.parse(ev.data);
-    if (d.state === 'error') { runState.value = 'error'; runError.value = d.error || ('exit ' + (d.code ?? '?')); }
+    if (d.state === 'error') { runState.value = 'error'; runError.value = d.error || ('exit ' + (d.code ?? '?')); toast('Run failed: ' + runError.value, 'err'); }
     else if (d.state === 'aborting') { runError.value = 'stopping…'; }
-    else if (d.state === 'aborted') { runState.value = 'error'; runError.value = 'stopped by you'; closeStream(); refreshTask(); }
+    else if (d.state === 'aborted') { runState.value = 'error'; runError.value = 'stopped by you'; closeStream(); refreshTask(); toast('Run stopped'); }
   });
-  es.addEventListener('done', async () => { runState.value = 'done'; closeStream(); await refreshTask(); });
+  es.addEventListener('done', async () => { runState.value = 'done'; closeStream(); await refreshTask(); toast('Run finished', 'ok'); });
   es.onerror = () => { if (runState.value === 'running') { runState.value = 'error'; runError.value = 'stream lost'; } closeStream(); };
 }
 async function stopRun() {
@@ -142,15 +144,15 @@ async function decide(decision) {
 const report = ref(null);
 const showReport = ref(false);
 const reportLoading = ref(false);
-async function openReport() {
-  showReport.value = true; reportLoading.value = true; report.value = null;
-  report.value = await api('/api/project/task/report?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value));
+async function openReport(runId = null) {
+  showReport.value = true; reportLoading.value = true; report.value = null; reportRun.value = runId || null;
+  report.value = await api('/api/project/task/report?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value) + (runId ? '&run=' + encodeURIComponent(runId) : ''));
   reportLoading.value = false;
 }
-function closeReport() { showReport.value = false; report.value = null; }
-// One-click: open the server-rendered standalone HTML report in a new tab.
-function openReportHtml() {
-  window.open('/api/project/task/report.html?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value), '_blank');
+function closeReport() { showReport.value = false; report.value = null; reportRun.value = null; }
+// One-click: open the server-rendered standalone HTML report in a new tab (optionally one run).
+function openReportHtml(runId = null) {
+  window.open('/api/project/task/report.html?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value) + (runId ? '&run=' + encodeURIComponent(runId) : ''), '_blank');
 }
 // --- runs / transcript viewer ---
 const runView = ref(null);
@@ -282,6 +284,53 @@ const projectAgents = computed(() => {
   const m = (detail.value && detail.value.agents) || {};
   return ROLE_ORDER.map((r) => m[r]).filter((a) => a && (a.queue || a.runs || tokSum(a.tokens) > 0));
 });
+
+// --- toasts ---
+const toasts = ref([]); let toastSeq = 0;
+function toast(text, kind = 'info') { const id = ++toastSeq; toasts.value.push({ id, text, kind }); setTimeout(() => { toasts.value = toasts.value.filter((t) => t.id !== id); }, 4200); }
+
+// --- settings (orchestrator.roles + budget + pricing display) ---
+const settingsRoles = ref({});
+const settingsBudget = ref('');
+const settingsBusy = ref(false);
+const PRICING_TABLE = [
+  { m: 'Opus', i: 15, o: 75, cw: 18.75, cr: 1.5 },
+  { m: 'Sonnet', i: 3, o: 15, cw: 3.75, cr: 0.3 },
+  { m: 'Haiku', i: 0.8, o: 4, cw: 1, cr: 0.08 },
+];
+function initSettings() {
+  const o = (detail.value && detail.value.config && detail.value.config.orchestrator) || { roles: {}, budget_usd: null };
+  settingsRoles.value = { ...(o.roles || {}) };
+  settingsBudget.value = o.budget_usd == null ? '' : String(o.budget_usd);
+}
+async function saveSettings() {
+  settingsBusy.value = true;
+  const res = await postJSON('/api/project/settings', { path: selected.value, roles: settingsRoles.value, budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value) });
+  settingsBusy.value = false;
+  if (res.ok) { toast('Settings saved', 'ok'); const p = projects.value.find((x) => x.path === selected.value); await loadProject(p); projectTab.value = 'settings'; }
+  else { const j = await res.json().catch(() => ({})); toast('Save failed: ' + (j.error || res.status), 'err'); }
+}
+
+// --- per-run report scope + git-diff viewer ---
+const reportRun = ref(null);
+const diffView = ref(null);
+const diffLoading = ref(false);
+async function openDiff(runId) {
+  diffLoading.value = true; diffView.value = null;
+  const d = await api('/api/project/task/run/diff?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value) + '&run=' + encodeURIComponent(runId));
+  d.run_id = runId; diffView.value = d; diffLoading.value = false;
+}
+function closeDiff() { diffView.value = null; }
+
+// --- budget: project spend (sum of agent tokens → $) vs configured budget ---
+const projectBudget = computed(() => (detail.value && detail.value.config && detail.value.config.orchestrator) ? detail.value.config.orchestrator.budget_usd : null);
+const projectSpend = computed(() => {
+  const ag = (detail.value && detail.value.agents) || {};
+  const tk = { input: 0, output: 0, cache_read: 0, cache_creation: 0 };
+  for (const a of Object.values(ag)) for (const k in tk) tk[k] += (a.tokens && a.tokens[k]) || 0;
+  return costOfTokens(tk);
+});
+const overBudget = computed(() => projectBudget.value != null && projectSpend.value > projectBudget.value);
 
 const updateCount = computed(() => projects.value.filter(p => p.update_available).length);
 const prettyStatus = (s) => (s || '').replace(/_/g, ' ');
@@ -470,12 +519,13 @@ onUnmounted(() => { closeStream(); closeChat(); });
             <div class="detail-head">
               <button class="btn" @click="closeReport">← Back to task</button>
               <h1>Session report · <span class="task-id">{{ taskDetail.id }}</span></h1>
+              <span v-if="reportRun" class="badge soft mono">run {{ reportRun.slice(0, 8) }}…</span>
               <span class="grow"></span>
               <button class="btn" :class="{ 'btn-copied': copiedKey === 'report' }" @click="generateAnalysis"
                 title="Copy a prompt to author the full editorial report (narrative + recommendations) in your AI tool">
                 {{ copiedKey === 'report' ? '✓ Prompt copied' : 'AI editorial ↗' }}
               </button>
-              <button class="btn btn-primary" @click="openReportHtml" title="Open the standalone HTML report in a new tab">Open report ↗</button>
+              <button class="btn btn-primary" @click="openReportHtml(reportRun)" title="Open the standalone HTML report in a new tab">Open report ↗</button>
             </div>
             <p v-if="reportLoading" class="muted">Reading session telemetry…</p>
             <template v-else-if="report && !report.error">
@@ -619,8 +669,10 @@ onUnmounted(() => { closeStream(); closeChat(); });
                   <span class="agent" :class="'agent-' + r.role">{{ r.role }}</span>
                   <span class="mono muted" style="font-size:12px;margin-left:8px">{{ r.run_id.slice(0, 8) }}…</span>
                 </div>
+                <button class="btn" style="padding:3px 9px;font-size:11px" title="Session report for this run" @click.stop="openReport(r.run_id)">report</button>
+                <button class="btn" style="padding:3px 9px;font-size:11px" title="Git diff since this run started" @click.stop="openDiff(r.run_id)">diff</button>
                 <button v-if="r.session_id" class="btn" style="padding:3px 9px;font-size:11px" :class="{ 'btn-copied': copiedKey === 'term' + r.run_id }"
-                  title="Copy a command to resume this session in your own terminal" @click.stop="copyResume(selected, r.session_id, 'term' + r.run_id)">{{ copiedKey === 'term' + r.run_id ? '✓ copied' : '⌥ terminal' }}</button>
+                  title="Copy a command to resume this session in your own terminal" @click.stop="copyResume(selected, r.session_id, 'term' + r.run_id)">{{ copiedKey === 'term' + r.run_id ? '✓' : '⌥ term' }}</button>
                 <span class="mono muted" style="font-size:12px">{{ fmtTok((r.tokens.input||0)+(r.tokens.output||0)+(r.tokens.cache_read||0)+(r.tokens.cache_creation||0)) }} tok</span>
                 <span class="badge" :class="r.state === 'done' ? 'st-COMPLETED' : r.state === 'failed' ? 'st-BLOCKED' : 'soft'">{{ r.state || '?' }}</span>
               </div>
@@ -689,6 +741,7 @@ onUnmounted(() => { closeStream(); closeChat(); });
                 <span>schema {{ detail.version.workspace_schema }}</span>
                 <span>v{{ detail.version.tcgflow_version }}</span>
                 <span class="badge soft" title="Jira status cache — refresh with /tcgflow-sync-jira">Jira: {{ relTime(detail.jira_synced) }}</span>
+                <span v-if="projectBudget != null" class="badge" :class="overBudget ? 'st-BLOCKED' : 'soft'" :title="overBudget ? 'Over the configured spend budget' : 'Est. spend vs budget'">spend {{ fmtUsd(projectSpend) }} / ${{ projectBudget }}{{ overBudget ? ' ⚠' : '' }}</span>
               </div>
             </div>
 
@@ -700,6 +753,7 @@ onUnmounted(() => { closeStream(); closeChat(); });
               <button class="tab" :class="{ active: projectTab === 'governance' }" @click="projectTab = 'governance'">Governance</button>
               <button class="tab" :class="{ active: projectTab === 'timesheet' }" @click="projectTab = 'timesheet'">Timesheet</button>
               <button class="tab" :class="{ active: projectTab === 'tools' }" @click="projectTab = 'tools'">Tools</button>
+              <button class="tab" :class="{ active: projectTab === 'settings' }" @click="projectTab = 'settings'">Settings</button>
             </div>
 
             <!-- OVERVIEW -->
@@ -833,6 +887,31 @@ onUnmounted(() => { closeStream(); closeChat(); });
                 </div>
               </div>
             </template>
+
+            <!-- SETTINGS -->
+            <template v-else-if="projectTab === 'settings'">
+              <div class="section">Orchestrator — per-role tool</div>
+              <div class="card">
+                <div v-for="role in ['planner','coder','reviewer','tester','ingester','refactorer']" :key="role" class="srow">
+                  <span class="agent" :class="'agent-' + role" style="width:120px;text-transform:capitalize">{{ role }}</span>
+                  <select v-model="settingsRoles[role]" class="fsel"><option value="claude">claude</option><option value="codex">codex</option></select>
+                </div>
+                <p class="muted" style="font-size:12px;margin-top:6px">Codex runner is deferred — a role mapped to <code>codex</code> returns 501 at launch for now.</p>
+              </div>
+              <div class="section">Spend budget</div>
+              <div class="card srow">
+                <span style="width:120px">$ budget</span>
+                <input v-model="settingsBudget" class="fsearch" type="number" min="0" step="1" placeholder="none" style="width:130px" />
+                <span class="muted" style="font-size:12px">Flags Home + this project when est. spend exceeds it.</span>
+              </div>
+              <div class="section">Pricing — list estimate (USD per 1M tokens)</div>
+              <div class="ttable">
+                <div class="tr th" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr"><span>model</span><span>input</span><span>output</span><span>cache write</span><span>cache read</span></div>
+                <div v-for="r in PRICING_TABLE" :key="r.m" class="tr" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr"><span>{{ r.m }}</span><span class="mono">${{ r.i }}</span><span class="mono">${{ r.o }}</span><span class="mono">${{ r.cw }}</span><span class="mono">${{ r.cr }}</span></div>
+              </div>
+              <p class="muted" style="font-size:11.5px;margin-top:6px">Pricing is fixed in the tool (used for the Session Report + budget). Roles + budget persist to config.yaml.</p>
+              <div style="margin-top:16px"><button class="btn btn-primary" :disabled="settingsBusy" @click="saveSettings">{{ settingsBusy ? 'Saving…' : 'Save settings' }}</button></div>
+            </template>
           </template>
         </template>
       </div>
@@ -880,6 +959,25 @@ onUnmounted(() => { closeStream(); closeChat(); });
         <div v-else class="empty">Transcript not found.</div>
         <div class="modal-actions"><button class="btn" @click="closeRun">Close</button></div>
       </div>
+    </div>
+
+    <!-- ===== RUN DIFF MODAL ===== -->
+    <div v-if="diffView || diffLoading" class="modal-backdrop" @click.self="closeDiff">
+      <div class="modal" style="width:min(900px,95vw)">
+        <div class="section" style="margin-top:0">Run diff <span v-if="diffView && diffView.run_id" class="mono muted" style="font-size:12px">{{ diffView.run_id.slice(0, 8) }}… (since run start)</span></div>
+        <p v-if="diffLoading" class="muted">Loading…</p>
+        <template v-else-if="diffView">
+          <p v-if="diffView.note" class="muted" style="font-size:12.5px">{{ diffView.note }}</p>
+          <pre v-if="diffView.diff" class="stream-pane" style="max-height:64vh">{{ diffView.diff }}</pre>
+          <div v-else-if="!diffView.note" class="empty">No changes since this run started.</div>
+        </template>
+        <div class="modal-actions"><button class="btn" @click="closeDiff">Close</button></div>
+      </div>
+    </div>
+
+    <!-- ===== TOASTS ===== -->
+    <div class="toasts">
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast-' + t.kind">{{ t.text }}</div>
     </div>
   </div>
 </template>
@@ -966,6 +1064,14 @@ onUnmounted(() => { closeStream(); closeChat(); });
 .agent-tok .v { font-family: ui-monospace, monospace; font-size: 20px; font-weight: 600; }
 .agent-tok .k { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 @media (max-width: 760px) { .agent-tok { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- settings rows + toasts ---------- */
+.srow { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+.toasts { position: fixed; bottom: 18px; right: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
+.toast { background: var(--surface-2); border: 1px solid var(--line-2); border-left-width: 3px; color: var(--text); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 13px; box-shadow: var(--shadow-hover); min-width: 200px; max-width: 360px; }
+.toast-ok { border-left-color: var(--ok); }
+.toast-err { border-left-color: var(--coral); }
+.toast-info { border-left-color: var(--primary); }
 
 /* ---------- discuss / chat ---------- */
 .chat-log { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }

@@ -13,6 +13,8 @@ const read = require('./read.cjs');
 
 const ZERO = () => ({ input: 0, output: 0, cache_read: 0, cache_creation: 0 });
 const num = (x) => (Number.isFinite(+x) ? +x : 0);
+// HEAD sha of the project's git repo at run start — lets the diff viewer show "changes since this run began".
+function gitHead(cwd) { try { return cp.execFileSync('git', ['-C', cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } }
 const ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
 // A run that advanced Status to (or past) IN_REVIEW means the agent self-handed-off (D1) → no safety-net.
 const ADVANCED = new Set(['IN_REVIEW', 'IN_TEST', 'VALIDATED', 'INGESTED', 'COMPLETED']);
@@ -50,6 +52,7 @@ function writeRunRecord(workspaceDir, run, live, state) {
       `  cache_read: ${t.cache_read}`, `  cache_creation: ${t.cache_creation}`,
       `state: ${state}`,
       `ended_at: ${new Date().toISOString()}`,
+      ...(live.git_base ? [`git_base: ${live.git_base}`] : []),
       '---',
       live.transcript || '',
       '',
@@ -192,6 +195,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
 
   async function runLoop(run, L) {
     const workspaceDir = path.join(run.project_path, '.tcgstackflow');
+    if (!L.git_base) L.git_base = gitHead(run.project_path); // for the per-run diff viewer
     let code = 0, iters = 0;
     for (let iter = 0; iter < maxIters; iter++) {
       if (L.aborted) break;                                    // stopped by the user between iterations

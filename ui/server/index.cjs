@@ -11,6 +11,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const cp = require('child_process');
 const { URL } = require('url');
 
 const read = require('./read.cjs');
@@ -158,6 +159,36 @@ const server = http.createServer((req, res) => {
       const html = sessionReport.renderReportHtml(sessionReport.buildTaskReport(ws, id, { onlyRun: run }), { task: run ? id + ' · run ' + run.slice(0, 8) : id, project: proj });
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(html);
+    }
+    // Per-run git diff: changes in the project since the run started (git_base captured at run start).
+    if (p === '/api/project/task/run/diff') {
+      const proj = u.searchParams.get('path'); const id = u.searchParams.get('id'); const run = u.searchParams.get('run');
+      if (!proj || !id || !run) return sendJSON(res, 400, { error: 'missing path/id/run' });
+      const ws = path.join(proj, '.tcgstackflow');
+      if (!fs.existsSync(path.join(ws, 'config.yaml'))) return sendJSON(res, 400, { error: 'not-a-workspace' });
+      const rec = read.readRunTranscript(ws, id, run);
+      if (rec.error) return sendJSON(res, 404, rec);
+      if (!rec.git_base) return sendJSON(res, 200, { git_base: null, diff: '', note: 'No git base captured for this run (it predates diff capture, or the project is not a git repo).' });
+      try {
+        const stat = cp.execFileSync('git', ['-C', proj, 'diff', '--stat', rec.git_base], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+        const full = cp.execFileSync('git', ['-C', proj, 'diff', rec.git_base], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+        return sendJSON(res, 200, { git_base: rec.git_base, diff: (stat ? stat + '\n' : '') + full });
+      } catch (e) { return sendJSON(res, 200, { git_base: rec.git_base, diff: '', note: 'git diff failed: ' + String((e && e.message) || e).slice(0, 200) }); }
+    }
+    // Settings write: orchestrator role→tool map + spend budget (config.yaml).
+    if (p === '/api/project/settings') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { path: proj, roles, budget_usd } = body || {};
+        if (!proj) return sendJSON(res, 400, { error: 'missing path' });
+        const ws = path.join(proj, '.tcgstackflow');
+        if (!fs.existsSync(path.join(ws, 'config.yaml'))) return sendJSON(res, 400, { error: 'not-a-workspace' });
+        try {
+          if (roles && typeof roles === 'object') for (const [role, tool] of Object.entries(roles)) read.setRoleTool(ws, role, tool);
+          if (budget_usd !== undefined) read.setBudget(ws, budget_usd === null || budget_usd === '' ? NaN : budget_usd);
+          return sendJSON(res, 200, { ok: true });
+        } catch (e) { return sendJSON(res, 400, { error: String((e && e.message) || e) }); }
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
     // One run's transcript (runs/ viewer).
     if (p === '/api/project/task/run') {

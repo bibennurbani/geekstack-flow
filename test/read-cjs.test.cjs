@@ -229,6 +229,31 @@ test('readRunTranscript returns frontmatter + transcript body; error on missing'
   } finally { cleanup(proj); }
 });
 
+// Settings — orchestrator.roles + budget parse/write
+test('settings: parse orchestrator.roles + budget; setRoleTool/setBudget write them', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-set-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'config.yaml'), [
+    'workspace_schema: 4', 'project:', '  name: "x"',
+    'orchestrator:', '  roles:', '    planner: claude', '    coder: claude', '    reviewer: claude',
+    '    tester: claude', '    ingester: claude', '    refactorer: claude',
+    'governance:', '  mode: strict', '',
+  ].join('\n'));
+  try {
+    let d = read.buildProjectDetail(proj);
+    assert.strictEqual(d.config.orchestrator.roles.coder, 'claude');
+    assert.strictEqual(d.config.orchestrator.budget_usd, null);
+    read.setRoleTool(ws, 'coder', 'codex');
+    read.setBudget(ws, 25);
+    d = read.buildProjectDetail(proj);
+    assert.strictEqual(d.config.orchestrator.roles.coder, 'codex');
+    assert.strictEqual(d.config.orchestrator.budget_usd, 25);
+    assert.throws(() => read.setRoleTool(ws, 'coder', 'gpt'), /unknown-tool/);
+    assert.throws(() => read.setRoleTool(ws, 'wizard', 'claude'), /unknown-role/);
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
 // RUN-4 — overlay injection is additive; empty overlay = byte-identical (pure-projection guard).
 test('buildProjectDetail: empty overlay is byte-identical; populated overlay annotates run_state', () => {
   const { proj } = makeWs();

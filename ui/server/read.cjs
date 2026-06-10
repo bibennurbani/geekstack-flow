@@ -86,6 +86,17 @@ function readConfig(workspaceDir) {
       stack: firstMatch(after, /^\s+stack:\s*(.+)$/m).replace(/^["']|["']$/g, ''),
     });
   }
+  // orchestrator: per-role tool map + optional spend budget
+  const orchBlock = text.split(/^orchestrator:/m)[1] || '';
+  const ostop = orchBlock.search(/^\S/m);
+  const oscoped = ostop > 0 ? orchBlock.slice(0, ostop) : orchBlock;
+  const roles = {};
+  for (const role of AGENT_ROLES) {
+    const rm = oscoped.match(new RegExp('^\\s+' + role + ':\\s*(\\S+)', 'm'));
+    if (rm) roles[role] = rm[1].trim();
+  }
+  const bm = oscoped.match(/^\s+budget_usd:\s*([\d.]+)/m);
+  cfg.orchestrator = { roles, budget_usd: bm ? parseFloat(bm[1]) : null };
   return cfg;
 }
 
@@ -379,7 +390,7 @@ function readRunTranscript(workspaceDir, taskId, runId) {
   const m = text.match(/^---\s*\n[\s\S]*?\n---\s*\n?([\s\S]*)$/);
   return {
     run_id: runId, role: fm.role || null, session_id: fm.session_id || null,
-    state: fm.state || null, ended_at: fm.ended_at || null,
+    state: fm.state || null, ended_at: fm.ended_at || null, git_base: fm.git_base || null,
     tokens: (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : null,
     transcript: (m ? m[1] : text).trim(),
   };
@@ -521,6 +532,28 @@ function writeTaskStatus(projectPath, id, newStatus, opts = {}) {
   return { id, status: normalizeStatus(newStatus), old_status: oldStatus, bucket: found.bucket };
 }
 
+// Settings writes (config.yaml). Surface errors like the other write paths.
+function setRoleTool(workspaceDir, role, tool) {
+  if (!AGENT_ROLES.includes(role)) throw new Error('unknown-role');
+  if (!/^(claude|codex)$/.test(String(tool))) throw new Error('unknown-tool');
+  const file = path.join(workspaceDir, 'config.yaml');
+  let text = fs.readFileSync(file, 'utf8');
+  const re = new RegExp('^(\\s+' + role + ':\\s*)\\S+', 'm'); // the role line under orchestrator.roles
+  if (!re.test(text)) throw new Error('role-not-in-config');
+  fs.writeFileSync(file, text.replace(re, '$1' + tool));
+}
+function setBudget(workspaceDir, usd) {
+  const file = path.join(workspaceDir, 'config.yaml');
+  let text = fs.readFileSync(file, 'utf8');
+  const n = parseFloat(usd);
+  if (/^\s+budget_usd:/m.test(text)) {
+    text = Number.isFinite(n) ? text.replace(/^(\s+budget_usd:\s*).*$/m, '$1' + n) : text.replace(/^\s+budget_usd:.*\n/m, '');
+  } else if (Number.isFinite(n) && /^orchestrator:/m.test(text)) {
+    text = text.replace(/^orchestrator:.*$/m, (l) => l + '\n  budget_usd: ' + n); // sibling of roles:
+  } else { throw new Error('no-orchestrator-block'); }
+  fs.writeFileSync(file, text);
+}
+
 // --- Agents overview (cross-project, grouped by role) ---
 const AGENT_ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
 
@@ -611,8 +644,8 @@ module.exports = {
   buildProjectsList, buildProjectDetail, STATUS_NEXT_AGENT,
   // Orchestrator (schema 4): reads
   findTaskFolder, parseFrontmatter, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
-  // Orchestrator: the one canonical task-file writer
-  appendLogEntry, writeTaskStatus,
+  // Orchestrator: the one canonical task-file writer + settings writes
+  appendLogEntry, writeTaskStatus, setRoleTool, setBudget,
   // Agents overview + run history
   buildAgentsOverview, parseAgentProfile, AGENT_ROLES, buildRunsHistory,
 };
