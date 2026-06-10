@@ -4,6 +4,23 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — Cockpit becomes the Orchestrator; read-only retired (ADR 0032/0033/0034)
+
+- **Live Runs** — the Run buttons launch real agents: the server spawns `claude -p … --output-format stream-json`, streams progress to the browser via SSE, and writes an immutable transcript to `.tcgstackflow/runs/{task-id}/{run-id}.md` with frontmatter recording `task`, `role`, `session_id`, Run tokens, terminal `state`, `ended_at`, and the `git_base` commit captured at Run start. No database — files plus ephemeral server memory, as ever (ADR 0024).
+- **Continuation loop** — each Run resumes its session (`claude --resume`) until the agent sets the task to `IN_REVIEW` or a 6-iteration cap is hit; token usage accumulates across iterations into the single run record. D1 doctrine: the **agent owns task-file writes** (its own log entries, its own Status advance); the server adds only a **Status safety-net** entry when a clean Run ends un-advanced.
+- **In-run governance, machine-enforced** — the agent's permission prompts are delegated via `--permission-prompt-tool` to a local stdio **governance MCP** plus an approvals registry; HIGH/CRITICAL actions pause the Run and surface a Cockpit approve/deny modal (CRITICAL requires an explicit acknowledgement). `governance.md` is now a runtime gate for orchestrated Runs (ADR 0027 realized).
+- **Status override** — a dropdown in the task panel rewrites the canonical `Status:` line in `TASK {ID}.md` and auto-appends an auditable YAML log entry (`author: human`, `via: cockpit`, old→new).
+- **Run tokens + Session report** — per-Run token capture into run-record frontmatter; the **Session report** parses the Run's Claude Code session JSONL into a per-turn trace with a **dollar-cost waterfall** at per-model list pricing (the scoped $ amendment to ADR 0033). Three surfaces: a live Cockpit page (optionally scoped to one Run via `&run=`), a server-rendered **standalone HTML export** (`…/report.html`), and a "Generate analysis" copy-prompt — plus the new 18th command **`/tcgflow-session-report`**.
+- **Discuss + Stop** — **Discuss** resumes a finished Run's session read-only for follow-up questions; **Stop** aborts a live Run, and a startup reconcile appends durable "aborted at pause point" entries for orphaned runs.
+- **Per-run diff** — the `git_base` captured at Run start powers a diff view in the task panel of exactly what the Run changed.
+- **Settings write** — the Cockpit's third write path: a per-project Settings tab writes the role→tool map (`orchestrator.roles`) and an optional budget (`orchestrator.budget_usd`) into `config.yaml`; est.-spend-vs-budget badges appear on Home and the project header.
+- **SPA redesign** — dark editorial theme with self-hosted JetBrains Mono + Space Grotesk, an agent-grouped Home with an est.-spend hero, a cross-workspace **Runs history** view, and per-project Tools/Settings tabs.
+
+### Changed
+
+- **`workspace_schema` bumped to 4** — the schema-3 → 4 migration adds the `runs/` area and the `orchestrator.roles` config block.
+- Now 6 agent roles, 17 skills, **18 commands** (`tcgflow-session-report` added); the test suite is **62 `node --test` tests** (`npm test`).
+
 ### Added — qmd is the mandatory wiki-search layer (ADR 0030)
 
 - **`wiki-search` skill** — one shared discovery skill every agent uses to find LLM-wiki and `docs/` content via [qmd](https://github.com/tobi/qmd) (local hybrid keyword + vector + LLM re-rank) before reading or editing the wiki. qmd is now **mandatory, not optional**: it surfaces *which* pages are relevant, then the agent opens them and follows `[[wikilinks]]` one hop. It **complements** `wiki/index.md` — the Map of Content stays the always-current fallback when the index is stale or qmd is unavailable. The **CLI is canonical** (`qmd query "…" -c wiki --json`, plus `search`/`vsearch`/`get`); the qmd MCP is an optional Claude convenience. The old "when wired"/optional framing is removed.
@@ -51,13 +68,13 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 - **`upgrade` now additively installs new skills** (absent → add, existing → never overwrite), in addition to refreshing tool-owned commands + agent profiles. So new/updated `tcgflow-*` commands, agent profiles, and skills (like the tester set) propagate to existing projects via `geekstackflow upgrade` — satisfying "add/update a skill or command → it ships through upgrade."
 
-### Added — Cockpit (Phase 2, in progress)
+### Added — Cockpit (Phase 2)
 
 - **`ui/` package** (ADR 0022) — the local Cockpit. Vue 3 + Vite SPA in `ui/src/`, served by a **zero-dependency Node `http` server** in `ui/server/` (a refinement of ADR 0022, which named Hono and allowed a substitute; built-in `http` is thinner and testable without an install). UI dependencies live in `ui/package.json` only — the root CLI (`init.js`) stays zero-dependency.
 - **`geekstackflow ui [--port N]`** — launches the Cockpit at `http://127.0.0.1:4729` (default), opens a browser. Binds localhost only, no auth (ADR 0020).
-- **Read-only API** — `GET /api/health`, `/api/projects` (registry + `update_available`), `/api/project?path=…` (config, version, action-queue, tasks, wiki summary). Pure projections over `.tcgstackflow/` files — no database (ADR 0024).
+- **Read-only API** — `GET /api/health`, `/api/projects` (registry + `update_available`), `/api/project?path=…` (config, version, action-queue, tasks, wiki summary). Pure projections over `.tcgstackflow/` files — no database (ADR 0024). *Initial surface — superseded within this release by ADR 0032; see "Cockpit becomes the Orchestrator" above.*
 - **Action queue** (ADR 0023) — computed per project from task status via a status→next-agent map (`PLANNED→coder`, `IN_REVIEW→reviewer`, `VALIDATED→ingester`, …). The Home view aggregates queues across all registered projects.
-- **Copy-prompt** (ADR 0023) — the mocked "Run" affordance: copies a ready-to-paste prompt for the next agent on a task. Clipboard only, no file writes. Becomes the Orchestrator's subprocess input later.
+- **Copy-prompt** (ADR 0023) — the mocked "Run" affordance: copies a ready-to-paste prompt for the next agent on a task. Clipboard only, no file writes. *Now the fallback — the live Run shipped within this release (see above); the same prompt feeds the Orchestrator's subprocess.*
 - **Built-in fallback UI** — the server serves a vanilla-JS page with the same functionality until the Vue SPA is built, so the cockpit works with zero `npm install`.
 - **Second-pass panels** (ADR 0023) — per-project **Governance** (project-specific rules), **Timesheet** (this week's draft + submitted/draft status), and **Tools & MCP** (enabled tool adapters + recommended/optional MCP) panels in the data layer and the Vue SPA.
 
@@ -70,7 +87,7 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 - **Planner no longer fabricates Jira ticket context** — `/tcgflow-plan` and the `planner` agent now treat a Jira-style ID as requiring the real ticket: attempt the Atlassian MCP fetch, and if it can't connect, try to make it available, then **stop and ask** the user to connect the MCP or paste the ticket. Previously, when the MCP was absent, the Planner silently substituted an unrelated task's context.
 - **`upgrade` now auto-registers the project** in the Cockpit registry. Previously only `init`/`register` wrote to `~/.tcgstackflow/projects.yaml`, so a project set up before the registry existed (or migrated via `upgrade`) never appeared in the Cockpit's left-nav. `upgrade` now adds it (idempotent).
 - **Governance panel** no longer surfaces the template's commented-out example rules — HTML-comment blocks are stripped before extracting project-specific rules, so a fresh project correctly shows none.
-- **Cockpit UI redesign** — replaced the broken `color-scheme: light dark` (which rendered dark text on a dark canvas, unreadable) with an explicit, AA-contrast design system: dark sidebar + light content, semantic **color-coded status badges** (PLANNED/IN_PROGRESS/IN_REVIEW/VALIDATED/COMPLETED/BLOCKED/DRAFT), agent-colored chips, card hover states, and a "✓ Copied" feedback state on Copy-prompt. Fallback page given an explicit light background too.
+- **Cockpit UI redesign** — replaced the broken `color-scheme: light dark` (which rendered dark text on a dark canvas, unreadable) with an explicit, AA-contrast design system: dark sidebar + light content, semantic **color-coded status badges** (PLANNED/IN_PROGRESS/IN_REVIEW/VALIDATED/COMPLETED/BLOCKED/DRAFT), agent-colored chips, card hover states, and a "✓ Copied" feedback state on Copy-prompt. Fallback page given an explicit light background too. *This light-content design was itself superseded within the release by the dark editorial SPA redesign — see the Orchestrator section above.*
 - **Status normalization** — task statuses are normalized to the canonical set before mapping to agents (`In Progress`/`WIP`/`Doing` → `IN_PROGRESS`, `Done`/`Closed`/`Shipped` → `COMPLETED`, `Review` → `IN_REVIEW`, etc.). Real-world projects (e.g. INX, which writes `Status: In Progress`) now populate the action queue correctly instead of showing unmapped raw statuses.
 
 ## [0.2.0] — 2026-06-01

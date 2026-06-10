@@ -1,8 +1,8 @@
 # Creative GeekStack Flow
 
-**A structured AI workflow for planning, coding, reviewing, testing, and shipping software — with project memory, task tracking, governance, and a local cockpit.**
+**A structured AI workflow for planning, coding, reviewing, testing, and shipping software — with project memory, task tracking, governance, and a local cockpit that runs your agents.**
 
-`geekstackflow` scaffolds a `.tcgstackflow/` workspace inside any project that gives your AI coding tools (Claude Code, Codex, GitHub Copilot) a shared brain: a Karpathy-style LLM wiki for memory (searched via mandatory [qmd](https://github.com/tobi/qmd) hybrid search), a strict two-file task system, six agent roles with a clear lifecycle, governance with risk levels, and a local web **Cockpit** to see it all.
+`geekstackflow` scaffolds a `.tcgstackflow/` workspace inside any project that gives your AI coding tools (Claude Code, Codex, GitHub Copilot) a shared brain: a Karpathy-style LLM wiki for memory (searched via mandatory [qmd](https://github.com/tobi/qmd) hybrid search), a strict two-file task system, six agent roles with a clear lifecycle, governance with risk levels, and a local web **Cockpit** that is also the **Orchestrator** — launch agents on tasks from the browser, watch the run stream live, approve HIGH/CRITICAL actions, and track token spend.
 
 > **Scope:** personal-first → team-usable → OSS-ready. Built for one author, designed so a teammate can adopt it on day one, and structured so it can become a public tool without re-architecting. See [docs/adr/0001](docs/adr/0001-personal-first-team-usable-oss-ready.md).
 
@@ -17,7 +17,7 @@
 - [Quick start](#quick-start)
 - [How to use it](#how-to-use-it) — the daily workflow
 - [The task lifecycle](#the-task-lifecycle)
-- [The Cockpit](#the-cockpit)
+- [The Cockpit (Orchestrator)](#the-cockpit-orchestrator)
 - [Commands reference](#commands-reference)
 - [Skills reference](#skills-reference)
 - [Multi-project workspaces](#multi-project-workspaces)
@@ -36,10 +36,11 @@ After `geekstackflow init`, your project has a `.tcgstackflow/` folder containin
 - **Tasks** (`tasks/`) — every task is exactly two files (`TASK {ID}.md` log + `TASK details {ID}.md` plan), moving through `active/ → completed/ → archive/`.
 - **6 agent roles** (`agents/`) — the linear `planner → coder → reviewer → tester → ingester`, plus the manually-invoked **`refactorer`** (a peer to the Coder, re-entering at Review), each a tool-agnostic Markdown profile.
 - **17 skills** (`skills/`) — atomic capabilities in Claude Code `SKILL.md` format (mattpocock-compatible).
-- **17 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
-- **Governance** (`governance.md`) — four risk levels (LOW/MEDIUM/HIGH/CRITICAL) + a permission-request recipe + your project-specific rules.
+- **18 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
+- **Governance** (`governance.md`) — four risk levels (LOW/MEDIUM/HIGH/CRITICAL) + a permission-request recipe + your project-specific rules. Enforced live during orchestrated runs (approve/deny in the browser).
 - **Tool adapters** (`tools/`) — generated `CLAUDE.md`, `AGENTS.md` (Codex), and `.github/copilot-instructions.md` (Copilot), all pointing back at `.tcgstackflow/` as the single source of truth.
-- **A local Cockpit** — `geekstackflow ui` opens a browser dashboard over all your projects: action queue, task board, wiki activity, Jira status, governance, timesheet.
+- **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, and session id (workspace schema 4).
+- **A local Cockpit / Orchestrator** — `geekstackflow ui` opens a browser dashboard over all your projects that also *runs* the workflow: launch any agent on a task, watch the live stream, approve HIGH/CRITICAL actions, browse run history and per-run reports/diffs, chat with a finished run, and track token spend against a budget — plus task board, wiki activity, Jira status, governance, timesheet.
 
 Plus a **global** home at `~/.tcgstackflow/` for cross-project memory (`memory/`) and a shared tech-skill library (`skills/`).
 
@@ -58,7 +59,7 @@ npm link                 # puts `geekstackflow` + `tcgflow` on your PATH
 cd ui && npm install && npm run build   # build the Cockpit SPA (one-time)
 ```
 
-Two binaries are installed, identical: **`geekstackflow`** and the short alias **`tcgflow`**. The CLI itself has **zero runtime dependencies** (pure Node ≥22 — the baseline since the mandatory qmd wiki-search layer needs it); only the Cockpit UI has dependencies, isolated under `ui/`.
+Two binaries are installed, identical: **`geekstackflow`** and the short alias **`tcgflow`**. The CLI itself has **zero runtime dependencies** (pure Node ≥22 — the baseline since the mandatory qmd wiki-search layer needs it); only the Cockpit UI has dependencies, isolated under `ui/`. Contributors: `npm test` runs the suite (Node's built-in `node --test`).
 
 ---
 
@@ -100,6 +101,8 @@ Init also: auto-detects sub-projects (multi-project), registers the project in y
 ```bash
 geekstackflow ui          # → http://127.0.0.1:4729 (opens your browser)
 ```
+
+Open a task and press **Run** — the Orchestrator launches the right agent, streams it live, and pauses for your approval on HIGH/CRITICAL actions. See [The Cockpit (Orchestrator)](#the-cockpit-orchestrator).
 
 ---
 
@@ -193,34 +196,52 @@ DRAFT → PLANNED → IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → IN
 | `VALIDATED` | Tests pass; ready to fold into memory | ingester |
 | `INGESTED` | Folded into the wiki; done | — |
 
-The Cockpit's **action queue** is computed from these statuses: it shows, per task, which agent is ready to act next.
+The Cockpit's **action queue** is computed from these statuses: it shows, per task, which agent is ready to act next — and can **Run** that agent directly from the browser (or copy its prompt for an already-open tool).
 
 The **Refactorer** sits outside this linear flow — invoked on demand via `/tcgflow-refactor`, it produces a refactor task and re-enters at `IN_REVIEW` (Reviewer → Tester → Ingester). For refactor-typed tasks the Reviewer's scope-drift blocker is relaxed and behaviour-preservation is the acceptance oracle (ADR 0031).
 
 ---
 
-## The Cockpit
+## The Cockpit (Orchestrator)
 
 ```bash
 geekstackflow ui [--port 4729]
 ```
 
-A **local, read-only** web dashboard (Vue 3 + a zero-dependency Node server) over all your registered projects. Binds to `127.0.0.1` only — no network exposure, no login, no database. It reads your `.tcgstackflow/` files directly (the files are the source of truth; the Cockpit is a live projection).
+A **local** web cockpit *and orchestrator* (Vue 3 + a zero-dependency Node server). Binds to `127.0.0.1` only — no network exposure, no login, no database. Files stay the source of truth: it reads `.tcgstackflow/` directly and writes only what you do through it — run records under `runs/`, task status, and settings (ADRs 0024, 0032). Launching a **Run** spawns your local `claude` CLI, so have it on your PATH and authenticated.
 
-- **Home** — the action queue across *all* projects ("what should I touch next, everywhere"), plus per-project "update available" badges.
-- **Per-project** — action queue, full task board (color-coded statuses), wiki recent activity, sub-projects, governance rules, timesheet status, tools & MCP.
+### Browse
+
+- **Home** — agents grouped with their cross-project queues, a hero with estimated spend, and per-project "update available" badges. A **Runs** view lists every recorded run across the workspace.
+- **Per-project tabs** — Overview (action queue + agent cards) · Tasks (filterable, sortable table — defaults to the Active bucket) · Wiki · Governance · Timesheet · Tools · **Settings**.
+- **Task detail** — the plan, the implementation-log timeline, per-role token totals, the task's runs, and a **Status override** dropdown (rewrites the canonical `Status:` line and auto-logs the change, `author: human / via: cockpit`).
 - **Jira status** — each Jira-keyed task shows its Jira status (links to the ticket), "synced Xh ago", and a ⚠ **drift** flag when your workspace and Jira disagree on done-ness. (Refresh with `/tcgflow-sync-jira`.)
-- **Copy prompt** — every action-queue item has a button that copies a ready-to-paste prompt for the next agent. (The future Orchestrator will *run* it directly; today you paste it into your AI tool.)
 
-Before the SPA is built, the server serves a built-in fallback page with the same data — so `geekstackflow ui` works even without `npm run build`.
+### Run an agent
 
-> Roadmap: the Cockpit is the read-only first stage of an **Orchestrator** that will run agents directly from the UI (ADRs 0020–0027). Designed so the "Copy prompt" buttons become "Run" without a redesign.
+Open a task and press **Run {agent}** (e.g. *Run coder* on a `PLANNED` task):
+
+1. The executor spawns `claude` headlessly in the project directory and **streams the output live** into the panel, with a ticking token counter and a **■ Stop** button.
+2. The run **continues across iterations** (`claude --resume`, up to 6) until the agent hands off — sets the task to `IN_REVIEW` — so multi-step tasks actually finish.
+3. **Governance is enforced live**: a HIGH/CRITICAL action (push, dependency install, a path your `governance.md` rules escalate) pauses the run and pops an **approval modal** — Action / Risk / Why / Approve / Deny. Deny is non-fatal ("deferred to human"); either decision is recorded in the task log.
+4. On completion the run is recorded at `runs/{task-id}/{run-id}.md` (transcript + tokens + session id), and the agent's own log entries land in the task files as usual.
+
+### Inspect, report, discuss
+
+- **Session report** — per task (or per run): token classes, a $-cost waterfall (list-price estimate, ADR 0034), tool-calls-by-type, and a per-turn cache-read trace, parsed from the actual Claude session logs. **Open report ↗** exports it as standalone HTML; `/tcgflow-session-report` authors the AI editorial version (narrative + optimization recommendations).
+- **Per run** — read the **transcript**, view the **diff** since the run started (`git_base` is captured at launch), or copy **⌥ terminal** to resume that exact session interactively in your own CLI (`claude --resume <session_id>`).
+- **Discuss** — a chat box on the task that resumes the latest run's session **read-only** and streams the agent's answer ("what did you do and why?").
+- **Settings** — per-role runner tool map (`orchestrator.roles`, ADR 0025 — all-`claude` today, `codex` deferred) and an optional **spend budget** that flags the project when estimated spend exceeds it. Persisted to `config.yaml`.
+
+Before the SPA is built, the server serves a built-in fallback page (read-only browse + copy-prompt) — so `geekstackflow ui` works even without `npm run build`.
+
+> The Orchestrator is no longer a roadmap item: read-only is retired (ADR 0032). "Copy prompt" became "Run" exactly as designed (ADRs 0020–0027), with per-run token capture (0033) and $-cost session reports (0034). Copy-prompt remains as the manual alternative for an already-open tool.
 
 ---
 
 ## Commands reference
 
-17 commands. In Claude Code, type `/tcgflow-<name>`. In other tools, use the trigger phrase.
+18 commands. In Claude Code, type `/tcgflow-<name>`. In other tools, use the trigger phrase.
 
 | Command | Does |
 |---|---|
@@ -232,6 +253,7 @@ Before the SPA is built, the server serves a built-in fallback page with the sam
 | `/tcgflow-review [ID]` | Reviewer: static review of the diff |
 | `/tcgflow-test [ID]` | Tester: build test plan, run verification |
 | `/tcgflow-ingest [scope]` | Ingester: fold a task / `raw/` / MCP output into the wiki |
+| `/tcgflow-session-report [ID]` | Author a session post-mortem from a task's orchestrated runs (token/$ narrative + optimization recommendations) |
 | `/tcgflow-refactor [target]` | Refactorer: broad, behaviour-preserving refactor of a target area (re-enters at Review) |
 | `/tcgflow-sync-jira` | Pull Jira statuses into `tasks/jira-cache.json` |
 | `/tcgflow-lint` | Wiki health-check |
@@ -327,18 +349,22 @@ geekstack-flow/
 ├── init.js                 # the CLI (init / upgrade / register / drift / ui) — zero dependencies
 ├── package.json            # bin: { geekstackflow, tcgflow }, v0.2.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
-├── docs/adr/               # 31 Architecture Decision Records
-├── ui/                     # the Cockpit (Vue 3 + Vite SPA + zero-dep Node server)
-│   ├── server/             #   read.cjs (data layer) + index.cjs (http server)
-│   └── src/                #   App.vue + styles
+├── docs/adr/               # 34 Architecture Decision Records
+├── test/                   # node --test suite (run with `npm test`)
+├── ui/                     # the Cockpit/Orchestrator (Vue 3 + Vite SPA + zero-dep Node server)
+│   ├── server/             #   read.cjs (data) · index.cjs (http) · run.cjs (agent executor)
+│   │                       #   run-manager · approvals · governance-mcp · governance-classify · session-report
+│   ├── src/                #   App.vue + styles
+│   └── public/fonts/       #   self-hosted UI fonts
 └── templates/
     ├── workspace/.tcgstackflow/   # copied into each project
     │   ├── config.yaml  governance.md  README.md
     │   ├── agents/        # 6 role profiles
     │   ├── skills/        # 17 skills
-    │   ├── commands/      # 17 tcgflow-* commands
+    │   ├── commands/      # 18 tcgflow-* commands
     │   ├── wiki/          # starter pages + adr/
     │   ├── tasks/         # README + weekly/ + active/completed/archive/
+    │   ├── runs/          # orchestrated run records, {task-id}/{run-id}.md (schema 4)
     │   ├── raw/  prompts/
     │   └── tools/         # claude/ codex/ github/ adapters
     └── global/.tcgstackflow/      # copied to ~/.tcgstackflow/ (memory/ + skills/)
@@ -349,7 +375,7 @@ geekstack-flow/
 ## Design & decisions
 
 - **[CONTEXT.md](CONTEXT.md)** — the project's domain language (Wiki, Raw, Ingest/Query/Lint, Agent, Skill, Command, Cockpit, Orchestrator, Workspace vs Jira status, …).
-- **[docs/adr/](docs/adr/)** — 31 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031).
+- **[docs/adr/](docs/adr/)** — 34 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034).
 
 ## Inspirations
 

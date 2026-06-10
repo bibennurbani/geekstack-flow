@@ -62,6 +62,14 @@ Same workflows, shipped in two forms — both live at `.tcgstackflow/commands/{n
 
 A command is a thin dispatcher: each `commands/{name}/SKILL.md` describes when to invoke and which workspace skill or agent role to use. The actual behaviour lives in `.tcgstackflow/skills/` and `.tcgstackflow/agents/`. Result: workflows are **tool-portable**; the slash-command UX is **Claude-specific**.
 
+## Orchestrated runs (Cockpit)
+
+You may be launched headlessly by the **Cockpit Orchestrator** (`geekstackflow ui`, ADR 0032) rather than interactively. In that context:
+
+- **You own the task-file writes (D1).** Self-log via `update-task-log` and advance `Status:` to `IN_REVIEW` when done — that ends the Orchestrator's continuation loop. Otherwise the server re-nudges your session (`--resume`, up to 6 iterations), then a safety-net advances Status with `author: orchestrator`.
+- **HIGH/CRITICAL approvals are machine-routed** through the `mcp__tcgflow_governance__approve` permission-prompt tool and the Cockpit's approval cards (ADR 0027) — not the inline-chat recipe used in manual sessions. Same recipe content, different transport.
+- Each orchestrated run leaves an immutable record at `.tcgstackflow/runs/{task-id}/{run-id}.md` (tokens + `session_id` in frontmatter); the Cockpit's Session Report and `/tcgflow-session-report` build $-cost post-mortems from those records (ADR 0034).
+
 ## Strict invariants
 
 - **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`. Append to the existing two files.

@@ -20,8 +20,8 @@ Usage (all forms equivalent — pick what feels natural):
   geekstackflow drift [target]                Report which existing skills / tool adapters differ from the
                                               installed templates — the files upgrade won't auto-merge,
                                               so you know exactly what to review. Read-only; writes nothing.
-  geekstackflow ui [--port N]                 Launch the Cockpit — a local read-only UI over all your
-                                              registered projects at http://127.0.0.1:4729 (default port).
+  geekstackflow ui [--port N]                 Launch the Cockpit — the local Orchestrator UI over all your registered
+                                              projects (run agents, approve actions, browse tasks) at http://127.0.0.1:4729.
   geekstackflow --force [target]              Overwrite existing .tcgstackflow/
   geekstackflow --migrate-from <old> [target] Collect old AI infra into migration-notes/ for review
   geekstackflow --help                        Show this help

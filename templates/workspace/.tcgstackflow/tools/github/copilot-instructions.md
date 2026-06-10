@@ -92,7 +92,7 @@ Both locations are readable to Copilot. Tech-skill content is referenced from pr
 
 ## Commands (invocation in Copilot)
 
-The workspace ships seventeen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
+The workspace ships eighteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
 
 | Workflow | Trigger phrases |
 |---|---|
@@ -108,6 +108,7 @@ The workspace ships seventeen workflow commands at `.tcgstackflow/commands/{name
 | `tcgflow-task-from-snyk` | "create tasks from Snyk", "process vulnerabilities" |
 | `tcgflow-task-from-cypress` | "create tasks from failing tests", "what's flaky?" |
 | `tcgflow-task-from-datadog` | "create a task from the latest incident" |
+| `tcgflow-session-report` | "write a session report for ES-1234", "where did the tokens go on X", "post-mortem the run" |
 | `tcgflow-timesheet-generate` | "generate this week's timesheet" |
 | `tcgflow-timesheet-submit` | "submit the timesheet to Tempo" (HIGH risk) |
 | `tcgflow-upgrade` | "upgrade this workspace" |
@@ -115,6 +116,10 @@ The workspace ships seventeen workflow commands at `.tcgstackflow/commands/{name
 | `tcgflow-migrate` | "migrate this project to geekstackflow" |
 
 The slash-command form (`/tcgflow-*`) is a Claude-Code-specific UX shortcut; the underlying workflows live as files in this workspace and are tool-portable. Same content; different invocation UI per tool.
+
+## Orchestrated runs (Cockpit)
+
+Agents may be launched headlessly by the **Cockpit Orchestrator** (ADR 0032) instead of a human in chat. In that context: (a) the agent owns the task-file writes (D1) — it self-logs and must advance `Status:` to `IN_REVIEW` to end the continuation loop, otherwise the server re-nudges the session up to 6 iterations and then a safety-net advances Status with `author: orchestrator`; (b) HIGH/CRITICAL approvals route through the `mcp__tcgflow_governance__approve` permission-prompt tool and the Cockpit's approval cards (ADR 0027), not the inline-chat recipe — the recipe content is identical.
 
 ## Strict Invariants
 

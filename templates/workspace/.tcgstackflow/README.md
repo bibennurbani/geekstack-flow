@@ -16,8 +16,10 @@ This folder is the project's AI workflow workspace. Any AI coding tool (Claude C
 | `tasks/` | Task tracking. Each task is exactly two files: `TASK {ID}.md` (log) + `TASK details {ID}.md` (plan). Lifecycle is `active/ → completed/ → archive/`. | AI maintains during work; user starts tasks. |
 | `raw/` | Staging for external files dropped in for ingestion (PDFs, exported docs, screenshots). Files move to `raw/archived/` after ingest. | User drops in; AI moves to archive. |
 | `prompts/{task-id}/` | Cross-tool handoff prompts. Claude writes a prompt; user pastes it into another AI tool. | AI writes; user moves to other tools. |
-| `agents/` | Four role profiles: `planner`, `coder`, `reviewer`, `ingester`. Tool-agnostic Markdown. | Co-evolved with the project. |
+| `agents/` | Six role profiles: `planner`, `coder`, `reviewer`, `tester`, `ingester`, `refactorer`. Tool-agnostic Markdown. | Co-evolved with the project. |
 | `skills/` | Atomic capabilities in Claude Code `SKILL.md` format. Drop-in compatible with mattpocock-style skills. | Templates updated; project may add custom. |
+| `commands/` | Eighteen tool-portable `tcgflow-*` workflow commands (thin dispatchers onto skills/agents). | Generated/refreshed by init; do not hand-edit. |
+| `runs/` | Immutable Orchestrator run records — one `runs/{task-id}/{run-id}.md` per orchestrated run, with token/session frontmatter (schema 4). | The Cockpit Orchestrator writes; never edited. |
 | `tools/` | **Generated** per-tool adapters. Do not edit. | The init/sync script generates. |
 | `governance.md` | Risk levels, permission-request recipe, and project-specific rules. | User edits the project-specific section. |
 | `config.yaml` | Project config — stack, Tempo settings, submission mode, tool flags. | User edits during init and as the project evolves. |
@@ -27,8 +29,13 @@ This folder is the project's AI workflow workspace. Any AI coding tool (Claude C
 1. **Start a task** — invoke the `planner` agent with a ticket ID or idea. It grills you on gaps, then writes `tasks/active/{ID}/TASK details {ID}.md`. Status is `PLANNED`.
 2. **Code** — invoke the `coder` agent. It works from the details file, appending YAML entries to `TASK {ID}.md` after each meaningful change.
 3. **Review** — invoke the `reviewer` agent. It walks the diff against `governance.md` and acceptance criteria. Flags HIGH/CRITICAL actions.
-4. **Ingest** — when the task is done, invoke the `ingester` agent. It folds the task into the wiki: updates relevant pages, appends to `wiki/log.md`, moves the task folder to `completed/`.
-5. **Weekly** — invoke `generate-timesheet` and (after review) `submit-timesheet` for Tempo.
+4. **Test** — invoke the `tester` agent. It builds a test plan from the acceptance criteria, runs unit/E2E/app verification, and records a pass/fail verdict (`IN_TEST → VALIDATED`; fail returns to the Coder).
+5. **Ingest** — when the task is done, invoke the `ingester` agent. It folds the task into the wiki: updates relevant pages, appends to `wiki/log.md`, moves the task folder to `completed/`.
+6. **Weekly** — invoke `generate-timesheet` and (after review) `submit-timesheet` for Tempo.
+
+## The Cockpit (local UI)
+
+Run `geekstackflow ui` to launch the **Cockpit/Orchestrator** at `http://127.0.0.1:4729` — a local UI over all registered workspaces. It reads this folder, launches agent runs against tasks (writing immutable records to `runs/`), shows a Runs history, streams live output, gates HIGH/CRITICAL actions through approval cards, and renders a per-task **Session Report** with $-cost estimates (ADR 0034). Its Settings tab writes `orchestrator.roles` and an optional `budget_usd` into `config.yaml`.
 
 ## Global memory
 

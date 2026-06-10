@@ -65,6 +65,9 @@ wiki_search:
 # Orchestrator — per-role runner tool map (ADR 0025). The Cockpit Orchestrator launches
 # the agent for each role using the tool named here. Default all-claude; set a role to
 # 'codex' to spread cost once the Codex runner lands (currently deferred — Claude only).
+# The Cockpit Settings tab may also write an optional `budget_usd:` here (monthly
+# est-spend guide shown on the Home hero). Safe to hand-edit or delete.
+#   budget_usd: 50
 orchestrator:
   roles:
     planner: claude

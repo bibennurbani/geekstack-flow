@@ -1,6 +1,6 @@
 # ORCH-cockpit-runner — Orchestrator UI build plan
 
-**Status:** PLANNED
+**Status:** BUILT (see §0 Build progress) — retained as a build record
 **Owner:** —
 **Provenance:** `/grill-with-docs` design session → locked in `CONTEXT.md` (Cockpit / Run / Run tokens / Status override / Orchestrator) + **ADR 0032** (Cockpit becomes Orchestrator, read-only retired) + **ADR 0033** (Run-token capture & per-Run storage). Binding execution-model ADRs: **0024** (run-state in files, no DB), **0025** (execution model + per-role tool map), **0026** (sequential-within-project concurrency), **0027** (in-run pause-and-approve governance), **0023** (cockpit panels), **0021** (workspace_schema + additive upgrade), **0008** (risk levels), **0004** (two-file rule).
 
@@ -18,11 +18,11 @@
 | **3 — Run manager** | ✅ core done | RUN-1/2/3/4/6/7 (`run-manager.cjs` + 8 tests). RUN-5/RUN-8 landed in Phase 4 |
 | **4 — Executor** | ✅ done | API-1..9 + RUN-5 + RUN-8 (`run.cjs` + executor tests + HTTP smoke). Spawn→parse→flush verified against the **real** fixture; runs gated behind `governanceGateReady` (API-8) until Phase 5 |
 | **5 — Governance gate** | ✅ done | GOV-1..6. Classifier (fail-safe), approvals registry + loopback intake, **zero-dep stdio MCP `approve` server**, gate wired into the spawn (`governanceGateReady` now true → runs ENABLED), GOV-6 records decisions via the canonical writer. Full pause-and-approve loop tested end-to-end (approve + deny) over real stdio+HTTP |
-| **6 — Vue UI** | ✅ done | UI-0..6 — detail panel (plan + log timeline), per-role/per-task token views, Status override dropdown, live Run button + SSE stream + live token counter, governance approve/deny modal (CRITICAL needs rollback ack). SPA builds clean (83 KB) and is served from `dist/`; bundle contains the governance UI |
+| **6 — Vue UI** | ✅ done | UI-0..6 — detail panel (plan + log timeline), per-role/per-task token views, Status override dropdown, live Run button + SSE stream + live token counter, governance approve/deny modal (CRITICAL needs rollback ack). SPA builds clean (~120 KB JS after the restyle) and is served from `dist/`; bundle contains the governance UI |
 
-**Status: BUILD COMPLETE.** All 7 phases done. **50 tests across 9 files** + HTTP smokes, all green; the SPA builds and is served.
+**Status: BUILD COMPLETE.** All 7 phases done. **62 tests across 10 files under `test/`** (see `npm test`) + HTTP smokes, all green; the SPA builds and is served.
 
-**Added after Phase 6 — Session Report (ADR 0034):** a per-task token/cost telemetry view in the editorial `session_report.html` style. `session-report.cjs` locates each Run's **Claude Code session JSONL** by `session_id`, parses per-turn `usage` + `tool_use` + timestamps, aggregates across the task's Runs, and prices it (per-model list table — **adds $-cost, amending ADR 0033's raw-tokens-only**, scoped to this report). `GET /api/project/task/report` feeds a dark editorial Cockpit page (hero + metrics, token cards, cost waterfall, tool-calls-by-type, per-turn cache-read trace) reached via "Session report ↗" on the task detail; a "Generate analysis ↗" button copies a prompt to author the full editorial HTML (narrative + recommendations) in the user's AI tool. Verified live: INX/MIGRATE-GSF → 51 turns, 25 tool calls, ~$12.96, 3.44M tokens processed. Verified against reality (the captured `claude` stream-json fixture + the real MCP child driving the full approve/deny loop). Nothing committed yet (per "commit later").
+**Added after Phase 6 — Session Report (ADR 0034):** a per-task token/cost telemetry view in the editorial `session_report.html` style. `session-report.cjs` locates each Run's **Claude Code session JSONL** by `session_id`, parses per-turn `usage` + `tool_use` + timestamps, aggregates across the task's Runs, and prices it (per-model list table — **adds $-cost, amending ADR 0033's raw-tokens-only**, scoped to this report). `GET /api/project/task/report` feeds a dark editorial Cockpit page (hero + metrics, token cards, cost waterfall, tool-calls-by-type, per-turn cache-read trace) reached via "Session report ↗" on the task detail; a "Generate analysis ↗" button copies a prompt to author the full editorial HTML (narrative + recommendations) in the user's AI tool. Verified live: INX/MIGRATE-GSF → 51 turns, 25 tool calls, ~$12.96, 3.44M tokens processed. Verified against reality (the captured `claude` stream-json fixture + the real MCP child driving the full approve/deny loop). Committed in 1807fdd / c079dc9 / e98cb46 / 6727d1d.
 
 **Deferred / not done (deliberate):**
 - The **vanilla-JS fallback** page (`FALLBACK_HTML` in `index.cjs`) was *not* extended with the run/governance UI — the built Vue SPA is the deliverable; the fallback stays a read-only degraded view that points you to build the SPA.
@@ -31,7 +31,7 @@
 
 **Post-restyle additions:** standalone HTML report export (`GET /api/project/task/report.html` + `renderReportHtml`) wired to a one-click "Open report ↗"; the `tcgflow-session-report` command for the AI-authored editorial version; a runs/transcript viewer (`GET /api/project/task/run` + `readRunTranscript` + a modal); agent-filtering the task table; per-project + Home agent cards; dark `FALLBACK_HTML`.
 
-**First real orchestrated run (2026-06-10, DEMO-1 in a throwaway workspace):** the full pipeline ran end-to-end against a live `claude` — spawn → stream-json → tokens captured (in 7.6k / out 3.7k / cache-read 318k / cache-write 26k) → `runs/` record written → **D1 Status safety-net fired** (PLANNED→IN_REVIEW) → transcript persisted → Session Report populated (23 turns, 13 tool calls, ~$3.77). **Honest gaps surfaced:** the agent *recognized* the HIGH governance rule ("I must pause for a permission request before creating HELLO.md") but the single `claude -p` turn-set **ended after setup, before the gated write** — so HELLO.md was never created and **the governance pause never fired (0 approvals)**. Finding: headless single-invocation runs may not complete multi-step tasks, and the gate only triggers if the agent reaches the gated action. A continuation (`--continue`) or interactive run would be needed to drive completion + the pause.
+**First real orchestrated run (2026-06-10, DEMO-1 in a throwaway workspace):** the full pipeline ran end-to-end against a live `claude` — spawn → stream-json → tokens captured (in 7.6k / out 3.7k / cache-read 318k / cache-write 26k) → `runs/` record written → **D1 Status safety-net fired** (PLANNED→IN_REVIEW) → transcript persisted → Session Report populated (23 turns, 13 tool calls, ~$3.77). **Honest gaps surfaced:** the agent *recognized* the HIGH governance rule ("I must pause for a permission request before creating HELLO.md") but the single `claude -p` turn-set **ended after setup, before the gated write** — so HELLO.md was never created and **the governance pause never fired (0 approvals)**. Finding: headless single-invocation runs may not complete multi-step tasks, and the gate only triggers if the agent reaches the gated action. A continuation (`--continue`) or interactive run would be needed to drive completion + the pause. **Resolved:** a continuation loop now drives completion — the executor re-invokes `claude --resume <session_id>` with a continue nudge (up to 6 iterations) until the agent self-advances to IN_REVIEW; tokens accumulate across iterations (`run.cjs`).
 
 **Phase-4 notes:** D1 honored — the agent owns `TASK {ID}.md` writes; the server writes only the `runs/` record + a Status safety-net (fires only if a clean run left Status un-advanced; verified). D2 — one launch door `POST /api/run`. API-9 — SIGINT/SIGTERM kills children + marks runs aborted. The live `POST /api/run` returns **503 until Phase 5** wires the gate; the executor mechanics are proven now via the injected fake-`claude`.
 
@@ -78,6 +78,8 @@ These were ambiguous in the raw synthesis; resolved here so the build is unblock
 | D13 | **Fresh-init `runs/` structure** | **README-only**; the executor creates `runs/{task-id}/` on demand (API-5). | No empty per-task dirs to track. |
 | D14 | **Dev Vite proxy SSE** | UI-5 verifies/configures the `/api → :4729` proxy to **not buffer SSE**; explicit proxy config added if needed. | Live stream must flush under `npm run dev`. |
 
+> **Post-build endpoint growth (D2 note):** the shipped server serves roughly double the D2 canonical set — also `GET /api/agents`, `GET /api/project/task/report[.html]` (with `&run=`), `GET /api/project/task/run` (transcript), `GET /api/project/task/run/diff`, `GET /api/runs/history`, `POST /api/project/settings`, `POST /api/run/abort`, `POST /api/run/message` (Discuss chat), and the internal `POST /api/run/approval-request`. D2's single-launch-door principle is softened by `/api/run/message`, which spawns a second (read-only, `--allowedTools Read,Grep,Glob,LS`) `claude` process outside the run door — see ADR 0032's post-build amendments.
+
 ### New subtasks added to close critic blockers
 - **TEST-0** — there is *no test runner today*; wire `node --test` so every `.test.cjs` AC is actually runnable. (Blocker #2)
 - **API-0** — capture & commit a *real* `claude -p … --output-format stream-json --verbose` fixture; pin `usage` + `session_id` shapes. (Blocker #5 — single highest-leverage de-risk for the token feature)
@@ -95,7 +97,7 @@ Sizes: **S** ≈ <½ day, **M** ≈ ½–1 day, **L** ≈ 1–2 days. Acceptance
 ### Phase 0 — Prerequisites (de-risk + harness)
 
 **TEST-0 · S** — Test runner. *Files:* `package.json`.
-- `"test": "node --test ui/server/**/*.test.cjs"` added (Node built-in, **zero new deps**). `npm test` runs and passes (0 tests OK initially).
+- `"test": "node --test"` added (Node built-in default discovery, **zero new deps**); `.test.cjs` files live under the top-level `test/` directory. `npm test` runs and passes (0 tests OK initially).
 - `smoke` script unchanged; CI/smoke note added to run `npm test`.
 
 **API-0 · S** (prereq for API-4) — **✅ DONE.** Captured a real `claude -p … --output-format stream-json --verbose` run from claude **2.1.169** → `ui/server/fixtures/claude-stream.ndjson` (sanitized; provenance in `ui/server/fixtures/README.md`).
@@ -215,13 +217,13 @@ Sizes: **S** ≈ <½ day, **M** ≈ ½–1 day, **L** ≈ 1–2 days. Acceptance
 
 **UI-5 · L** (dep UI-1, UI-3, UI-0, API-6) — Run button → `POST /api/run` `{path,id,role}` (D12 default next_agent + override) → open `EventSource` on `/api/run/stream`. Run state machine (idle/running/paused/done/error); `delta` → scrollable monospace pane; `tokens` → live counter; `done` → record session_id+usage, close stream, re-fetch detail (durable breakdown refreshes). EventSource torn down on close/nav/error. **D14:** note dev proxy must not buffer SSE.
 
-**UI-6 · M** (dep UI-5, GOV-2) — Governance modal on `approval_request`: shows ADR-0027 recipe (Action/Risk/Why/Files/Rollback/Approve·Deny) → `POST /api/run/approval`; pending until `approval_resolved`. Deny = non-fatal (run continues, "deferred to human"). **CRITICAL** requires acknowledging the rollback line before Approve enables (ADR 0008). The zero-dep `FALLBACK_HTML` in `index.cjs` gains a minimal approve/deny affordance. On SSE reconnect mid-pause, re-fetch outstanding approvals.
+**UI-6 · M** (dep UI-5, GOV-2) — Governance modal on `approval_request`: shows ADR-0027 recipe (Action/Risk/Why/Files/Rollback/Approve·Deny) → `POST /api/run/approval`; pending until `approval_resolved`. Deny = non-fatal (run continues, "deferred to human"). **CRITICAL** requires acknowledging the rollback line before Approve enables (ADR 0008). ~~The zero-dep `FALLBACK_HTML` in `index.cjs` gains a minimal approve/deny affordance.~~ *(dropped — see Deferred: the fallback stays read-only; the Vue SPA is the deliverable)* On SSE reconnect mid-pause, re-fetch outstanding approvals.
 
 ---
 
 ## 4. Verification strategy
 
-- **Unit (`npm test`, Node `node --test`, zero-dep):** RUN-1/2/3/4/6/7, SRV-2/3/4/7, API-2/4, GOV-1/2/3, SCHEMA-3/5 migrations. All `.test.cjs` co-located under `ui/server/`.
+- **Unit (`npm test`, Node `node --test`, zero-dep):** RUN-1/2/3/4/6/7, SRV-2/3/4/7, API-2/4, GOV-1/2/3, SCHEMA-3/5 migrations. All `.test.cjs` live under the top-level `test/` directory (Node's default discovery).
 - **Fixture-pinned:** the token parser (API-4) against the **real captured** stream-json (API-0); the task-log parser/writer (SRV-3/7) against TASK-file fixtures incl. placeholder-only and cockpit-override.
 - **Regression guards:** `buildProjectDetail` with empty overlay is byte-identical to today (RUN-4); SRV-7 changes only the Status line + appended entry.
 - **Integration smoke (slow/optional if `claude` absent):** GOV-4 gated run proceeds for LOW, token capture unbroken; API-9 abort on signal; missing-CLI ENOENT path (API-3).
@@ -234,10 +236,10 @@ Sizes: **S** ≈ <½ day, **M** ≈ ½–1 day, **L** ≈ 1–2 days. Acceptance
 - **Long-poll idle timeouts** (GOV-2/3) — MCP child must disable its socket timeout; UDS is the fallback.
 - **Distillation heuristics** — avoided: the agent self-logs (D1); the server doesn't summarize a free-form transcript.
 
-## 6. Recommended ADR follow-ups (small, post-build or alongside)
-- **Amend ADR 0033** with D3 (`run_id` names the file; `session_id` in frontmatter) + D4 (Orchestrator-written `state`/`ended_at` beyond the human keys).
-- **Note on ADR 0027** recording the D9 Codex deviation (sandbox-only until a Codex approval bridge).
-- These are one-line refinements, not new decisions — capture them when the build confirms the shapes.
+## 6. Recommended ADR follow-ups (small, post-build or alongside) — ✅ done
+- **Amend ADR 0033** with D3 (`run_id` names the file; `session_id` in frontmatter) + D4 (Orchestrator-written `state`/`ended_at` beyond the human keys, plus the later `git_base`). ✅ done — see ADR 0033's amended Identity bullet + Amendments section.
+- **Note on ADR 0027** recording the D9 Codex deviation (sandbox-only until a Codex approval bridge). ✅ done — see ADR 0027's Amendment section.
+- These were one-line refinements, not new decisions — captured once the build confirmed the shapes.
 
 ## 7. Defaults chosen without asking (all reversible)
 D7 always-queue + UI-disables-duplicate · D8 no cross-project cap · D10 HTTP long-poll loopback · D11 local date for `Last updated:` · D12 Claude-only this slice. Flag any you'd change before Phase 3/4/6 respectively.

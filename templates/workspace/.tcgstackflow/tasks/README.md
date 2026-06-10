@@ -55,12 +55,16 @@ Older completed and abandoned tasks, grouped by category for findability. Catego
 | `PLANNED` | All subtasks have acceptance criteria; ready for Coder | Planner |
 | `IN_PROGRESS` | Coder is actively working | Coder |
 | `BLOCKED` | Blocked on an external dependency or user input | Coder |
-| `IN_REVIEW` | All subtasks Done; awaiting Reviewer (static: code is *right*) | Coder |
+| `IN_REVIEW` | All subtasks Done; awaiting Reviewer (static: code is *right*) | Coder (or the Orchestrator safety-net, `author: orchestrator`, when a clean orchestrated run left Status un-advanced) |
 | `IN_TEST` | Reviewer approved; awaiting Tester (dynamic: code *works*) | Reviewer |
 | `VALIDATED` | Tester verified behavior; awaiting Ingester | Tester |
 | `INGESTED` | Ingester folded into wiki; task complete | Ingester |
 
 Lifecycle: `DRAFT → PLANNED → IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED` (with `BLOCKED` as a side state). Reviewer checks the code is right; Tester checks it works.
+
+## Orchestrated runs
+
+When a task is run from the Cockpit Orchestrator, each run writes an immutable sibling record under `../runs/{ID}/{run-id}.md` (tokens, `session_id`, state — see `../runs/README.md`), and the Cockpit overlays live run state onto the task list alongside the durable Status here. The task's two files stay the canonical record; `runs/` holds the per-run telemetry.
 
 ## Folder structure
 
@@ -76,4 +80,4 @@ tasks/
 
 ## Cross-tool handoff prompts
 
-If a task is being executed in another AI tool (e.g. Codex), the Planner writes the prompt to `../prompts/{ID}/`. See [ADR 0002](../../docs/adr/0002-manual-handoff-only-in-v1.md) in the geekstack-flow repo for the rationale.
+If a task is being executed in another AI tool (e.g. Codex), the Planner writes the prompt to `../prompts/{ID}/`. See ADR 0002 (`docs/adr/0002-manual-handoff-only-in-v1.md` in the geekstack-flow tool repo) for the rationale.

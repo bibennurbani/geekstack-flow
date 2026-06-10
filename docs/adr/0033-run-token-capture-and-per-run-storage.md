@@ -12,7 +12,7 @@ claude -p "<prompt>" --output-format stream-json --verbose [--include-partial-me
 
 - **Progress** — the server forwards `content_block_delta` / `text_delta` events to the browser (SSE) for live output.
 - **Tokens** — the final `result` event carries `usage`: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`. These are the authoritative counts. (`--output-format json` additionally yields `total_cost_usd`, which we do **not** consume — see below.)
-- **Identity** — every event carries `session_id`; it names the Run's transcript and is recorded with the tokens.
+- **Identity** — every event carries `session_id`; it is recorded in the run-record frontmatter. *(Amended per build decision D3: the server-generated `run_id` names the transcript file — it must exist before any stream event arrives; `session_id` is frontmatter-only.)*
 
 Codex (`codex exec`) emits usage in its own shape; parsing it is deferred behind Claude (ADR 0025's tool map default is Claude).
 
@@ -30,6 +30,9 @@ tokens:
   output: 567
   cache_read: 8901
   cache_creation: 100
+state: done            # Orchestrator-written — see amendment below
+ended_at: 2026-06-09T14:32:00Z
+git_base: 3f2a1bc94…   # optional — HEAD sha at run start
 ---
 ```
 
@@ -47,3 +50,7 @@ The Cockpit reads `runs/` to derive the two views: **per-role breakdown** (group
 - Per-role attribution requires the Run to know its `role` — it does, because the Orchestrator launches a specific role (ADR 0025). The role is not derivable from the existing `author` field (which is the *tool*: claude/codex/human), which is why it is recorded explicitly on the Run.
 - The transcript at `runs/{task-id}/{run-id}.md` is a **Raw source** (ADR 0024) the Ingester may later fold into the wiki; the token frontmatter rides along with it and is git-diffable (or git-ignored per project if transcripts are large).
 - Manual (Copy-prompt) runs and hand-coding produce **no** Run record, so they contribute no tokens — the breakdown reflects orchestrated Runs only. This is acceptable: tokens are a property of Runs the Cockpit owns.
+
+## Amendments (D4 + post-build)
+
+Beyond the human-visible keys above, the Orchestrator writes `state: running|done|failed|aborted` + `ended_at` (the crash-reconcile terminal marker, build decision D4) and optionally `git_base` (project-repo HEAD at run start, enabling the per-run diff view). Token totals are also **summed across the run's continuation iterations** (up to 6 `claude --resume` invocations — see ADR 0032's continuation-loop amendment), not taken from a single `result` event. See the workspace `runs/README.md` for the full frontmatter contract.

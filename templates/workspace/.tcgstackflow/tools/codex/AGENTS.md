@@ -61,7 +61,7 @@ Under `.tcgstackflow/skills/`. Same seventeen starter skills as Claude — the f
 
 ## Commands (invocation in this tool)
 
-The workspace ships seventeen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
+The workspace ships eighteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
 
 - *"plan ES-1234"*, *"design the new payment flow"* → invoke the `tcgflow-plan` workflow → adopt planner role + use `grill-task` and `plan-task` skills
 - *"implement ES-1234"*, *"start coding"* → `tcgflow-code` workflow → coder role + `update-task-log`
@@ -75,6 +75,7 @@ The workspace ships seventeen workflow commands at `.tcgstackflow/commands/{name
 - *"create tasks from Snyk"*, *"process the latest vulnerabilities"* → `tcgflow-task-from-snyk` workflow
 - *"create tasks from failing tests"*, *"what's flaky?"* → `tcgflow-task-from-cypress` workflow
 - *"create a task from the latest incident"* → `tcgflow-task-from-datadog` workflow
+- *"write a session report for ES-1234"*, *"where did the tokens go on X"*, *"post-mortem the run"* → `tcgflow-session-report` workflow → read `runs/{ID}/*.md` run records + their session JSONLs, emit a standalone HTML post-mortem with $-cost estimates
 - *"generate this week's timesheet"* → `tcgflow-timesheet-generate` workflow
 - *"submit the timesheet to Tempo"* → `tcgflow-timesheet-submit` workflow (HIGH risk)
 - *"upgrade this workspace"* → `tcgflow-upgrade` workflow
@@ -107,6 +108,13 @@ When invoked headlessly via `codex exec`:
 - Default to `--sandbox workspace-write` and `--ask-for-approval on-request`.
 - The agent profile's `Writes:` list is the contract — do not modify files outside it.
 - Production credentials, deploy keys, and CI/CD config are CRITICAL — never modify without a recorded approval.
+
+## Orchestrated runs (Cockpit)
+
+You may also be launched headlessly by the **Cockpit Orchestrator** (ADR 0032) rather than by a human at the terminal. Two things change:
+
+- **You own the task-file writes (D1).** Append your log entries and advance `Status:` to `IN_REVIEW` when done — that is what ends the Orchestrator's continuation loop. If you don't, the server re-nudges the same session (up to 6 iterations), then a safety-net advances Status with `author: orchestrator`.
+- **HIGH/CRITICAL approvals are machine-routed.** In orchestrated runs they surface through the `mcp__tcgflow_governance__approve` permission-prompt tool and the Cockpit's approval cards (ADR 0027) — not the inline-chat recipe used in manual sessions. The recipe content (Action / Risk / Why / Files / Rollback) is the same.
 
 ## Project-specific overrides
 

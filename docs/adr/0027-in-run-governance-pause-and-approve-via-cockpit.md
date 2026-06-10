@@ -26,3 +26,7 @@ One contract, two enforcers. No second rules file.
 - Approval decisions are recorded in the task log's YAML `governance:` block (the same field the manual flow uses, ADR 0008 / coder profile) — so an orchestrated approval is indistinguishable in the record from a manual one, and the reviewer can audit it identically.
 - A paused run is durable enough to survive "user is at lunch": pause state lives in the server's memory while running; if the server stops, the run is considered aborted and the task log records the pause point (re-runnable). Full crash-durable pause/resume is a later refinement, not required for the first Orchestrator.
 - The sandbox ceiling per tool lives behind the per-tool runner adapter (ADR 0025).
+
+## Amendment — Codex deviation (build decision D9)
+
+*Recorded post-build (orchestrator-ui plan §6).* The Codex runner is deferred: any role mapped to `codex` in `orchestrator.roles` returns **501** (`runner-not-implemented`). When it lands, Codex runs **sandbox-only** (`--sandbox workspace-write`) with **no approval bridge** — the pause-and-approve policy layer above applies to the Claude runner only until a Codex bridge exists; the sandbox backstop is Codex's sole enforcement mode.

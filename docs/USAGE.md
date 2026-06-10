@@ -7,7 +7,7 @@ How to actually work with Creative GeekStack Flow day to day. Assumes you've ins
 - [The workspace, at a glance](#the-workspace-at-a-glance)
 - [The daily workflow](#the-daily-workflow)
 - [Driving it from different AI tools](#driving-it-from-different-ai-tools)
-- [The Cockpit](#the-cockpit)
+- [The Cockpit (Orchestrator)](#the-cockpit-orchestrator)
 - [Memory: wiki, ingest, query, lint](#memory-wiki-ingest-query-lint)
 - [Timesheets (Tempo)](#timesheets-tempo)
 - [Jira status sync](#jira-status-sync)
@@ -33,15 +33,16 @@ your-project/
     ├── governance.md    # risk levels + permission recipe + your project rules
     ├── agents/          # planner, coder, reviewer, tester, ingester, refactorer (role profiles)
     ├── skills/          # 17 workflow skills (SKILL.md each)
-    ├── commands/        # 17 tcgflow-* command dispatchers
+    ├── commands/        # 18 tcgflow-* command dispatchers
     ├── wiki/            # the LLM wiki (index.md, log.md, project-overview.md, …) + adr/
     ├── tasks/           # README + active/ completed/ archive/ weekly/  (+ jira-cache.json)
+    ├── runs/            # per-task run transcripts written by the Cockpit Orchestrator ({task-id}/{run-id}.md)
     ├── raw/             # drop external docs here to ingest; archived/ after
     ├── prompts/         # cross-tool handoff prompts
     └── tools/           # the canonical adapter content (claude/ codex/ github/)
 ```
 
-**Everything is plain files. There is no database.** The Cockpit and your AI tools both read these files; the files are the single source of truth.
+**Everything is plain files. There is no database.** The Cockpit and your AI tools both read these files — and the Cockpit Orchestrator writes them (task status, run transcripts) — the files are the single source of truth; there is no second store.
 
 ---
 
@@ -129,22 +130,63 @@ The `author:` field in each task-log entry records **which** tool did the work, 
 
 ---
 
-## The Cockpit
+## The Cockpit (Orchestrator)
 
 ```bash
 geekstackflow ui [--port 4729]
 ```
 
-A local, **read-only** dashboard over every registered project. Vue 3 SPA + a zero-dependency Node server, bound to `127.0.0.1` (no network, no login, no DB). It reads `.tcgstackflow/` files live.
+A local **Orchestrator** dashboard over every registered project. Vue 3 SPA + a zero-dependency Node server, bound to `127.0.0.1` (no network exposure, no login, no DB). It reads `.tcgstackflow/` files live — and (ADR 0032) it also **launches agent runs** and writes the canonical task files: a Status override and run transcripts under `runs/`. Files stay the single source of truth; there is still no second store.
 
-- **Home** — the **action queue** aggregated across all projects: every task and which agent is ready to act on it next. Plus "update available" badges for projects behind the installed tool.
-- **Per project** — action queue, full task board (color-coded status badges), wiki recent activity, sub-projects, governance rules, timesheet status, tools & MCP.
+- **Home** — the **action queue** aggregated across all projects, grouped by next agent, with a hero showing **estimated spend** (run token totals priced at list prices) against your monthly budget. Plus "update available" badges for projects behind the installed tool.
+- **Run** — launch the next agent on any queue item; watch the live transcript, Stop it, and answer in-run permission requests in a governance modal.
+- **Runs** — a cross-project run history; each task's detail panel lists its runs with per-run report, diff, and transcript views, plus per-role token totals.
+- **Discuss** — a read-only chat resume against a finished run's session.
+- **Per project** — Overview / Tasks / Wiki / Governance / Timesheet / Tools / Settings tabs: action queue, filterable task board (color-coded status badges), wiki recent activity, sub-projects, governance rules, timesheet status, tools & MCP.
+- **Session Report** — a $-costed report per run session (export as standalone HTML).
 - **Jira** — each Jira-keyed task shows its Jira status (links to the ticket), "synced Xh ago", and a ⚠ **drift** flag when the workspace and Jira disagree on done-ness. Refresh with `/tcgflow-sync-jira`.
-- **Copy prompt** — each queue item copies a ready-to-paste prompt for the next agent; paste it into your AI tool.
+- **Copy prompt** — the fallback: each queue item copies a ready-to-paste prompt for the next agent, if you'd rather drive an open AI session by hand.
 
 Projects appear in the Cockpit because `init` (and `upgrade`, and `register`) add them to `~/.tcgstackflow/projects.yaml`. To add a clone manually: `geekstackflow register /path/to/project`.
 
-> The Cockpit is the read-only first stage of a planned **Orchestrator** that will run agents directly from the UI. The "Copy prompt" button is the seam where "Run" lands later.
+> The Cockpit **is** the Orchestrator (ADR 0032). Press **Run** on a queue item to launch the agent directly — live progress stream, Stop button, and in-run approval prompts per `governance.md`. The runner per role is set in `config.yaml` under `orchestrator.roles` (Claude is the default and currently only runner). "Copy prompt" remains as a fallback for driving an already-open AI session by hand.
+
+### Live runs
+
+Press **Run** and the Cockpit spawns your local `claude` CLI with the right role prompt for that task:
+
+- **Live stream** — the transcript streams into the task's detail panel as the agent works.
+- **Stop** — abort a running agent at any point; the transcript so far is kept.
+- **Continuation loop** — if an iteration ends without the agent advancing the task status, the Cockpit resumes the same session (`claude --resume`) until the agent sets the next status (e.g. `IN_REVIEW`) or **6 iterations** are reached. Tokens accumulate across iterations into one run total.
+- **The agent owns the files** — during a run the agent writes the task log and status itself, exactly as in a hand-driven session. The executor only applies a **safety-net status** if the run finished without the agent self-advancing.
+- **`git_base`** — the commit at run start is recorded, so each run's **diff** view shows exactly what that run changed.
+
+### In-run governance approvals
+
+Governance is enforced live during Cockpit runs: the runner delegates permission prompts to a local approve tool, a HIGH/CRITICAL request pauses the run, and you approve or deny it in the Cockpit's governance modal — the decision is recorded with the run (ADR 0027/0032).
+
+### Run records & tokens
+
+Every run is written to `runs/{task-id}/{run-id}.md` in the workspace: frontmatter (`task`, `role`, `session_id`, `tokens` with input/output/cache counts, `state`, `ended_at`, `git_base`) plus the transcript. The task detail panel shows per-role token totals and a runs list with **report**, **diff**, and **terminal transcript** actions; the sidebar **Runs** view lists run history across all projects.
+
+### Session Report
+
+`/tcgflow-session-report` (or the Session Report page on a run) turns a session's transcript into a **$-costed report** — tokens per model, priced at list prices (ADR 0034; raw tokens stay the canonical record, dollars are scoped to the report). Export it as a standalone HTML file, or use the AI-editorial copy prompt to have your AI tool polish the narrative.
+
+### Discuss
+
+Open **Discuss** on a task to chat against a finished run's session — a read-only resume: ask the agent questions about what it did, without it being able to edit anything.
+
+### Settings (roles & budget)
+
+The per-project **Settings** tab writes two things to `config.yaml`:
+
+- `orchestrator.roles` — which runner drives each of the six roles (`claude` is the default and currently the only runner).
+- `orchestrator.budget_usd` — an optional monthly budget; Home's estimated-spend hero is shown against it.
+
+### Status override
+
+Each task has a status dropdown that rewrites the canonical `Status:` line (free-form values allowed) and auto-appends an auditable YAML entry to the task log (`author: human`, `via: cockpit`) — manual overrides stay on the record.
 
 ---
 
@@ -222,6 +264,8 @@ Each dedups against existing tasks, groups at the source's natural unit, and set
 
 Agents read this on every session. The **Reviewer** is the backstop — a HIGH/CRITICAL action taken without a recorded approval is a blocking issue. Add your own constraints under the **Project-Specific Rules** section (e.g. "never touch `prisma/migrations/` without approval", "Client X data is HIPAA — no PII to external services").
 
+**During Cockpit Runs**, governance is enforced live: the runner delegates permission prompts to a local approve tool, the request pauses the run, and you approve or deny it in the Cockpit's governance modal — the decision is recorded with the run (ADR 0027/0032).
+
 ---
 
 ## Multi-project workspaces
@@ -265,7 +309,7 @@ After updating the tool, propagate changes into a project:
 geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 ```
 
-- runs **layout migrations** keyed off `workspace_schema`,
+- runs **layout migrations** keyed off `workspace_schema` (schema **4** adds the `runs/` area and the `config.yaml` `orchestrator:` block the Cockpit Orchestrator uses),
 - **refreshes tool-owned files** — `tcgflow-*` commands (workspace + `~/.claude/skills/`) and agent profiles are updated to the latest templates; any drifted file is backed up to `{name}.bak` first,
 - **additively adds new skills** (absent → added; existing → never overwritten),
 - **prints a drift report** — the existing skills + tool adapters that differ from the new templates (the files it won't auto-merge),
@@ -315,9 +359,9 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 | VALIDATED | ingester |
 | INGESTED / COMPLETED | — |
 
-### Commands (17)
+### Commands (18)
 
-`init` · `upgrade` · `migrate` · `plan` · `code` · `review` · `test` · `ingest` · `refactor` · `sync-jira` · `lint` · `audit` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `timesheet-generate` · `timesheet-submit` — all prefixed `/tcgflow-`. Full table in [../README.md](../README.md#commands-reference).
+`init` · `upgrade` · `migrate` · `plan` · `code` · `review` · `test` · `ingest` · `refactor` · `sync-jira` · `lint` · `audit` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `timesheet-generate` · `timesheet-submit` · `session-report` — all prefixed `/tcgflow-`. Full table in [../README.md](../README.md#commands-reference).
 
 ### Skills (17)
 
@@ -338,4 +382,4 @@ geekstackflow --help
 
 ### Design rationale
 
-Every decision is recorded in [adr/](adr/) (31 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).
+Every decision is recorded in [adr/](adr/) (34 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).

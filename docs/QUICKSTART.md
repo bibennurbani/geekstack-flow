@@ -77,9 +77,10 @@ Need a broad, behaviour-preserving tidy of an existing area (not tied to one fea
 geekstackflow ui          # → http://127.0.0.1:4729
 ```
 
-- **Home** — what's ready to act on across *all* your registered projects.
-- Click a project → its action queue, task board, wiki activity, governance, timesheet.
-- **Copy prompt** on any queue item → paste into your AI tool to start that agent.
+- **Home** — what's ready to act on across *all* your registered projects (plus an estimated-spend hero; **Runs** in the sidebar shows run history).
+- Click a project → its action queue, task board, wiki activity, governance, timesheet, settings.
+- **Run** on any queue item → the Cockpit launches that agent directly (live transcript, Stop button, approval prompts for HIGH/CRITICAL actions).
+- **Copy prompt** → fallback: copies a ready-to-paste prompt if you'd rather drive an open AI session by hand.
 
 ## 7. (Optional) wire up Jira & Tempo
 

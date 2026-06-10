@@ -1,12 +1,13 @@
 # Installation
 
-`geekstackflow` is a Node CLI (zero runtime dependencies) plus an optional local Cockpit UI (Vue 3, dependencies isolated under `ui/`).
+`geekstackflow` is a Node CLI (zero runtime dependencies) plus an optional local Cockpit (the Orchestrator UI — Vue 3, dependencies isolated under `ui/`).
 
 ## Prerequisites
 
 - **Node.js ≥ 22** (the baseline since the mandatory qmd wiki-search layer needs it; the CLI itself uses only built-in `fetch`, `fs`, etc. — `node --version` to check).
 - **git** (for the recommended install and for safe rollbacks during migration).
 - An AI coding tool that reads project instructions — **Claude Code**, **Codex**, and/or **GitHub Copilot**.
+- **Claude Code CLI** (`claude` on PATH) if you want the Cockpit to launch agent Runs directly (ADR 0032); without it the Cockpit still works as a dashboard with Copy-prompt.
 - **[qmd](https://github.com/tobi/qmd)** — the mandatory wiki search layer (see [Wiki search (qmd)](#wiki-search-qmd) below). Needs **Node.js ≥ 22** and **~2 GB disk** for its local models; on macOS, `brew install sqlite`.
 - *(Optional)* the **Atlassian MCP** if you want Jira/Tempo features.
 
@@ -57,7 +58,7 @@ geekstackflow ui              # starts the Cockpit at http://127.0.0.1:4729
 - **Per machine (once):** `~/.tcgstackflow/` — global cross-project memory (`memory/`), a shared tech-skill library (`skills/`), and the Cockpit's project registry (`projects.yaml`).
 - **Claude Code (opt-in):** the `/tcgflow-*` slash commands installed to `~/.claude/skills/`.
 
-Nothing is sent anywhere — it's all local files. The Cockpit binds to `127.0.0.1` only.
+The Cockpit server binds to `127.0.0.1` only and stores everything as plain local files. Note: launching a **Run** from the Cockpit spawns your local `claude` CLI, which talks to its provider the same way it does when you run it yourself — the geekstackflow server itself sends nothing anywhere.
 
 ## Wiki search (qmd)
 
