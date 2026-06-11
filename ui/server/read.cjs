@@ -377,7 +377,7 @@ function readRunsForTask(workspaceDir, id) {
     for (const k of Object.keys(total)) total[k] += tokens[k];
     if (!by_role[role]) by_role[role] = ZERO_TOKENS();
     for (const k of Object.keys(tokens)) by_role[role][k] += tokens[k];
-    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: fm.session_id || null, state: fm.state || null, tokens });
+    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: (typeof fm.session_id === 'string' && fm.session_id) ? fm.session_id : null, state: fm.state || null, tokens });
   }
   return { total, by_role, runs };
 }
@@ -389,7 +389,7 @@ function readRunTranscript(workspaceDir, taskId, runId) {
   const fm = parseFrontmatter(text);
   const m = text.match(/^---\s*\n[\s\S]*?\n---\s*\n?([\s\S]*)$/);
   return {
-    run_id: runId, role: fm.role || null, session_id: fm.session_id || null,
+    run_id: runId, role: fm.role || null, session_id: (typeof fm.session_id === 'string' && fm.session_id) ? fm.session_id : null,
     state: fm.state || null, ended_at: fm.ended_at || null, git_base: fm.git_base || null,
     tokens: (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : null,
     transcript: (m ? m[1] : text).trim(),
@@ -631,13 +631,13 @@ function buildRunsHistory(opts = {}) {
         out.push({
           project: entry.name, project_path: entry.path, task_id: td.name,
           run_id: f.name.replace(/\.md$/, ''), role: fm.role || 'unknown',
-          state: fm.state || null, session_id: fm.session_id || null, ended_at: fm.ended_at || null,
+          state: fm.state || null, session_id: (typeof fm.session_id === 'string' && fm.session_id) ? fm.session_id : null, ended_at: fm.ended_at || null, started_at: fm.started_at || null,
           tokens: (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : ZERO_TOKENS(),
         });
       }
     }
   }
-  return out.sort((a, b) => String(b.ended_at || '').localeCompare(String(a.ended_at || '')));
+  return out.sort((a, b) => String(b.ended_at || b.started_at || '').localeCompare(String(a.ended_at || a.started_at || '')));
 }
 
 module.exports = {

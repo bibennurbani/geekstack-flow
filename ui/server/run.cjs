@@ -10,6 +10,7 @@ const os = require('os');
 const crypto = require('crypto');
 const cp = require('child_process');
 const read = require('./read.cjs');
+const sessionReport = require('./session-report.cjs'); // pricing for the launch-time budget re-check
 
 const ZERO = () => ({ input: 0, output: 0, cache_read: 0, cache_creation: 0 });
 const num = (x) => (Number.isFinite(+x) ? +x : 0);
@@ -36,22 +37,31 @@ function readRoleTool(workspaceDir, role) {
   return rm ? rm[1].trim() : 'claude';
 }
 
-// API-5 — flush the immutable runs/ record (ADR 0033 frontmatter + D4 state/ended_at).
+// API-5 — flush the runs/ record (ADR 0033 frontmatter + D4 state/ended_at). Written TWICE per
+// run: a `state: running` placeholder at launch (no ended_at — this is what makes the crash
+// orphan-scan able to detect a server death mid-run), then overwritten once with the terminal
+// state + full transcript. The terminal record is immutable thereafter (ADR 0024).
 function writeRunRecord(workspaceDir, run, live, state) {
   try {
     const dir = path.join(workspaceDir, 'runs', run.task_id);
     fs.mkdirSync(dir, { recursive: true });
     const t = live.tokens || ZERO();
+    const terminal = state !== 'running';
+    // Record the LATEST session id (print-mode resumes can fork a new id per iteration) — it's what
+    // Discuss/⌥-terminal must resume and where the newest session JSONL lives. Omit the line
+    // entirely when unknown: an empty `session_id:` parses as a truthy {} and poisons consumers.
+    const sid = live.latest_session_id || live.session_id;
     const body = [
       '---',
       `task: ${run.task_id}`,
       `role: ${run.role}`,
-      `session_id: ${live.session_id || ''}`,
+      ...(sid ? [`session_id: ${sid}`] : []),
       'tokens:',
       `  input: ${t.input}`, `  output: ${t.output}`,
       `  cache_read: ${t.cache_read}`, `  cache_creation: ${t.cache_creation}`,
       `state: ${state}`,
-      `ended_at: ${new Date().toISOString()}`,
+      ...(live.started_at ? [`started_at: ${live.started_at}`] : []),
+      ...(terminal ? [`ended_at: ${new Date().toISOString()}`] : []),
       ...(live.git_base ? [`git_base: ${live.git_base}`] : []),
       '---',
       live.transcript || '',
@@ -66,7 +76,9 @@ function writeRunRecord(workspaceDir, run, live, state) {
 function statusSafetyNet(projectPath, id) {
   try {
     const d = read.buildTaskDetail(projectPath, id);
-    if (d.error || ADVANCED.has(d.status)) return; // agent advanced it (or task gone) → do nothing
+    // No-op when the agent advanced it, the task is gone — or the agent deliberately BLOCKED it
+    // (a blocked task is a hand-off to a HUMAN; force-advancing to IN_REVIEW would silently un-block).
+    if (d.error || ADVANCED.has(d.status) || d.status === 'BLOCKED') return;
     read.writeTaskStatus(projectPath, id, 'IN_REVIEW', {
       author: 'orchestrator', via: null,
       summary: 'Orchestrated run completed; Status advanced by server safety-net',
@@ -82,6 +94,15 @@ function reconcileOrphanedRuns(workspaceDir, scanOrphanedRuns) {
   let n = 0;
   for (const o of scanOrphanedRuns(workspaceDir)) {
     if (!o.orphaned) continue;
+    // Finalize the orphaned record itself: state → aborted + ended_at (keep the partial
+    // transcript). Without this it stays a phantom 'running' badge forever and re-flags every boot.
+    const recPath = path.join(workspaceDir, 'runs', o.task_id, o.run_id + '.md');
+    try {
+      let rec = fs.readFileSync(recPath, 'utf8');
+      rec = rec.replace(/^state: running$/m, `state: aborted\nended_at: ${new Date().toISOString()}`);
+      if (!/^state:/m.test(rec)) rec = rec.replace(/^---\s*$/m, `---\nstate: aborted\nended_at: ${new Date().toISOString()}`); // legacy record with no state line
+      fs.writeFileSync(recPath, rec);
+    } catch { /* best-effort */ }
     const found = read.findTaskFolder(workspaceDir, o.task_id);
     if (!found) continue;
     let log = ''; try { log = fs.readFileSync(path.join(found.folder, `TASK ${o.task_id}.md`), 'utf8'); } catch { continue; }
@@ -103,8 +124,11 @@ function reconcileOrphanedRuns(workspaceDir, scanOrphanedRuns) {
 // `spawn` and `claudeBin` are injectable so the spawn→parse→flush path is testable with a fake CLI.
 // `governance` (GOV-4), when provided, wires the in-run permission gate into every spawn:
 //   { mcpServerPath, controlUrl (mutable — set once the server binds a port), allowedTools }.
-function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6 } = {}) {
-  const live = new Map(); // run_id -> { events:[], subs:Set<res>, transcript, tokens, session_id, token }
+// `onRunTerminal(run_id)` fires on every terminal path (done/failed/aborted) — index.cjs uses it to
+// cancel any approvals still pending for the run. `iterationTimeoutMs` is an INACTIVITY timeout per
+// iteration (no stdout for that long → kill), suspended while a governance approval is pending.
+function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6, onRunTerminal = () => {}, iterationTimeoutMs = 15 * 60 * 1000 } = {}) {
+  const live = new Map(); // run_id -> { events:[], subs:Set<res>, transcript, tokens, session_id, token, paused, aborted }
 
   function ensure(run) {
     if (!live.has(run.run_id)) live.set(run.run_id, { events: [], subs: new Set(), transcript: '', tokens: ZERO(), session_id: null });
@@ -113,6 +137,13 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   function writeSse(res, ev) { try { res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev.data)}\n\n`); } catch { /* client gone */ } }
   function emit(run_id, type, data) {
     const L = live.get(run_id); if (!L) return;
+    // Track the governance-pause window so the inactivity timeout doesn't fire while the run is
+    // legitimately silent waiting for a human decision ("user at lunch", ADR 0027).
+    if (type === 'approval_request') L.paused = (L.paused || 0) + 1;
+    if (type === 'approval_resolved') {
+      L.paused = Math.max(0, (L.paused || 0) - 1);
+      L.rearm && L.rearm(); // fresh full window after a decision — never a residual sliver
+    }
     const ev = { type, data }; L.events.push(ev);
     for (const res of L.subs) writeSse(res, ev);
   }
@@ -129,7 +160,10 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   function handleLine(L, run, line) {
     if (!line) return;
     let o; try { o = JSON.parse(line); } catch { return; } // ignore non-JSON lines
-    if (!L.session_id && o.session_id) { L.session_id = o.session_id; run.session_id = o.session_id; }
+    if (o.session_id) {
+      if (!L.session_id) { L.session_id = o.session_id; run.session_id = o.session_id; }
+      L.latest_session_id = o.session_id; // resumes can fork — always resume the newest
+    }
     const ev = o.event || o; // stream_event wraps the inner event in .event
     if (ev && ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
       const txt = ev.delta.text || ''; L._sawDelta = true; L.transcript += txt; emit(run.run_id, 'delta', { text: txt });
@@ -158,7 +192,10 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     return new Promise((resolve) => {
       const prompt = iter === 0 ? buildRunPrompt(run.task_id, run.role) : CONTINUE_PROMPT;
       const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
-      if (iter > 0 && L.session_id) args.push('--resume', L.session_id);
+      // Resume the LATEST session id — a resumed print-mode session can fork a new id, and resuming
+      // the original would silently drop the intermediate iterations' context.
+      const resumeId = L.latest_session_id || L.session_id;
+      if (iter > 0 && resumeId) args.push('--resume', resumeId);
       const env = { ...process.env };
       // GOV-4 gate (re-applied each iteration; per-run token generated once and reused).
       let govCfgPath = null;
@@ -176,9 +213,28 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       catch (e) { if (govCfgPath) { try { fs.unlinkSync(govCfgPath); } catch { /* ignore */ } } return resolve(-1); }
       run._child = child;
       child.on('error', () => resolve(-1)); // ENOENT etc.
+
+      // Inactivity timeout: a wedged CLI (network hang, stuck handshake) would otherwise hold the
+      // project slot forever. Re-armed on every stdout chunk; while a governance approval is
+      // pending (L.paused) the run is legitimately silent, so the timer just re-arms.
+      let timer = null; let timedOut = false;
+      const arm = () => {
+        if (timer) clearTimeout(timer);
+        if (!iterationTimeoutMs) return;
+        timer = setTimeout(() => {
+          if (L.paused > 0) return arm(); // waiting on a human — not a hang
+          timedOut = true;
+          emit(run.run_id, 'status', { state: 'error', error: 'iteration-timeout' });
+          try { child.kill('SIGTERM'); } catch { /* gone */ }
+          setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, 10_000).unref?.();
+        }, iterationTimeoutMs);
+      };
+      L.rearm = arm; // emit() re-arms on approval_resolved — a decision restarts the full window
+      arm();
+
       let buf = '';
-      child.stdout.on('data', (chunk) => { buf += chunk.toString('utf8'); let nl; while ((nl = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); handleLine(L, run, line.trim()); } });
-      child.on('close', (code) => { if (buf.trim()) handleLine(L, run, buf.trim()); run._child = null; if (govCfgPath) { try { fs.unlinkSync(govCfgPath); } catch { /* ignore */ } } resolve(code); });
+      child.stdout.on('data', (chunk) => { arm(); buf += chunk.toString('utf8'); let nl; while ((nl = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); handleLine(L, run, line.trim()); } });
+      child.on('close', (code) => { if (timer) clearTimeout(timer); L.rearm = null; if (buf.trim()) handleLine(L, run, buf.trim()); run._child = null; if (govCfgPath) { try { fs.unlinkSync(govCfgPath); } catch { /* ignore */ } } resolve(timedOut ? -2 : code); });
     });
   }
 
@@ -196,20 +252,34 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   async function runLoop(run, L) {
     const workspaceDir = path.join(run.project_path, '.tcgstackflow');
     if (!L.git_base) L.git_base = gitHead(run.project_path); // for the per-run diff viewer
+    L.started_at = new Date().toISOString();
+    // Budget re-check at LAUNCH time (not just enqueue) — a run queued behind an active one would
+    // otherwise launch unchecked after the earlier run spent the remaining budget (TOCTOU).
+    // In-flight (unflushed) tokens of concurrent projects are still invisible — durable-only check.
+    if (!run.force && overBudget(run.project_path)) {
+      emit(run.run_id, 'status', { state: 'error', error: 'over-budget' });
+      runManager.fail(run.run_id, 'over-budget');
+      onRunTerminal(run.run_id);
+      return;
+    }
+    // Launch placeholder record (state: running, no ended_at) — THIS is what lets the boot-time
+    // orphan scan detect a server death mid-run; the terminal write below overwrites it.
+    writeRunRecord(workspaceDir, run, L, 'running');
     let code = 0, iters = 0;
     for (let iter = 0; iter < maxIters; iter++) {
       if (L.aborted) break;                                    // stopped by the user between iterations
       iters = iter + 1;
       const before = L.transcript.length;
       code = await spawnOnce(run, L, workspaceDir, iter);
-      if (L.aborted || code !== 0) break;                      // aborted, or spawn/exit failure
-      let advanced = false;                                    // self-handoff: agent set Status to IN_REVIEW+?
-      try { const d = read.buildTaskDetail(run.project_path, run.task_id); advanced = !d.error && ADVANCED.has(d.status); } catch { /* ignore */ }
-      if (advanced) break;
+      if (L.aborted || code !== 0) break;                      // aborted, timeout (-2), or spawn/exit failure
+      let settled = false;                                     // agent handed off (IN_REVIEW+) — or BLOCKED it for a human
+      try { const d = read.buildTaskDetail(run.project_path, run.task_id); settled = !d.error && (ADVANCED.has(d.status) || d.status === 'BLOCKED'); } catch { /* ignore */ }
+      if (settled) break;
       if (L.transcript.length === before) break;               // produced nothing new → stop spinning
       if (iter + 1 < maxIters) emit(run.run_id, 'status', { state: 'continuing', iter: iter + 1 });
     }
     L.iterations = iters;
+    onRunTerminal(run.run_id); // cancel pending approvals FIRST — their resolved events must precede the terminal event on the stream
     if (L.aborted) { // user stop — not a failure; does NOT advance the task
       writeRunRecord(workspaceDir, run, L, 'aborted');
       emit(run.run_id, 'status', { state: 'aborted' });
@@ -217,13 +287,34 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     } else if (code === 0) {
       writeRunRecord(workspaceDir, run, L, 'done');
       statusSafetyNet(run.project_path, run.task_id);
-      emit(run.run_id, 'done', { session_id: L.session_id, tokens: L.tokens, iterations: iters });
+      emit(run.run_id, 'done', { session_id: L.latest_session_id || L.session_id, tokens: L.tokens, iterations: iters });
       runManager.complete(run.run_id);
     } else {
       writeRunRecord(workspaceDir, run, L, 'failed'); // partial transcript for forensics
-      emit(run.run_id, 'status', { state: 'error', code });
-      runManager.fail(run.run_id, 'exit-' + code);
+      emit(run.run_id, 'status', { state: 'error', code, reason: code === -2 ? 'iteration-timeout' : undefined });
+      runManager.fail(run.run_id, code === -2 ? 'timeout' : 'exit-' + code);
     }
+    compact(run.run_id);        // drop the delta replay buffer — the durable record now holds the transcript
+  }
+
+  // Durable-spend vs configured budget for the launch-time re-check (same opus list pricing as the
+  // enqueue guard in index.cjs and the UI badge). Best-effort: unreadable config → not over budget.
+  function overBudget(projectPath) {
+    try {
+      const detail = read.buildProjectDetail(projectPath);
+      const budget = detail.config && detail.config.orchestrator ? detail.config.orchestrator.budget_usd : null;
+      if (budget == null) return false;
+      const tk = { input: 0, output: 0, cache_read: 0, cache_creation: 0 };
+      for (const t of detail.tasks || []) for (const k in tk) tk[k] += (t.tokens_total && t.tokens_total[k]) || 0;
+      return sessionReport.costOf(tk, 'claude-opus').total >= budget;
+    } catch { return false; }
+  }
+
+  // After a run is terminal, late SSE subscribers only need the final state — the transcript lives
+  // in the durable runs/ record. Keep non-delta events (status/tokens/approvals/done), drop deltas.
+  function compact(run_id) {
+    const L = live.get(run_id); if (!L) return;
+    L.events = L.events.filter((ev) => ev.type !== 'delta');
   }
 
   // Turn-based discussion: resume an existing session with a user message and stream the reply.
@@ -243,7 +334,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     child.on('error', () => emit(chat_id, 'status', { state: 'error', error: 'spawn-failed' }));
     let buf = '';
     child.stdout.on('data', (chunk) => { buf += chunk.toString('utf8'); let nl; while ((nl = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); handleLine(L, run, line.trim()); } });
-    child.on('close', (code) => { if (buf.trim()) handleLine(L, run, buf.trim()); emit(chat_id, code === 0 ? 'done' : 'status', code === 0 ? { session_id: L.session_id, tokens: L.tokens } : { state: 'error', code }); });
+    child.on('close', (code) => { if (buf.trim()) handleLine(L, run, buf.trim()); emit(chat_id, code === 0 ? 'done' : 'status', code === 0 ? { session_id: L.latest_session_id || L.session_id, tokens: L.tokens } : { state: 'error', code }); });
     return chat_id;
   }
 

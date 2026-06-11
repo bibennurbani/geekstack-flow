@@ -104,14 +104,22 @@ async function changeStatus(e) {
 // --- live run ---
 function resetRun() { runState.value = 'idle'; runId.value = ''; streamText.value = ''; liveTokens.value = null; runError.value = ''; pendingApproval.value = null; criticalAck.value = false; }
 function closeStream() { if (es) { es.close(); es = null; } }
-async function startRun() {
+async function startRun(force = false) {
   const role = (taskDetail.value && taskDetail.value.next_agent) || 'coder';
+  if (role === 'human') return; // BLOCKED — nothing runnable
   resetRun(); runState.value = 'running';
-  const res = await postJSON('/api/run', { project_path: selected.value, task_id: selectedTask.value, role });
+  const res = await postJSON('/api/run', { project_path: selected.value, task_id: selectedTask.value, role, force });
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
+    if (j.error === 'over-budget' && !force && window.confirm(`Est. spend $${j.spend} exceeds the $${j.budget} budget. Run anyway?`)) {
+      return startRun(true); // explicit user override → force
+    }
     runState.value = 'error';
-    runError.value = j.error === 'governance-gate-not-ready' ? 'Governance gate not ready' : (j.error || `start failed (${res.status})`);
+    runError.value = j.error === 'governance-gate-not-ready' ? 'Governance gate not ready'
+      : j.error === 'over-budget' ? `Over budget ($${j.spend} ≥ $${j.budget}) — raise it in Settings`
+      : j.error === 'task-already-running' ? 'This task already has an active run'
+      : (j.error || `start failed (${res.status})`);
+    toast(runError.value, 'err');
     return;
   }
   runId.value = (await res.json()).run_id;
@@ -119,14 +127,18 @@ async function startRun() {
   es.addEventListener('delta', (ev) => { streamText.value += (JSON.parse(ev.data).text || ''); });
   es.addEventListener('tokens', (ev) => { liveTokens.value = JSON.parse(ev.data); });
   es.addEventListener('approval_request', (ev) => { pendingApproval.value = JSON.parse(ev.data); criticalAck.value = false; runState.value = 'paused'; });
-  es.addEventListener('approval_resolved', () => { pendingApproval.value = null; runState.value = 'running'; });
+  es.addEventListener('approval_resolved', (ev) => {
+    const d = JSON.parse(ev.data);
+    pendingApproval.value = null;
+    if (d.reason !== 'run-ended') runState.value = 'running'; // cancellations on a dead run must not revive the badge
+  });
   es.addEventListener('status', (ev) => {
     const d = JSON.parse(ev.data);
-    if (d.state === 'error') { runState.value = 'error'; runError.value = d.error || ('exit ' + (d.code ?? '?')); toast('Run failed: ' + runError.value, 'err'); }
+    if (d.state === 'error') { runState.value = 'error'; pendingApproval.value = null; runError.value = d.reason || d.error || ('exit ' + (d.code ?? '?')); toast('Run failed: ' + runError.value, 'err'); }
     else if (d.state === 'aborting') { runError.value = 'stopping…'; }
-    else if (d.state === 'aborted') { runState.value = 'error'; runError.value = 'stopped by you'; closeStream(); refreshTask(); toast('Run stopped'); }
+    else if (d.state === 'aborted') { runState.value = 'error'; pendingApproval.value = null; runError.value = 'stopped by you'; closeStream(); refreshTask(); toast('Run stopped'); }
   });
-  es.addEventListener('done', async () => { runState.value = 'done'; closeStream(); await refreshTask(); toast('Run finished', 'ok'); });
+  es.addEventListener('done', async () => { runState.value = 'done'; pendingApproval.value = null; closeStream(); await refreshTask(); toast('Run finished', 'ok'); });
   es.onerror = () => { if (runState.value === 'running') { runState.value = 'error'; runError.value = 'stream lost'; } closeStream(); };
 }
 async function stopRun() {
@@ -174,14 +186,16 @@ function copyResume(projectPath, sessionId, key) {
 const chatMessages = ref([]); // { role: 'you' | 'agent', text }
 const chatInput = ref('');
 const chatBusy = ref(false);
+const chatSessionLive = ref(null); // each chat reply forks a new session id — chain onto the newest
 let chatEs = null;
 const chatSession = computed(() => {
+  if (chatSessionLive.value) return chatSessionLive.value;
   const runs = (taskDetail.value && taskDetail.value.tokens && taskDetail.value.tokens.runs) || [];
   const r = runs.find((x) => x.session_id);
   return r ? r.session_id : null;
 });
 function closeChat() { if (chatEs) { chatEs.close(); chatEs = null; } }
-function resetChat() { closeChat(); chatMessages.value = []; chatInput.value = ''; chatBusy.value = false; }
+function resetChat() { closeChat(); chatMessages.value = []; chatInput.value = ''; chatBusy.value = false; chatSessionLive.value = null; }
 async function sendChat() {
   const msg = chatInput.value.trim();
   if (!msg || !chatSession.value || chatBusy.value) return;
@@ -189,12 +203,20 @@ async function sendChat() {
   chatMessages.value.push({ role: 'you', text: msg });
   const idx = chatMessages.value.push({ role: 'agent', text: '' }) - 1;
   const res = await postJSON('/api/run/message', { project_path: selected.value, session_id: chatSession.value, message: msg });
-  if (!res.ok) { chatMessages.value[idx].text = '[failed to start — ' + res.status + ']'; chatBusy.value = false; return; }
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    chatMessages.value[idx].text = j.error === 'project-busy' ? '[project busy — wait for the active run to finish]' : '[failed to start — ' + (j.error || res.status) + ']';
+    chatBusy.value = false; return;
+  }
   const { chat_id } = await res.json();
   closeChat();
   chatEs = new EventSource('/api/run/stream?run_id=' + encodeURIComponent(chat_id));
   chatEs.addEventListener('delta', (ev) => { chatMessages.value[idx].text += (JSON.parse(ev.data).text || ''); });
-  chatEs.addEventListener('done', () => { chatBusy.value = false; closeChat(); refreshTask(); });
+  chatEs.addEventListener('done', (ev) => {
+    const d = JSON.parse(ev.data || '{}');
+    if (d.session_id) chatSessionLive.value = d.session_id; // next turn resumes THIS exchange
+    chatBusy.value = false; closeChat(); refreshTask();
+  });
   chatEs.addEventListener('status', (ev) => { const d = JSON.parse(ev.data); if (d.state === 'error') { chatMessages.value[idx].text += (chatMessages.value[idx].text ? '\n' : '') + '[error: ' + (d.error || d.code || '?') + ']'; chatBusy.value = false; closeChat(); } });
 }
 // Jump straight from a task card into its report (loads the task first so "Back to task" works).
@@ -624,7 +646,8 @@ onUnmounted(() => { closeStream(); closeChat(); });
                 <span v-if="statusError" class="badge st-BLOCKED">{{ statusError }}</span>
                 <span class="grow"></span>
                 <span v-if="taskDetail.next_agent" class="muted" style="font-size:12px">next: <span class="agent" :class="'agent-' + taskDetail.next_agent">{{ taskDetail.next_agent }}</span></span>
-                <button class="btn btn-primary" :disabled="runState === 'running' || runState === 'paused'" @click="startRun">
+                <button v-if="taskDetail.next_agent === 'human'" class="btn" disabled title="The task is BLOCKED — it needs a human decision, not an agent">Blocked — needs a human</button>
+                <button v-else class="btn btn-primary" :disabled="runState === 'running' || runState === 'paused'" @click="startRun()">
                   {{ runState === 'running' ? 'Running…' : runState === 'paused' ? 'Paused' : 'Run ' + (taskDetail.next_agent || 'coder') }}
                 </button>
               </div>

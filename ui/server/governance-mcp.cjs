@@ -29,7 +29,7 @@ async function decide(params, ctx) {
   const toolName = args.tool_name || args.tool || 'unknown';
   const input = args.input || {};
   let level;
-  try { level = ctx.classify(toolName, input, ctx.rules || []); } catch { level = 'HIGH'; }
+  try { level = ctx.classify(toolName, input, ctx.rules || [], ctx.trusted || []); } catch { level = 'HIGH'; }
   if (level === 'LOW' || level === 'MEDIUM') return allow(input);
   const action = describeAction(toolName, input);
   try {
@@ -83,10 +83,10 @@ function postIntake(payload) {
 }
 
 function runStdio() {
-  const { classify, parseProjectRules } = require('./governance-classify.cjs');
-  let rules = [];
-  try { rules = parseProjectRules(fs.readFileSync(path.join(process.env.GSF_WORKSPACE_DIR || '.', 'governance.md'), 'utf8')); } catch { rules = []; }
-  const ctx = { classify, rules, postIntake };
+  const { classify, parseProjectRules, parseTrustedCommands } = require('./governance-classify.cjs');
+  let rules = [], trusted = [];
+  try { const gtext = fs.readFileSync(path.join(process.env.GSF_WORKSPACE_DIR || '.', 'governance.md'), 'utf8'); rules = parseProjectRules(gtext); trusted = parseTrustedCommands(gtext); } catch { rules = []; trusted = []; }
+  const ctx = { classify, rules, trusted, postIntake };
   let buf = '';
   process.stdin.on('data', async (chunk) => {
     buf += chunk.toString('utf8');

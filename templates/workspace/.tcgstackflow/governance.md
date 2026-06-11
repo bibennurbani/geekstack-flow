@@ -32,6 +32,22 @@ When proposing a HIGH or CRITICAL action, the agent says — inline in chat, not
 
 The user replies with "approved" / "no" / a counter-proposal. The agent does not proceed until an explicit approval has been recorded in the relevant `TASK {ID}.md`.
 
+## Trusted Commands
+
+_(Optional — read by the Orchestrator's in-run governance gate.)_ Script/interpreter execution
+(`npx …`, `node script.js`, `./gradlew …`) classifies **HIGH** by default and pauses an orchestrated
+run for your approval. List exact command prefixes here to cap them at **MEDIUM** (auto-proceed).
+This is the one sanctioned *lowering* mechanism: it never lowers CRITICAL, and a compound
+`trusted && something-risky` still classifies at the riskier part.
+
+<!--
+Examples — uncomment and adapt:
+
+- `npx vitest`
+- `npx tsc --noEmit`
+- `./gradlew test`
+-->
+
 ## Project-Specific Rules
 
 _(Edited per project. Empty by default — add rules as constraints emerge.)_

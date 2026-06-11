@@ -62,8 +62,11 @@ function createRunManager({ launch } = {}) {
   }
 
   // RUN-2 — enqueue; promote immediately if the project slot is free, else FIFO-queue.
-  function enqueue(projectPath, task_id, role) {
+  // `extra` is spread onto the run BEFORE promote (which may launch synchronously) — used for
+  // launch flags the executor must see, e.g. `force` (budget override).
+  function enqueue(projectPath, task_id, role, extra = {}) {
     const run = {
+      ...extra,
       run_id: crypto.randomUUID(),
       project_path: path.resolve(projectPath),
       task_id, role,

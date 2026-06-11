@@ -36,7 +36,15 @@ const governance = {
 
 let executor;
 const runManager = createRunManager({ launch: (run) => executor.launch(run) });
-executor = runMod.createExecutor({ runManager, governance });
+// onRunTerminal cancels approvals still pending when a run ends (abort/fail/done) — otherwise the
+// held long-poll + registry entry would leak (`approvals` is defined below; fires only at runtime).
+executor = runMod.createExecutor({
+  runManager, governance,
+  onRunTerminal: (id) => approvals.cancelForRun(id),
+  // Per-iteration INACTIVITY timeout (ms). 0 disables. Long silent tool calls (a big test suite)
+  // emit no stdout — raise this if your agents legitimately go quiet for longer. Default 30 min.
+  iterationTimeoutMs: process.env.GSF_ITERATION_TIMEOUT_MS !== undefined ? parseInt(process.env.GSF_ITERATION_TIMEOUT_MS, 10) || 0 : 30 * 60 * 1000,
+});
 
 // GOV-6 — record an in-run approval decision in the task log via the canonical writer (no 2nd writer).
 function gov6Record(rec, decision) {
@@ -236,14 +244,27 @@ const server = http.createServer((req, res) => {
       }
       if (req.method === 'POST') { // start a run = enqueue + promote (D2: one launch door)
         return readJsonBody(req).then((body) => {
-          const { project_path, task_id, role } = body || {};
+          const { project_path, task_id, role, force } = body || {};
           if (!project_path || !task_id || !role) return sendJSON(res, 400, { error: 'missing project_path/task_id/role' });
           if (!runMod.ROLES.includes(role)) return sendJSON(res, 400, { error: 'unknown-role', role });
           if (!isWorkspace(project_path)) return sendJSON(res, 400, { error: 'not-a-workspace' });
-          const tool = runMod.readRoleTool(path.join(project_path, '.tcgstackflow'), role);
+          const ws = path.join(project_path, '.tcgstackflow');
+          // Launch guards: real task, no duplicate run on the same task, budget respected.
+          if (!read.findTaskFolder(ws, task_id)) return sendJSON(res, 404, { error: 'task-not-found', task_id });
+          const existing = runManager.overlayFor(project_path)[task_id];
+          if (existing) return sendJSON(res, 409, { error: 'task-already-running', run_id: existing.run_id, run_state: existing.run_state });
+          const detail = read.buildProjectDetail(project_path);
+          const budget = detail.config && detail.config.orchestrator ? detail.config.orchestrator.budget_usd : null;
+          if (budget != null && !force) {
+            const tk = { input: 0, output: 0, cache_read: 0, cache_creation: 0 };
+            for (const t of detail.tasks || []) for (const k in tk) tk[k] += (t.tokens_total && t.tokens_total[k]) || 0;
+            const spend = sessionReport.costOf(tk, 'claude-opus').total;
+            if (spend >= budget) return sendJSON(res, 409, { error: 'over-budget', spend: +spend.toFixed(2), budget, hint: 'raise the budget in Settings, or pass force: true' });
+          }
+          const tool = runMod.readRoleTool(ws, role);
           if (tool === 'codex') return sendJSON(res, 501, { error: 'runner-not-implemented', tool: 'codex' }); // ADR 0025 — Codex deferred
           if (!governanceGateReady) return sendJSON(res, 503, { error: 'governance-gate-not-ready' }); // API-8
-          const run = runManager.enqueue(project_path, task_id, role);
+          const run = runManager.enqueue(project_path, task_id, role, { force: !!force });
           return sendJSON(res, 200, { run_id: run.run_id, state: run.state });
         }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
       }
@@ -254,8 +275,10 @@ const server = http.createServer((req, res) => {
       if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
       return readJsonBody(req).then((body) => {
         const { project_path, session_id, message } = body || {};
-        if (!project_path || !session_id || !message) return sendJSON(res, 400, { error: 'missing project_path/session_id/message' });
+        if (!project_path || !message || typeof session_id !== 'string' || !session_id) return sendJSON(res, 400, { error: 'missing project_path/session_id/message' });
         if (!isWorkspace(project_path)) return sendJSON(res, 400, { error: 'not-a-workspace' });
+        // A chat resumes a session — never while a run on this project may be appending to it.
+        if (runManager.isProjectBusy(project_path)) return sendJSON(res, 409, { error: 'project-busy', hint: 'wait for the active run to finish' });
         return sendJSON(res, 200, { chat_id: executor.chat({ project_path, session_id, message }) });
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
@@ -379,10 +402,12 @@ function shutdown() {
 }
 
 function start(port) {
-  reconcileAllProjects();
   process.once('SIGINT', () => { shutdown(); process.exit(0); });
   process.once('SIGTERM', () => { shutdown(); process.exit(0); });
   server.listen(port, HOST, () => {
+    // Reconcile only AFTER the bind succeeds — a second instance must not mark the first
+    // instance's live runs as aborted before its own EADDRINUSE kills it.
+    reconcileAllProjects();
     const addr = `http://${HOST}:${port}`;
     governance.controlUrl = addr; // GOV-4 — the MCP gate posts approval requests back here
     console.log(`Cockpit running at ${addr}  (tool v${gsf.TOOL_VERSION}, latest schema ${gsf.LATEST_SCHEMA})`);

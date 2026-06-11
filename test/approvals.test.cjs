@@ -34,6 +34,21 @@ test('deny path resolves to denied', async () => {
   assert.strictEqual(await p, 'denied');
 });
 
+test('cancelForRun resolves pending approvals as denied without recording', async () => {
+  const emitted = []; const recorded = [];
+  const ap = createApprovals({ emit: (run_id, type, data) => emitted.push({ type, data }), record: (r, d) => recorded.push(d) });
+  const p1 = ap.register({ run_id: 'r-x', action: 'git push', risk: 'HIGH' });
+  const p2 = ap.register({ run_id: 'r-x', action: 'rm -rf', risk: 'CRITICAL' });
+  ap.register({ run_id: 'r-other', action: 'y', risk: 'HIGH' }); // different run — untouched
+  const n = ap.cancelForRun('r-x');
+  assert.strictEqual(n, 2, 'both pending approvals for the run cancelled');
+  assert.deepStrictEqual([await p1, await p2], ['denied', 'denied'], 'held long-polls unblock');
+  assert.strictEqual(recorded.length, 0, 'no governance entries recorded for a dead run');
+  assert.strictEqual(emitted.filter((e) => e.type === 'approval_resolved').length, 2);
+  assert.strictEqual(ap.listForRun('r-x').length, 0);
+  assert.strictEqual(ap.listForRun('r-other').length, 1, 'other run unaffected');
+});
+
 test('double-resolve is idempotent; unknown id returns false', () => {
   const recorded = [];
   const ap = createApprovals({ record: (r, d) => recorded.push(d) });

@@ -53,3 +53,41 @@ test('classify never throws on weird input', () => {
   assert.strictEqual(g.classify(null, null, null), 'HIGH');
   assert.strictEqual(g.classify('Bash', {}), 'MEDIUM');
 });
+
+test('fail-open escapes closed: interpreters, ./exec, redirection, find -delete', () => {
+  assert.strictEqual(g.classify('Bash', { command: 'node -e "require(\'fs\').rmSync(\'/x\')"' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'python3 evil.py' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'bash -c "anything"' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'npx some-package' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: './deploy.sh' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'find . -name "*.tmp" -delete' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'cat secrets > /tmp/out' }), 'MEDIUM', 'redirection disqualifies LOW');
+  // regressions: legit reads + the qmd knowledge layer stay frictionless, tests stay MEDIUM
+  assert.strictEqual(g.classify('Bash', { command: 'qmd search "auth flow"' }), 'LOW');
+  assert.strictEqual(g.classify('Bash', { command: 'node --version' }), 'LOW');
+  assert.strictEqual(g.classify('Bash', { command: 'pnpm test' }), 'MEDIUM');
+  assert.strictEqual(g.classify('Bash', { command: 'git diff' }), 'LOW');
+});
+
+test('reviewer escape catalogue is closed', () => {
+  assert.strictEqual(g.classify('Bash', { command: 'find . -fprintf /etc/passwd x' }), 'HIGH', 'find write predicates');
+  assert.strictEqual(g.classify('Bash', { command: 'find . -execdir evil {} ;' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'node --eval "evil()"' }), 'HIGH', 'long eval flag');
+  assert.strictEqual(g.classify('Bash', { command: 'python -m anymodule' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'ruby -rnet/http -e x' }), 'HIGH', 'intervening flags');
+  assert.strictEqual(g.classify('Bash', { command: 'cat evil.py | python3' }), 'HIGH', 'bare interpreter fed by pipe (max of segments)');
+  assert.strictEqual(g.classify('Bash', { command: 'find . -name "*.js"' }), 'LOW', 'read-only find stays LOW');
+});
+
+test('Trusted Commands cap HIGH at MEDIUM, never CRITICAL, never compound-evil', () => {
+  const trusted = g.parseTrustedCommands([
+    '## Trusted Commands', 'prose here', '- `npx vitest`', '- ./gradlew test', '', '## Project-Specific Rules', '- auth/** -> HIGH',
+  ].join('\n'));
+  assert.deepStrictEqual(trusted, ['npx vitest', './gradlew test']);
+  assert.strictEqual(g.classify('Bash', { command: 'npx vitest run' }, [], trusted), 'MEDIUM', 'trusted prefix lowers HIGH');
+  assert.strictEqual(g.classify('Bash', { command: './gradlew test' }, [], trusted), 'MEDIUM');
+  assert.strictEqual(g.classify('Bash', { command: 'npx vitest && rm -rf dist' }, [], trusted), 'CRITICAL', 'compound still maxes');
+  assert.strictEqual(g.classify('Bash', { command: 'npx vitest && git push' }, [], trusted), 'HIGH', 'untrusted HIGH segment wins');
+  assert.strictEqual(g.classify('Bash', { command: 'npx playwright install' }, [], trusted), 'HIGH', 'different npx command not covered');
+  assert.strictEqual(g.classify('Bash', { command: 'git push --force' }, [], trusted), 'CRITICAL', 'CRITICAL untouchable');
+});

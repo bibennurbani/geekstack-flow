@@ -41,7 +41,22 @@ function createApprovals({ emit = () => {}, record = () => {} } = {}) {
   const get = (approval_id) => pending.get(approval_id) || null;
   const listForRun = (run_id) => [...pending.values()].filter((r) => r.run_id === run_id && r.status === 'pending');
 
-  return { register, resolve, get, listForRun, _pending: pending };
+  // Run ended (abort/fail/done): resolve any still-pending approvals as denied so the held
+  // long-poll unblocks and no ghost approval lingers. Deliberately SKIPS the record callback —
+  // a dead run's task log shouldn't gain governance entries.
+  function cancelForRun(run_id) {
+    let n = 0;
+    for (const rec of pending.values()) {
+      if (rec.run_id !== run_id || rec.status !== 'pending') continue;
+      rec.status = 'denied';
+      emit(rec.run_id, 'approval_resolved', { approval_id: rec.approval_id, decision: 'denied', reason: 'run-ended' });
+      rec.resolveFn('denied');
+      n++;
+    }
+    return n;
+  }
+
+  return { register, resolve, cancelForRun, get, listForRun, _pending: pending };
 }
 
 module.exports = { createApprovals };

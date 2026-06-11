@@ -125,6 +125,86 @@ test('launch (non-zero exit): fails the run, writes failed record, does NOT adva
   } finally { cleanup(proj); }
 });
 
+// hardening: a run that ends BLOCKED is a hand-off to a HUMAN — the safety-net must not un-block it
+test('BLOCKED is respected: loop stops, safety-net does not advance', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    let calls = 0;
+    const blockingSpawn = () => { // agent sets BLOCKED during iteration 1
+      calls++;
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(() => {
+        for (const l of FIXTURE_LINES) child.stdout.emit('data', Buffer.from(l + '\n'));
+        fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace(/^Status: .*$/m, 'Status: BLOCKED'));
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: blockingSpawn, claudeBin: 'fake', maxIters: 5 });
+    exec.launch({ run_id: 'r-blk', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(80);
+    assert.strictEqual(calls, 1, 'loop stops at BLOCKED instead of nudging 5 times');
+    assert.strictEqual(read.buildTaskDetail(proj, 'T-1').status, 'BLOCKED', 'safety-net must NOT force IN_REVIEW over BLOCKED');
+    assert.deepStrictEqual(rm.calls.complete, ['r-blk'], 'clean exit still completes the run');
+  } finally { cleanup(proj); }
+});
+
+// hardening: a `state: running` placeholder record exists from launch (crash-orphan detectability)
+test('launch writes a running placeholder; crash orphan-scan can see it', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const slowSpawn = () => { // emits fixture, then waits for the test to release it
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(async () => {
+        child.stdout.emit('data', Buffer.from(FIXTURE_LINES[0] + '\n'));
+        await gate;
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: slowSpawn, claudeBin: 'fake', maxIters: 1 });
+    exec.launch({ run_id: 'r-live', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(40);
+    // mid-run: the placeholder is on disk with state: running, no ended_at → orphan-scannable
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-live.md'), 'utf8'));
+    assert.strictEqual(fm.state, 'running');
+    assert.strictEqual(fm.ended_at, undefined, 'no terminal marker while running');
+    const scan = require('../ui/server/run-manager.cjs').scanOrphanedRuns(ws);
+    assert.ok(scan.find((r) => r.run_id === 'r-live' && r.orphaned), 'a server death now would be detected');
+    release(); await tick(60);
+    const fm2 = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-live.md'), 'utf8'));
+    assert.strictEqual(fm2.state, 'done', 'terminal write overwrites the placeholder');
+    assert.ok(fm2.ended_at, 'terminal marker present');
+  } finally { cleanup(proj); }
+});
+
+// hardening: inactivity timeout kills a wedged child and fails the run as timeout
+test('iteration inactivity timeout fails a silent run', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const wedgedSpawn = () => { // one chunk, then silence; responds to kill
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+      child.kill = () => { setImmediate(() => child.emit('close', 143)); };
+      setImmediate(() => child.stdout.emit('data', Buffer.from(FIXTURE_LINES[0] + '\n')));
+      return child;
+    };
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: wedgedSpawn, claudeBin: 'fake', maxIters: 3, iterationTimeoutMs: 60 });
+    exec.launch({ run_id: 'r-hang', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(250);
+    assert.strictEqual(rm.calls.fail.length, 1, 'run failed');
+    assert.strictEqual(rm.calls.fail[0][1], 'timeout', 'failed specifically as timeout');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-hang.md'), 'utf8'));
+    assert.strictEqual(fm.state, 'failed');
+    assert.strictEqual(read.buildTaskDetail(proj, 'T-1').status, 'IN_PROGRESS', 'timeout does not advance the task');
+  } finally { cleanup(proj); }
+});
+
 // regression: text_delta + the whole assistant message must not double-count the text
 test('no double-count of assistant text', async () => {
   const { proj, ws } = makeWs();
