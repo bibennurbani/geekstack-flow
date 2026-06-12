@@ -22,6 +22,9 @@ Usage (all forms equivalent — pick what feels natural):
                                               so you know exactly what to review. Read-only; writes nothing.
   geekstackflow ui [--port N]                 Launch the Cockpit — the local Orchestrator UI over all your registered
                                               projects (run agents, approve actions, browse tasks) at http://127.0.0.1:4729.
+  geekstackflow hooks [target]                Install the git post-merge/post-rewrite hook: every git pull writes a
+                                              pull digest into .tcgstackflow/raw/ for the Ingester (and, with
+                                              orchestrator.auto_ingest_on_pull: true, auto-launches an ingest run).
   geekstackflow --force [target]              Overwrite existing .tcgstackflow/
   geekstackflow --migrate-from <old> [target] Collect old AI infra into migration-notes/ for review
   geekstackflow --help                        Show this help
@@ -66,15 +69,16 @@ const GLOBAL_TEMPLATE = path.join(SCRIPT_DIR, 'templates/global/.tcgstackflow');
 // schema 2 = no-dotfiles layout (weekly/, archived/, root .gitignore block, symlink) — ADR 0017
 // schema 3 = wiki_search (qmd) config block in config.yaml — ADR 0030
 // schema 4 = runs/ area for the Orchestrator + orchestrator.roles tool map — ADR 0024/0025/0032/0033
+// schema 5 = hooks/ area (git pull-digest hook) + Trusted Commands governance section
 function readToolVersion() {
   try { return JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, 'package.json'), 'utf8')).version || '0.0.0'; }
   catch { return '0.0.0'; }
 }
 const TOOL_VERSION = readToolVersion();
-const LATEST_SCHEMA = 4;
+const LATEST_SCHEMA = 5;
 
 function parseArgs(argv) {
-  const args = { force: false, help: false, upgrade: false, register: false, drift: false, ui: false, port: null, migrateFrom: null, target: process.cwd() };
+  const args = { force: false, help: false, upgrade: false, register: false, drift: false, ui: false, hooks: false, port: null, migrateFrom: null, target: process.cwd() };
   const positional = [];
   const raw = argv.slice(2);
 
@@ -96,6 +100,9 @@ function parseArgs(argv) {
   } else if (raw[0] === 'ui') {
     raw.shift();
     args.ui = true;
+  } else if (raw[0] === 'hooks') {
+    raw.shift();
+    args.hooks = true;
   }
 
   for (let i = 0; i < raw.length; i++) {
@@ -377,6 +384,61 @@ const MIGRATIONS = [
       return n;
     },
   },
+  {
+    from: 4, to: 5,
+    label: 'add hooks/ area (git pull-digest hook) + Trusted Commands governance section',
+    apply(target, workspaceDir) {
+      let n = 0;
+
+      // a. hooks/post-merge — the pull-digest script (install into .git/hooks with `geekstackflow hooks`).
+      const hooksDir = path.join(workspaceDir, 'hooks');
+      const hookFile = path.join(hooksDir, 'post-merge');
+      if (!fs.existsSync(hookFile)) {
+        const tpl = path.join(WORKSPACE_TEMPLATE, 'hooks', 'post-merge');
+        if (fs.existsSync(tpl)) {
+          fs.mkdirSync(hooksDir, { recursive: true });
+          fs.copyFileSync(tpl, hookFile);
+          console.log('    ✓ added .tcgstackflow/hooks/post-merge (run `geekstackflow hooks .` to wire it into .git/hooks)');
+          n++;
+        }
+      }
+
+      // b. Trusted Commands section in governance.md — ADDITIVE: inserted before Project-Specific
+      //    Rules only when absent; never touches the user's existing rules or prose.
+      const govPath = path.join(workspaceDir, 'governance.md');
+      if (fs.existsSync(govPath)) {
+        let gov = fs.readFileSync(govPath, 'utf8');
+        if (!/^## Trusted Commands/m.test(gov)) {
+          const section = [
+            '## Trusted Commands',
+            '',
+            '_(Optional — read by the Orchestrator\'s in-run governance gate.)_ Script/interpreter execution',
+            '(`npx …`, `node script.js`, `./gradlew …`) classifies **HIGH** by default and pauses an orchestrated',
+            'run for your approval. List exact command prefixes here to cap them at **MEDIUM** (auto-proceed).',
+            'This is the one sanctioned *lowering* mechanism: it never lowers CRITICAL, and a compound',
+            '`trusted && something-risky` still classifies at the riskier part.',
+            '',
+            '<!--',
+            'Examples — uncomment and adapt:',
+            '',
+            '- `npx vitest`',
+            '- `npx tsc --noEmit`',
+            '- `./gradlew test`',
+            '-->',
+            '',
+            '',
+          ].join('\n');
+          if (/^## Project-Specific Rules/m.test(gov)) gov = gov.replace(/^## Project-Specific Rules/m, section + '## Project-Specific Rules');
+          else gov = gov.replace(/\s*$/, '\n\n') + section;
+          fs.writeFileSync(govPath, gov);
+          console.log('    ✓ added "## Trusted Commands" section to governance.md');
+          n++;
+        }
+      }
+
+      return n;
+    },
+  },
 ];
 
 // Launch the Cockpit: spawn the zero-dep local server as a child process and open the browser.
@@ -396,6 +458,39 @@ function launchUi(port) {
   const openerArgs = process.platform === 'win32' ? ['/c', 'start', '', `http://127.0.0.1:${p}`] : [`http://127.0.0.1:${p}`];
   setTimeout(() => { try { spawn(opener, openerArgs, { stdio: 'ignore', detached: true }).unref(); } catch { /* ignore */ } }, 900);
   child.on('exit', (code) => process.exit(code || 0));
+}
+
+// Install the geekstack-flow git hooks into {target}/.git/hooks: post-merge + post-rewrite both
+// point at the pull-digest script, so `git pull` (merge OR rebase) feeds the Ingester. A
+// pre-existing foreign hook is preserved as {name}.pre-gsf and chained by our script.
+function installHooks(target) {
+  const gitDir = path.join(target, '.git');
+  if (!fs.existsSync(gitDir)) {
+    console.error(`Not a git repository: ${target}`);
+    process.exit(1);
+  }
+  const wsHook = path.join(target, '.tcgstackflow', 'hooks', 'post-merge');
+  const src = fs.existsSync(wsHook) ? wsHook : path.join(WORKSPACE_TEMPLATE, 'hooks', 'post-merge');
+  if (!fs.existsSync(src)) {
+    console.error('Hook script not found (expected .tcgstackflow/hooks/post-merge or the tool template).');
+    process.exit(1);
+  }
+  const hooksDir = path.join(gitDir, 'hooks');
+  fs.mkdirSync(hooksDir, { recursive: true });
+  const body = fs.readFileSync(src, 'utf8');
+  for (const name of ['post-merge', 'post-rewrite']) {
+    const dst = path.join(hooksDir, name);
+    if (fs.existsSync(dst) && !fs.readFileSync(dst, 'utf8').includes('gsf-hook-v1')) {
+      fs.renameSync(dst, dst + '.pre-gsf'); // preserve + chain the displaced hook
+      console.log(`  ~ existing ${name} preserved as ${name}.pre-gsf (ours chains to it)`);
+    }
+    fs.writeFileSync(dst, body);
+    fs.chmodSync(dst, 0o755);
+    console.log(`  ✓ installed .git/hooks/${name}`);
+  }
+  console.log('\nEvery `git pull` now writes a pull digest to .tcgstackflow/raw/ for the Ingester.');
+  console.log('Optional: set `auto_ingest_on_pull: true` under `orchestrator:` in config.yaml to auto-launch');
+  console.log('an ingester run when the Cockpit is up — knowledge stays fresh without a click.');
 }
 
 async function upgradeWorkspace(target) {
@@ -924,6 +1019,11 @@ async function main() {
     return;
   }
 
+  if (args.hooks) {
+    installHooks(args.target);
+    return;
+  }
+
   if (args.ui) {
     launchUi(args.port);
     return;
@@ -1242,7 +1342,7 @@ async function main() {
 // Expose detection helpers so they can be unit-tested without running the full installer.
 module.exports = {
   detectProjects, analyseProject, slugify, renderProjectsYaml, SKIP_DIRS,
-  readWorkspaceSchema, stampWorkspaceVersion, upgradeWorkspace,
+  readWorkspaceSchema, stampWorkspaceVersion, upgradeWorkspace, installHooks,
   readProjectRegistry, writeProjectRegistry, registerProject, isWorkspace, REGISTRY_PATH,
   reportDriftFromTemplate, adapterDrifted, reportWorkspaceDrift,
   TOOL_VERSION, LATEST_SCHEMA, MIGRATIONS,

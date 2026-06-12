@@ -4,6 +4,15 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — Auto-advance chains, knowledge freshness, and the git-pull ingest hook
+
+- **Auto-advance chain ("run to completion")** — a chained Run launches the next lifecycle role on hand-off (coder → reviewer → tester → ingester) until `INGESTED`/`BLOCKED` or the `max_bounces` limit; per-launch toggle or `orchestrator.auto_advance: true`. Budget re-checked at every chained launch.
+- **Global approval inbox** (`GET /api/approvals` + 🔔 nav item + browser notifications) — HIGH/CRITICAL pauses from any run, visible from anywhere; approve/deny inline.
+- **Reattach** — opening a task with an in-flight run resumes its live stream; **▶ Run buttons** on all queue rows (Home, agent pages, project queue).
+- **Knowledge freshness** (Wiki tab) — tasks awaiting ingest, pending `raw/` files, last-ingest date, wiki last-edit, and a "▶ Ingest raw now" action (`RAW-*` pseudo-task ingester runs).
+- **Git-pull ingest hook** — `geekstackflow hooks [target]` installs `post-merge`/`post-rewrite`: every pull writes a **pull digest** into `raw/`; with `orchestrator.auto_ingest_on_pull: true` and the Cockpit up, the ingester run launches automatically. Pre-existing hooks are preserved (`*.pre-gsf`) and chained.
+- New config keys (all optional, Settings-tab editable where applicable): `orchestrator.auto_advance`, `orchestrator.max_bounces`, `orchestrator.auto_ingest_on_pull`.
+
 ### Added — Cockpit becomes the Orchestrator; read-only retired (ADR 0032/0033/0034)
 
 - **Live Runs** — the Run buttons launch real agents: the server spawns `claude -p … --output-format stream-json`, streams progress to the browser via SSE, and writes an immutable transcript to `.tcgstackflow/runs/{task-id}/{run-id}.md` with frontmatter recording `task`, `role`, `session_id`, Run tokens, terminal `state`, `ended_at`, and the `git_base` commit captured at Run start. No database — files plus ephemeral server memory, as ever (ADR 0024).

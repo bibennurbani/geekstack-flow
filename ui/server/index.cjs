@@ -148,7 +148,10 @@ const server = http.createServer((req, res) => {
     if (p === '/api/project/task') {
       const proj = u.searchParams.get('path'); const id = u.searchParams.get('id');
       if (!proj || !id) return sendJSON(res, 400, { error: 'missing path or id' });
-      return sendJSON(res, 200, read.buildTaskDetail(proj, id));
+      const detail = read.buildTaskDetail(proj, id);
+      const active = runManager.overlayFor(proj)[id];
+      if (active && !detail.error) detail.active_run = active; // reattach: the SPA re-subscribes to an in-flight run's stream
+      return sendJSON(res, 200, detail);
     }
     // Session report — aggregate token/tool/cost telemetry from the task's session JSONLs.
     if (p === '/api/project/task/report') {
@@ -194,6 +197,7 @@ const server = http.createServer((req, res) => {
         try {
           if (roles && typeof roles === 'object') for (const [role, tool] of Object.entries(roles)) read.setRoleTool(ws, role, tool);
           if (budget_usd !== undefined) read.setBudget(ws, budget_usd === null || budget_usd === '' ? NaN : budget_usd);
+          if (body.auto_advance !== undefined) read.setAutoAdvance(ws, !!body.auto_advance);
           return sendJSON(res, 200, { ok: true });
         } catch (e) { return sendJSON(res, 400, { error: String((e && e.message) || e) }); }
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
@@ -230,6 +234,9 @@ const server = http.createServer((req, res) => {
     if (p === '/api/runs/history') { // durable run records across the whole workspace, newest first
       return sendJSON(res, 200, { runs: read.buildRunsHistory() });
     }
+    if (p === '/api/approvals') { // global approval inbox — every pending approval across all runs
+      return sendJSON(res, 200, { approvals: approvals.listPending() });
+    }
     if (p === '/api/run/stream') { // SSE live stream for one run
       const runId = u.searchParams.get('run_id');
       if (!runId) return sendJSON(res, 400, { error: 'missing run_id' });
@@ -244,13 +251,16 @@ const server = http.createServer((req, res) => {
       }
       if (req.method === 'POST') { // start a run = enqueue + promote (D2: one launch door)
         return readJsonBody(req).then((body) => {
-          const { project_path, task_id, role, force } = body || {};
+          const { project_path, task_id, role, force, chain } = body || {};
           if (!project_path || !task_id || !role) return sendJSON(res, 400, { error: 'missing project_path/task_id/role' });
           if (!runMod.ROLES.includes(role)) return sendJSON(res, 400, { error: 'unknown-role', role });
           if (!isWorkspace(project_path)) return sendJSON(res, 400, { error: 'not-a-workspace' });
           const ws = path.join(project_path, '.tcgstackflow');
+          // Pseudo-task ingest runs (RAW-*) have no task folder — they fold raw/ into the wiki.
+          const isRaw = /^RAW(-|$)/i.test(task_id);
+          if (isRaw && role !== 'ingester') return sendJSON(res, 400, { error: 'raw-runs-are-ingester-only' });
           // Launch guards: real task, no duplicate run on the same task, budget respected.
-          if (!read.findTaskFolder(ws, task_id)) return sendJSON(res, 404, { error: 'task-not-found', task_id });
+          if (!isRaw && !read.findTaskFolder(ws, task_id)) return sendJSON(res, 404, { error: 'task-not-found', task_id });
           const existing = runManager.overlayFor(project_path)[task_id];
           if (existing) return sendJSON(res, 409, { error: 'task-already-running', run_id: existing.run_id, run_state: existing.run_state });
           const detail = read.buildProjectDetail(project_path);
@@ -264,8 +274,10 @@ const server = http.createServer((req, res) => {
           const tool = runMod.readRoleTool(ws, role);
           if (tool === 'codex') return sendJSON(res, 501, { error: 'runner-not-implemented', tool: 'codex' }); // ADR 0025 — Codex deferred
           if (!governanceGateReady) return sendJSON(res, 503, { error: 'governance-gate-not-ready' }); // API-8
-          const run = runManager.enqueue(project_path, task_id, role, { force: !!force });
-          return sendJSON(res, 200, { run_id: run.run_id, state: run.state });
+          // chain: explicit per-launch flag, falling back to the workspace's auto_advance default.
+          const doChain = chain !== undefined ? !!chain : !!(detail.config.orchestrator && detail.config.orchestrator.auto_advance);
+          const run = runManager.enqueue(project_path, task_id, role, { force: !!force, chain: doChain && !isRaw, bounces: 0 });
+          return sendJSON(res, 200, { run_id: run.run_id, state: run.state, chain: !!run.chain });
         }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
       }
       return sendJSON(res, 405, { error: 'method-not-allowed' });
@@ -306,15 +318,22 @@ const server = http.createServer((req, res) => {
         }).then((decision) => sendJSON(res, 200, { decision }));
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
-    // GOV-2 — browser decision (approve/deny) resolves a pending approval.
+    // GOV-2 — browser decision (approve/deny) resolves a pending approval. CRITICAL approvals
+    // require an explicit rollback acknowledgment (ack: true) — enforced HERE so no client path
+    // (task panel, inbox, curl) can one-click a CRITICAL action (ADR 0008).
     if (p === '/api/run/approval') {
       if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
       return readJsonBody(req).then((body) => {
-        const { approval_id, decision } = body || {};
+        const { approval_id, decision, ack } = body || {};
         if (!approval_id || !decision) return sendJSON(res, 400, { error: 'missing approval_id/decision' });
-        return approvals.resolve(approval_id, decision)
-          ? sendJSON(res, 200, { ok: true })
-          : sendJSON(res, 404, { error: 'unknown-approval' });
+        const rec = approvals.get(approval_id);
+        if (!rec) return sendJSON(res, 404, { error: 'unknown-approval' });
+        if (rec.status !== 'pending') return sendJSON(res, 409, { error: 'already-resolved', decision: rec.status });
+        if (rec.risk === 'CRITICAL' && /^approve/.test(decision) && !ack) {
+          return sendJSON(res, 428, { error: 'critical-ack-required', hint: 'acknowledge the rollback plan to approve a CRITICAL action' });
+        }
+        approvals.resolve(approval_id, decision);
+        return sendJSON(res, 200, { ok: true });
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
     if (p.startsWith('/api/')) return sendJSON(res, 404, { error: 'unknown endpoint' });

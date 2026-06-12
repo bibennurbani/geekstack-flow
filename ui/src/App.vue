@@ -86,8 +86,11 @@ async function openTask(t) {
   // Action-queue entries carry `task_id`; Tasks-list entries carry `id`. Accept either.
   const id = t.id || t.task_id;
   if (!id) return;
-  selectedTask.value = id; taskDetail.value = null; statusError.value = ''; resetRun(); closeReport(); resetChat();
+  selectedTask.value = id; taskDetail.value = null; statusError.value = ''; chainOn.value = false; resetRun(); closeReport(); resetChat();
   taskDetail.value = await api(taskUrl());
+  // Reattach: the task already has an in-flight run — resume its live stream instead of 'idle'.
+  const ar = taskDetail.value && taskDetail.value.active_run;
+  if (ar && ar.run_id) { subscribeRun(ar.run_id); toast('Reattached to the running ' + (ar.role || 'agent'), 'info'); }
 }
 function closeTask() { selectedTask.value = null; taskDetail.value = null; statusError.value = ''; closeStream(); resetRun(); closeReport(); closeRun(); resetChat(); closeDiff(); }
 async function refreshTask() { if (selectedTask.value) taskDetail.value = await api(taskUrl()); }
@@ -104,11 +107,52 @@ async function changeStatus(e) {
 // --- live run ---
 function resetRun() { runState.value = 'idle'; runId.value = ''; streamText.value = ''; liveTokens.value = null; runError.value = ''; pendingApproval.value = null; criticalAck.value = false; }
 function closeStream() { if (es) { es.close(); es = null; } }
+// Subscribe the live-run panel to a run's SSE stream. Used by fresh launches, REATTACH (opening a
+// task that already has an in-flight run), and chain-follow (auto-advance hops to the next role).
+const chainOn = ref(false); // user-selected "run to completion" for the next launch
+function subscribeRun(id) {
+  closeStream();
+  runId.value = id; runState.value = 'running'; liveTokens.value = null; runError.value = '';
+  es = new EventSource('/api/run/stream?run_id=' + encodeURIComponent(id));
+  es.addEventListener('delta', (ev) => { streamText.value += (JSON.parse(ev.data).text || ''); });
+  es.addEventListener('tokens', (ev) => { liveTokens.value = JSON.parse(ev.data); });
+  es.addEventListener('approval_request', (ev) => { pendingApproval.value = JSON.parse(ev.data); criticalAck.value = false; runState.value = 'paused'; });
+  es.addEventListener('approval_resolved', (ev) => {
+    const d = JSON.parse(ev.data);
+    pendingApproval.value = null;
+    if (d.reason !== 'run-ended') runState.value = 'running'; // cancellations on a dead run must not revive the badge
+  });
+  es.addEventListener('status', (ev) => {
+    const d = JSON.parse(ev.data);
+    if (d.state === 'error') { runState.value = 'error'; pendingApproval.value = null; runError.value = d.reason || d.error || ('exit ' + (d.code ?? '?')); toast('Run failed: ' + runError.value, 'err'); }
+    else if (d.state === 'queued') { runError.value = 'queued — waiting for the project slot'; }
+    else if (d.state === 'aborting') { runError.value = 'stopping…'; }
+    else if (d.state === 'aborted') { runState.value = 'error'; pendingApproval.value = null; runError.value = 'stopped by you'; closeStream(); refreshTask(); toast('Run stopped'); }
+  });
+  // Auto-advance: the chain event names the next role's run — follow it in the same panel.
+  es.addEventListener('chain', async (ev) => {
+    const d = JSON.parse(ev.data);
+    if (d.state === 'next') {
+      streamText.value += `\n\n━━ chaining → ${d.role} ━━\n\n`;
+      toast('Chain → ' + d.role, 'info');
+      try { await refreshTask(); } finally { subscribeRun(d.run_id); } // the hop must never be dropped
+    } else if (d.state === 'done') { toast('Chain complete — ' + prettyStatus(d.status || ''), 'ok'); }
+    else if (d.state === 'stopped') { toast('Chain stopped: ' + (d.reason === 'bounce-limit' ? `bounce limit (${d.next_ready} still ready)` : d.reason), 'err'); }
+  });
+  es.addEventListener('done', async () => {
+    runState.value = 'done'; pendingApproval.value = null;
+    // The chain event (if any) follows done on this same stream — close only if no hop happened.
+    // Scheduled BEFORE the await so a failed refresh can't leak the connection.
+    setTimeout(() => { if (runId.value === id) closeStream(); }, 2000);
+    await refreshTask(); toast('Run finished', 'ok');
+  });
+  es.onerror = () => { if (runState.value === 'running') { runState.value = 'error'; runError.value = 'stream lost'; } closeStream(); };
+}
 async function startRun(force = false) {
   const role = (taskDetail.value && taskDetail.value.next_agent) || 'coder';
   if (role === 'human') return; // BLOCKED — nothing runnable
   resetRun(); runState.value = 'running';
-  const res = await postJSON('/api/run', { project_path: selected.value, task_id: selectedTask.value, role, force });
+  const res = await postJSON('/api/run', { project_path: selected.value, task_id: selectedTask.value, role, force, chain: chainOn.value || undefined });
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
     if (j.error === 'over-budget' && !force && window.confirm(`Est. spend $${j.spend} exceeds the $${j.budget} budget. Run anyway?`)) {
@@ -122,33 +166,29 @@ async function startRun(force = false) {
     toast(runError.value, 'err');
     return;
   }
-  runId.value = (await res.json()).run_id;
-  es = new EventSource('/api/run/stream?run_id=' + encodeURIComponent(runId.value));
-  es.addEventListener('delta', (ev) => { streamText.value += (JSON.parse(ev.data).text || ''); });
-  es.addEventListener('tokens', (ev) => { liveTokens.value = JSON.parse(ev.data); });
-  es.addEventListener('approval_request', (ev) => { pendingApproval.value = JSON.parse(ev.data); criticalAck.value = false; runState.value = 'paused'; });
-  es.addEventListener('approval_resolved', (ev) => {
-    const d = JSON.parse(ev.data);
-    pendingApproval.value = null;
-    if (d.reason !== 'run-ended') runState.value = 'running'; // cancellations on a dead run must not revive the badge
-  });
-  es.addEventListener('status', (ev) => {
-    const d = JSON.parse(ev.data);
-    if (d.state === 'error') { runState.value = 'error'; pendingApproval.value = null; runError.value = d.reason || d.error || ('exit ' + (d.code ?? '?')); toast('Run failed: ' + runError.value, 'err'); }
-    else if (d.state === 'aborting') { runError.value = 'stopping…'; }
-    else if (d.state === 'aborted') { runState.value = 'error'; pendingApproval.value = null; runError.value = 'stopped by you'; closeStream(); refreshTask(); toast('Run stopped'); }
-  });
-  es.addEventListener('done', async () => { runState.value = 'done'; pendingApproval.value = null; closeStream(); await refreshTask(); toast('Run finished', 'ok'); });
-  es.onerror = () => { if (runState.value === 'running') { runState.value = 'error'; runError.value = 'stream lost'; } closeStream(); };
+  subscribeRun((await res.json()).run_id);
+}
+// Launch a run straight from a queue row (Home / agent page / project queue) — no panel open.
+async function quickRun(projectPath, taskId, role, chain = false) {
+  const res = await postJSON('/api/run', { project_path: projectPath, task_id: taskId, role, chain: chain || undefined });
+  const j = await res.json().catch(() => ({}));
+  if (res.ok) {
+    toast(`▶ ${role} launched on ${taskId}` + (j.chain ? ' (chain)' : ''), 'ok');
+    // refresh whichever surface launched it so the ● running badge shows up
+    if (selected.value && selected.value === projectPath && !selectedTask.value) {
+      detail.value = await api('/api/project?path=' + encodeURIComponent(projectPath));
+    } else if (selected.value === null && !showRuns.value) { agents.value = await api('/api/agents'); }
+  } else toast(j.error === 'task-already-running' ? taskId + ' already has an active run' : 'Launch failed: ' + (j.error || res.status), 'err');
 }
 async function stopRun() {
   if (!runId.value) return;
-  await postJSON('/api/run/abort', { run_id: runId.value });
+  const res = await postJSON('/api/run/abort', { run_id: runId.value });
+  if (!res.ok) toast('Stop failed — the run may have already ended', 'err');
 }
 async function decide(decision) {
   if (!pendingApproval.value) return;
   if (pendingApproval.value.risk === 'CRITICAL' && decision === 'approve' && !criticalAck.value) return;
-  await postJSON('/api/run/approval', { run_id: runId.value, approval_id: pendingApproval.value.approval_id, decision });
+  await postJSON('/api/run/approval', { run_id: runId.value, approval_id: pendingApproval.value.approval_id, decision, ack: criticalAck.value });
   // the panel clears on the approval_resolved SSE event
 }
 
@@ -311,9 +351,50 @@ const projectAgents = computed(() => {
 const toasts = ref([]); let toastSeq = 0;
 function toast(text, kind = 'info') { const id = ++toastSeq; toasts.value.push({ id, text, kind }); setTimeout(() => { toasts.value = toasts.value.filter((t) => t.id !== id); }, 4200); }
 
+// --- global approval inbox (poll — approvals can fire on runs whose panel isn't open) ---
+const inbox = ref([]);
+const showInbox = ref(false);
+const inboxAck = ref({}); // per-approval CRITICAL rollback acknowledgment
+let inboxTimer = null; let knownApprovals = new Set(); let inboxPolledOnce = false;
+async function pollInbox() {
+  try {
+    const { approvals: list } = await api('/api/approvals');
+    for (const a of list || []) {
+      if (!knownApprovals.has(a.approval_id)) {
+        knownApprovals.add(a.approval_id);
+        if (inboxPolledOnce) notifyApproval(a); // first poll seeds silently — no storm on page load
+      }
+    }
+    inboxPolledOnce = true;
+    inbox.value = list || [];
+  } catch { /* server briefly down — keep polling */ }
+}
+function notifyApproval(a) {
+  toast(`Approval needed: ${a.risk} — ${a.task_id || a.run_id}`, 'err');
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') new Notification('GeekStack Flow — approval needed', { body: `${a.risk}: ${a.action}` });
+  } catch { /* notifications unsupported */ }
+}
+function openInbox() { // nav click = a user gesture — the one place a permission request works
+  showInbox.value = true;
+  try { if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission(); } catch { /* unsupported */ }
+}
+async function decideInbox(a, decision) {
+  const res = await postJSON('/api/run/approval', { run_id: a.run_id, approval_id: a.approval_id, decision, ack: !!inboxAck.value[a.approval_id] });
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    toast(j.error === 'already-resolved' ? `Already resolved (${j.decision}) — your click had no effect`
+      : j.error === 'critical-ack-required' ? 'Acknowledge the rollback to approve a CRITICAL action'
+      : j.error === 'unknown-approval' ? 'No longer pending — the run ended'
+      : 'Decision failed: ' + (j.error || res.status), 'err');
+  }
+  await pollInbox();
+}
+
 // --- settings (orchestrator.roles + budget + pricing display) ---
 const settingsRoles = ref({});
 const settingsBudget = ref('');
+const settingsAutoAdvance = ref(false);
 const settingsBusy = ref(false);
 const PRICING_TABLE = [
   { m: 'Opus', i: 15, o: 75, cw: 18.75, cr: 1.5 },
@@ -324,10 +405,11 @@ function initSettings() {
   const o = (detail.value && detail.value.config && detail.value.config.orchestrator) || { roles: {}, budget_usd: null };
   settingsRoles.value = { ...(o.roles || {}) };
   settingsBudget.value = o.budget_usd == null ? '' : String(o.budget_usd);
+  settingsAutoAdvance.value = !!o.auto_advance;
 }
 async function saveSettings() {
   settingsBusy.value = true;
-  const res = await postJSON('/api/project/settings', { path: selected.value, roles: settingsRoles.value, budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value) });
+  const res = await postJSON('/api/project/settings', { path: selected.value, roles: settingsRoles.value, budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value), auto_advance: settingsAutoAdvance.value });
   settingsBusy.value = false;
   if (res.ok) { toast('Settings saved', 'ok'); const p = projects.value.find((x) => x.path === selected.value); await loadProject(p); projectTab.value = 'settings'; }
   else { const j = await res.json().catch(() => ({})); toast('Save failed: ' + (j.error || res.status), 'err'); }
@@ -371,8 +453,8 @@ function relTime(iso) {
   return `synced ${Math.round(hrs / 24)}d ago`;
 }
 
-onMounted(async () => { await loadProjects(); await loadHome(); });
-onUnmounted(() => { closeStream(); closeChat(); });
+onMounted(async () => { await loadProjects(); await loadHome(); pollInbox(); inboxTimer = setInterval(pollInbox, 5000); });
+onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(inboxTimer); });
 </script>
 
 <template>
@@ -385,6 +467,10 @@ onUnmounted(() => { closeStream(); closeChat(); });
       </div>
       <div class="nav-item" :class="{ active: showRuns }" @click="loadRuns">
         <span>📊</span><span class="label">Runs</span>
+      </div>
+      <div class="nav-item" :class="{ urgent: inbox.length }" @click="openInbox">
+        <span>🔔</span><span class="label">Approvals</span>
+        <span v-if="inbox.length" class="count" style="background:var(--coral);color:#fff">{{ inbox.length }}</span>
       </div>
       <div class="nav-section">Projects</div>
       <div
@@ -457,7 +543,8 @@ onUnmounted(() => { closeStream(); closeChat(); });
                   <span class="task-id">{{ q.task_id }}</span><span class="task-title">{{ q.title }}</span>
                   <div class="sub"><span class="badge soft">{{ q.project }}</span><span class="badge" :class="'st-' + q.status">{{ prettyStatus(q.status) }}</span></div>
                 </div>
-                <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === 'a' + i }" @click.stop="copyPrompt(q.task_id, agentDetail.role, 'a' + i)">{{ copiedKey === 'a' + i ? '✓ Copied' : 'Copy prompt' }}</button>
+                <button class="btn btn-primary" style="padding:5px 11px" title="Launch this agent now" @click.stop="quickRun(q.project_path, q.task_id, agentDetail.role)">▶</button>
+              <button class="btn" :class="{ 'btn-copied': copiedKey === 'a' + i }" @click.stop="copyPrompt(q.task_id, agentDetail.role, 'a' + i)">{{ copiedKey === 'a' + i ? '✓ Copied' : 'Copy prompt' }}</button>
               </div>
             </template>
 
@@ -525,7 +612,8 @@ onUnmounted(() => { closeStream(); closeChat(); });
                   <span class="task-id">{{ q.task_id }}</span><span class="task-title">{{ q.title }}</span>
                   <div class="sub"><span class="badge soft">{{ q.project }}</span><span class="badge" :class="'st-' + q.status">{{ prettyStatus(q.status) }}</span></div>
                 </div>
-                <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === g.role + i }" @click.stop="copyPrompt(q.task_id, g.role, g.role + i)">{{ copiedKey === g.role + i ? '✓ Copied' : 'Copy prompt' }}</button>
+                <button class="btn btn-primary" style="padding:5px 11px" title="Launch this agent now" @click.stop="quickRun(q.project_path, q.task_id, g.role)">▶</button>
+                <button class="btn" :class="{ 'btn-copied': copiedKey === g.role + i }" @click.stop="copyPrompt(q.task_id, g.role, g.role + i)">{{ copiedKey === g.role + i ? '✓ Copied' : 'Copy prompt' }}</button>
               </div>
             </template>
           </template>
@@ -647,9 +735,14 @@ onUnmounted(() => { closeStream(); closeChat(); });
                 <span class="grow"></span>
                 <span v-if="taskDetail.next_agent" class="muted" style="font-size:12px">next: <span class="agent" :class="'agent-' + taskDetail.next_agent">{{ taskDetail.next_agent }}</span></span>
                 <button v-if="taskDetail.next_agent === 'human'" class="btn" disabled title="The task is BLOCKED — it needs a human decision, not an agent">Blocked — needs a human</button>
-                <button v-else class="btn btn-primary" :disabled="runState === 'running' || runState === 'paused'" @click="startRun()">
-                  {{ runState === 'running' ? 'Running…' : runState === 'paused' ? 'Paused' : 'Run ' + (taskDetail.next_agent || 'coder') }}
-                </button>
+                <template v-else>
+                  <label class="chain-toggle" title="Run to completion: after this role hands off, automatically run the next one (reviewer → tester → ingester) until the task is INGESTED, blocked, or bounces too often">
+                    <input type="checkbox" v-model="chainOn" /> ⛓ chain
+                  </label>
+                  <button class="btn btn-primary" :disabled="runState === 'running' || runState === 'paused'" @click="startRun()">
+                    {{ runState === 'running' ? 'Running…' : runState === 'paused' ? 'Paused' : 'Run ' + (taskDetail.next_agent || 'coder') }}
+                  </button>
+                </template>
               </div>
 
               <!-- live run stream -->
@@ -814,7 +907,8 @@ onUnmounted(() => { closeStream(); closeChat(); });
                     <span v-if="a.jira_drift" class="badge st-BLOCKED" title="Workspace and Jira disagree on done-ness">⚠ drift</span>
                   </div>
                 </div>
-                <button class="btn btn-primary" :class="{ 'btn-copied': copiedKey === 'q'+i }"
+                <button class="btn btn-primary" style="padding:5px 11px" title="Launch this agent now" @click.stop="quickRun(selected, a.task_id, a.agent)">▶</button>
+                <button class="btn" :class="{ 'btn-copied': copiedKey === 'q'+i }"
                   @click.stop="copyPrompt(a.task_id, a.agent, 'q'+i)">
                   {{ copiedKey === 'q'+i ? '✓ Copied' : 'Copy prompt' }}
                 </button>
@@ -863,6 +957,38 @@ onUnmounted(() => { closeStream(); closeChat(); });
 
             <!-- WIKI -->
             <template v-else-if="projectTab === 'wiki'">
+              <div class="section">Knowledge freshness</div>
+              <div class="fresh-grid">
+                <div class="card" :class="{ 'fresh-warn': detail.wiki.awaiting_ingest }">
+                  <div class="fv">{{ detail.wiki.awaiting_ingest || 0 }}</div>
+                  <div class="fk">tasks awaiting ingest</div>
+                  <div class="fs muted">VALIDATED — done but not yet folded into the wiki</div>
+                </div>
+                <div class="card" :class="{ 'fresh-warn': (detail.wiki.raw_pending || []).length }">
+                  <div class="fv">{{ (detail.wiki.raw_pending || []).length }}</div>
+                  <div class="fk">raw/ files pending</div>
+                  <div class="fs muted">incl. pull digests from the git hook</div>
+                </div>
+                <div class="card">
+                  <div class="fv fv-sm">{{ detail.wiki.last_ingest || 'never' }}</div>
+                  <div class="fk">last ingest</div>
+                  <div class="fs muted">newest ingest entry in wiki/log.md</div>
+                </div>
+                <div class="card">
+                  <div class="fv fv-sm">{{ detail.wiki.wiki_last_edit ? relTime(detail.wiki.wiki_last_edit).replace('synced ', '') : '—' }}</div>
+                  <div class="fk">wiki last edited</div>
+                  <div class="fs muted">the AI's memory itself</div>
+                </div>
+              </div>
+              <div v-if="(detail.wiki.raw_pending || []).length" class="card row" style="margin-top:10px">
+                <div class="grow chips">
+                  <code v-for="f in detail.wiki.raw_pending.slice(0, 6)" :key="f">{{ f }}</code>
+                  <span v-if="detail.wiki.raw_pending.length > 6" class="muted" style="font-size:12px">+{{ detail.wiki.raw_pending.length - 6 }} more</span>
+                </div>
+                <button class="btn btn-primary" title="Launch an ingester run that folds raw/ into the wiki"
+                  @click="quickRun(selected, 'RAW-INGEST', 'ingester')">▶ Ingest raw now</button>
+              </div>
+
               <div class="section">Recent activity · {{ detail.wiki.page_count }} pages</div>
               <div class="card" v-if="detail.wiki.recent_log.length">
                 <div v-for="(l, idx) in detail.wiki.recent_log" :key="idx" class="log-line">{{ l }}</div>
@@ -920,6 +1046,13 @@ onUnmounted(() => { closeStream(); closeChat(); });
                   <select v-model="settingsRoles[role]" class="fsel"><option value="claude">claude</option><option value="codex">codex</option></select>
                 </div>
                 <p class="muted" style="font-size:12px;margin-top:6px">Codex runner is deferred — a role mapped to <code>codex</code> returns 501 at launch for now.</p>
+              </div>
+              <div class="section">Auto-advance (run to completion)</div>
+              <div class="card srow">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                  <input type="checkbox" v-model="settingsAutoAdvance" />
+                  Chain runs by default: after each role hands off, launch the next one (coder → reviewer → tester → ingester) until INGESTED, BLOCKED, or the bounce limit.
+                </label>
               </div>
               <div class="section">Spend budget</div>
               <div class="card srow">
@@ -995,6 +1128,33 @@ onUnmounted(() => { closeStream(); closeChat(); });
           <div v-else-if="!diffView.note" class="empty">No changes since this run started.</div>
         </template>
         <div class="modal-actions"><button class="btn" @click="closeDiff">Close</button></div>
+      </div>
+    </div>
+
+    <!-- ===== APPROVAL INBOX (global — approvals on runs whose panel isn't open) ===== -->
+    <div v-if="showInbox" class="modal-backdrop" @click.self="showInbox = false">
+      <div class="modal" style="width:min(640px,94vw)">
+        <div class="section" style="margin-top:0">Approval inbox <span class="badge" :class="inbox.length ? 'st-BLOCKED' : 'st-COMPLETED'">{{ inbox.length }} pending</span></div>
+        <div v-if="!inbox.length" class="empty">Nothing waiting for you. Chains run unattended until something HIGH/CRITICAL needs a decision.</div>
+        <div v-for="a in inbox" :key="a.approval_id" class="card">
+          <div class="sub" style="margin:0 0 6px">
+            <span class="badge" :class="a.risk === 'CRITICAL' ? 'st-BLOCKED' : 'st-IN_PROGRESS'">{{ a.risk }}</span>
+            <span v-if="a.task_id" class="task-id">{{ a.task_id }}</span>
+            <span class="mono muted" style="font-size:11px">{{ (a.run_id || '').slice(0, 8) }}…</span>
+          </div>
+          <code style="display:block;margin-bottom:8px;white-space:pre-wrap;word-break:break-word">{{ a.action }}</code>
+          <p v-if="a.why" class="muted" style="font-size:12.5px;margin:0 0 6px">{{ a.why }}</p>
+          <div v-if="a.files && a.files.length" class="chips" style="margin-bottom:6px"><code v-for="fp in a.files" :key="fp">{{ fp }}</code></div>
+          <p v-if="a.rollback" class="muted" style="font-size:12.5px;margin:0 0 6px"><b>Rollback:</b> {{ a.rollback }}</p>
+          <label v-if="a.risk === 'CRITICAL'" style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:8px;cursor:pointer">
+            <input type="checkbox" v-model="inboxAck[a.approval_id]" /> I acknowledge the rollback plan (required for CRITICAL)
+          </label>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn" @click="decideInbox(a, 'deny')">Deny</button>
+            <button class="btn btn-primary" :disabled="a.risk === 'CRITICAL' && !inboxAck[a.approval_id]" @click="decideInbox(a, 'approve')">Approve</button>
+          </div>
+        </div>
+        <div class="modal-actions"><button class="btn" @click="showInbox = false">Close</button></div>
       </div>
     </div>
 
@@ -1087,6 +1247,20 @@ onUnmounted(() => { closeStream(); closeChat(); });
 .agent-tok .v { font-family: ui-monospace, monospace; font-size: 20px; font-weight: 600; }
 .agent-tok .k { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 @media (max-width: 760px) { .agent-tok { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- chain toggle + freshness + inbox ---------- */
+.chain-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.chain-toggle input { accent-color: var(--primary); }
+.fresh-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.fresh-grid .card { margin-bottom: 0; }
+.fresh-grid .fv { font-family: var(--mono); font-size: 26px; font-weight: 600; }
+.fresh-grid .fv-sm { font-size: 15px; padding-top: 6px; }
+.fresh-grid .fk { font-weight: 600; font-size: 13px; margin-top: 4px; }
+.fresh-grid .fs { font-size: 11.5px; margin-top: 2px; }
+.fresh-warn { border-color: #f5b03155; }
+.fresh-warn .fv { color: var(--amber); }
+.nav-item.urgent .label { color: var(--coral); font-weight: 600; }
+@media (max-width: 760px) { .fresh-grid { grid-template-columns: repeat(2, 1fr); } }
 
 /* ---------- settings rows + toasts ---------- */
 .srow { display: flex; align-items: center; gap: 10px; padding: 5px 0; }

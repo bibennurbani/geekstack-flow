@@ -1,0 +1,65 @@
+#!/bin/sh
+# geekstack-flow post-merge hook (gsf-hook-v1) — keep the AI's knowledge fresh on every pull.
+#
+# After `git pull` (merge or rebase — install as both post-merge and post-rewrite), this writes a
+# PULL DIGEST into .tcgstackflow/raw/: what changed upstream, as an ingestion-ready Raw file. The
+# Cockpit's Wiki tab shows pending raw files; the Ingester folds them into the LLM-wiki.
+# If config.yaml sets `orchestrator.auto_ingest_on_pull: true` AND the local Cockpit is running,
+# it also launches an ingester run automatically (a RAW-PULL pseudo-task).
+#
+# Installed by `geekstackflow hooks .` — a pre-existing hook is preserved as *.pre-gsf and chained.
+
+set -u
+chain() { [ -x "$0.pre-gsf" ] && exec "$0.pre-gsf" "$@"; exit 0; }
+# Installed as BOTH post-merge (pull via merge) and post-rewrite (pull --rebase). post-rewrite
+# also fires on `commit --amend` — skip that (but still honor a displaced pre-existing hook).
+case "$(basename "$0")" in post-rewrite) [ "${1:-}" = "rebase" ] || chain "$@" ;; esac
+[ -d .tcgstackflow ] || chain "$@"
+command -v git >/dev/null 2>&1 || exit 0
+
+# Range of what just arrived. ORIG_HEAD is set by both merge and rebase; fall back to reflog.
+BASE=$(git rev-parse -q --verify ORIG_HEAD 2>/dev/null || git rev-parse -q --verify 'HEAD@{1}' 2>/dev/null || true)
+HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null || true)
+[ -n "$BASE" ] && [ -n "$HEAD" ] || exit 0
+[ "$BASE" = "$HEAD" ] && exit 0   # nothing new (already up to date)
+
+mkdir -p .tcgstackflow/raw
+SHORT=$(git rev-parse --short "$HEAD")
+STAMP=$(date +%Y%m%d-%H%M%S)
+DIGEST=".tcgstackflow/raw/pull-$STAMP-$SHORT.md"
+
+{
+  echo "# Pull digest — $(date +%Y-%m-%d) ($BASE..$HEAD)"
+  echo
+  echo "Upstream changes that landed via git pull. Raw source for the Ingester: fold what matters"
+  echo "into the wiki (architecture/domain/feature pages), then move this file to raw/archived/."
+  echo
+  echo "## Commits"
+  echo '```'
+  git log --oneline --no-decorate "$BASE..$HEAD" 2>/dev/null | head -100
+  echo '```'
+  echo
+  echo "## Files changed"
+  echo '```'
+  git diff --stat "$BASE..$HEAD" 2>/dev/null | tail -80
+  echo '```'
+} > "$DIGEST" 2>/dev/null || exit 0
+
+echo "geekstack-flow: pull digest written to $DIGEST"
+
+# Optional auto-ingest: only when explicitly enabled AND the Cockpit answers on localhost.
+if grep -q '^\s*auto_ingest_on_pull:\s*true' .tcgstackflow/config.yaml 2>/dev/null; then
+  PORT="${GSF_UI_PORT:-4729}"
+  if command -v curl >/dev/null 2>&1 && curl -sf -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+    curl -sf -m 5 -X POST "http://127.0.0.1:$PORT/api/run" \
+      -H 'Content-Type: application/json' \
+      -d "{\"project_path\":\"$PWD\",\"task_id\":\"RAW-PULL\",\"role\":\"ingester\"}" >/dev/null 2>&1 \
+      && echo "geekstack-flow: ingester run launched (watch it in the Cockpit)" \
+      || echo "geekstack-flow: auto-ingest skipped (run busy or rejected) — digest stays in raw/"
+  else
+    echo "geekstack-flow: Cockpit not running — digest stays in raw/ for the next ingest"
+  fi
+fi
+
+# Chain to a pre-existing hook we displaced at install time ($0 = .git/hooks/<name>).
+chain "$@"

@@ -96,7 +96,13 @@ function readConfig(workspaceDir) {
     if (rm) roles[role] = rm[1].trim();
   }
   const bm = oscoped.match(/^\s+budget_usd:\s*([\d.]+)/m);
-  cfg.orchestrator = { roles, budget_usd: bm ? parseFloat(bm[1]) : null };
+  cfg.orchestrator = {
+    roles,
+    budget_usd: bm ? parseFloat(bm[1]) : null,
+    auto_advance: /^\s+auto_advance:\s*true/m.test(oscoped),                            // chain runs by default
+    max_bounces: parseInt(firstMatch(oscoped, /^\s+max_bounces:\s*(\d+)/m) || '1', 10), // review/test bounces before a chain stops
+    auto_ingest_on_pull: /^\s+auto_ingest_on_pull:\s*true/m.test(oscoped),              // post-merge hook may launch an ingester run
+  };
   return cfg;
 }
 
@@ -157,7 +163,22 @@ function readWiki(workspaceDir) {
   const pages = safeList(path.join(workspaceDir, 'wiki'))
     .filter(e => e.isFile() && e.name.endsWith('.md'))
     .map(e => e.name);
-  return { index, recent_log: recent, page_count: pages.length, pages };
+
+  // Knowledge freshness — the wiki is the AI's memory; stale memory must be VISIBLE.
+  // last_ingest: newest ingest entry in log.md (locked `## [date] ingest | title` prefix).
+  const ingestDates = (log.match(/^## \[(\d{4}-\d{2}-\d{2})\] ingest /gm) || [])
+    .map((l) => l.slice(4, 14)).sort();
+  const last_ingest = ingestDates.length ? ingestDates[ingestDates.length - 1] : null;
+  // raw_pending: un-ingested material sitting in the raw/ inbox (incl. post-merge pull digests).
+  const raw_pending = safeList(path.join(workspaceDir, 'raw'))
+    .filter((e) => e.isFile() && e.name !== 'README.md' && !e.name.startsWith('.'))
+    .map((e) => e.name);
+  // wiki_last_edit: newest page mtime — when the memory itself last changed.
+  let wiki_last_edit = null;
+  for (const p of pages) {
+    try { const m = fs.statSync(path.join(workspaceDir, 'wiki', p)).mtime.toISOString(); if (!wiki_last_edit || m > wiki_last_edit) wiki_last_edit = m; } catch { /* skip */ }
+  }
+  return { index, recent_log: recent, page_count: pages.length, pages, last_ingest, raw_pending, wiki_last_edit };
 }
 
 // --- governance: the project-specific rules section (the customizable part) ---
@@ -309,7 +330,9 @@ function buildProjectDetail(projectPath, overlay = {}) {
     action_queue,
     agents, // per-role { queue, runs, tokens } for this project (agent cards on the Overview tab)
     tasks,
-    wiki: readWiki(workspaceDir),
+    wiki: Object.assign(readWiki(workspaceDir), {
+      awaiting_ingest: tasks.filter((t) => t.bucket === 'active' && t.status === 'VALIDATED').length,
+    }),
     governance: readGovernance(workspaceDir),
     timesheet: readTimesheet(workspaceDir),
     tools_mcp: readToolsAndMcp(workspaceDir),
@@ -542,6 +565,19 @@ function setRoleTool(workspaceDir, role, tool) {
   if (!re.test(text)) throw new Error('role-not-in-config');
   fs.writeFileSync(file, text.replace(re, '$1' + tool));
 }
+function setAutoAdvance(workspaceDir, on) {
+  const file = path.join(workspaceDir, 'config.yaml');
+  const text = fs.readFileSync(file, 'utf8');
+  if (!/^orchestrator:/m.test(text)) throw new Error('no-orchestrator-block');
+  // Operate INSIDE the orchestrator block only — an auto_advance key in another block must not match.
+  const parts = text.split(/^(orchestrator:.*)$/m); // [before, header, rest]
+  const stop = parts[2].search(/^\S/m);
+  let block = stop > 0 ? parts[2].slice(0, stop) : parts[2];
+  const tail = stop > 0 ? parts[2].slice(stop) : '';
+  if (/^\s+auto_advance:/m.test(block)) block = block.replace(/^(\s+auto_advance:\s*)\S+/m, '$1' + (on ? 'true' : 'false'));
+  else block = '\n  auto_advance: ' + (on ? 'true' : 'false') + block;
+  fs.writeFileSync(file, parts[0] + parts[1] + block + tail);
+}
 function setBudget(workspaceDir, usd) {
   const file = path.join(workspaceDir, 'config.yaml');
   let text = fs.readFileSync(file, 'utf8');
@@ -645,7 +681,7 @@ module.exports = {
   // Orchestrator (schema 4): reads
   findTaskFolder, parseFrontmatter, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
   // Orchestrator: the one canonical task-file writer + settings writes
-  appendLogEntry, writeTaskStatus, setRoleTool, setBudget,
+  appendLogEntry, writeTaskStatus, setRoleTool, setBudget, setAutoAdvance,
   // Agents overview + run history
   buildAgentsOverview, parseAgentProfile, AGENT_ROLES, buildRunsHistory,
 };

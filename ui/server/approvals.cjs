@@ -6,11 +6,11 @@
 
 function createApprovals({ emit = () => {}, record = () => {} } = {}) {
   const pending = new Map(); // approval_id -> { ...info, status, resolveFn }
-  let seq = 0;
+  const crypto = require('crypto'); // unique across restarts — a stale page must never resolve a reused id
 
   // Returns a promise that resolves to 'approved' | 'denied' when the browser decides.
   function register(info = {}) {
-    const approval_id = `ap-${++seq}`;
+    const approval_id = 'ap-' + crypto.randomUUID();
     return new Promise((resolveFn) => {
       const rec = {
         approval_id, status: 'pending', resolveFn,
@@ -40,6 +40,9 @@ function createApprovals({ emit = () => {}, record = () => {} } = {}) {
 
   const get = (approval_id) => pending.get(approval_id) || null;
   const listForRun = (run_id) => [...pending.values()].filter((r) => r.run_id === run_id && r.status === 'pending');
+  // Every pending approval across all runs — the global approval inbox (sans the resolve closure).
+  const listPending = () => [...pending.values()].filter((r) => r.status === 'pending')
+    .map(({ resolveFn, ...rest }) => rest);
 
   // Run ended (abort/fail/done): resolve any still-pending approvals as denied so the held
   // long-poll unblocks and no ghost approval lingers. Deliberately SKIPS the record callback —
@@ -56,7 +59,7 @@ function createApprovals({ emit = () => {}, record = () => {} } = {}) {
     return n;
   }
 
-  return { register, resolve, cancelForRun, get, listForRun, _pending: pending };
+  return { register, resolve, cancelForRun, get, listForRun, listPending, _pending: pending };
 }
 
 module.exports = { createApprovals };

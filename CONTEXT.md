@@ -148,5 +148,11 @@ A read-only follow-up chat with a finished Run: the Cockpit resumes the latest R
 **Status safety-net** (server write):
 The one exception to "the agent owns task-file writes": when a clean Run ends with the task's Status un-advanced, the server advances it to `IN_REVIEW` and appends an auditable log entry. A backstop, not the normal path — agents self-advance. _Avoid_: auto-advance (self-advancing agents are the norm; the safety-net only catches the miss).
 
+**Auto-advance chain** (or **Run to completion**):
+An orchestrated Run launched with the chain flag (or `orchestrator.auto_advance: true`) automatically launches the **next lifecycle role** when the previous one hands off — coder → reviewer → tester → ingester — until the task is `INGESTED`, `BLOCKED`, or it **bounces** backward (review/test sent it back) more than `orchestrator.max_bounces` times. Every chained launch re-passes the budget guard. Ending at the Ingester is what keeps the Wiki — the AI's knowledge — fresh without a human click. _Avoid_: pipeline mode, autopilot.
+
+**Pull digest**:
+A Raw file written to `raw/` by the **git post-merge/post-rewrite hook** (`geekstackflow hooks`) after every `git pull` — the upstream commit list + changed-file stats, ready for the Ingester to fold into the Wiki. With `orchestrator.auto_ingest_on_pull: true` and the Cockpit running, the hook launches the ingester Run itself (a `RAW-*` pseudo-task — single-shot, no task files). _Avoid_: sync file, changelog (that's the tool's own release log).
+
 ## Flagged ambiguities
 - **"Karpathy method"** is referenced as the ingestion technique. In this project it means: flat directory of atomic Markdown pages, Obsidian frontmatter (title, tags, aliases, priority, created, updated, status), heavy `[[wikilinks]]`, and a Map-of-Content `index.md` as the entry point. Confirmed against an existing working example (`SaeDigital/run-by-strength/docs/`).

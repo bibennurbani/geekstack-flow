@@ -39,8 +39,32 @@ function makeWorkspace() {
 
 const mig34 = gsf.MIGRATIONS.find((m) => m.from === 3 && m.to === 4);
 
-test('LATEST_SCHEMA is 4', () => {
-  assert.strictEqual(gsf.LATEST_SCHEMA, 4);
+test('LATEST_SCHEMA is 5', () => {
+  assert.strictEqual(gsf.LATEST_SCHEMA, 5);
+});
+
+const mig45 = gsf.MIGRATIONS.find((m) => m.from === 4 && m.to === 5);
+
+test('4→5 adds hooks/post-merge + Trusted Commands; idempotent; preserves user rules', () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-mig5-'));
+  const ws = path.join(target, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'config.yaml'), 'workspace_schema: 4\n');
+  fs.writeFileSync(path.join(ws, 'governance.md'), '# Governance\n\n## Risk Levels\n…\n\n## Project-Specific Rules\n\n- auth/** -> HIGH\n');
+  try {
+    assert.ok(mig45, 'a 4→5 migration entry exists');
+    const n = mig45.apply(target, ws);
+    assert.strictEqual(n, 2, 'hook + governance section');
+    assert.ok(fs.existsSync(path.join(ws, 'hooks', 'post-merge')), 'hook script added');
+    const gov = fs.readFileSync(path.join(ws, 'governance.md'), 'utf8');
+    assert.match(gov, /^## Trusted Commands/m, 'section inserted');
+    assert.ok(gov.indexOf('## Trusted Commands') < gov.indexOf('## Project-Specific Rules'), 'inserted before the rules');
+    assert.match(gov, /- auth\/\*\* -> HIGH/, 'user rules preserved');
+    // idempotent
+    const before = gov;
+    assert.strictEqual(mig45.apply(target, ws), 0, 're-run is a no-op');
+    assert.strictEqual(fs.readFileSync(path.join(ws, 'governance.md'), 'utf8'), before, 'governance unchanged on re-run');
+  } finally { fs.rmSync(target, { recursive: true, force: true }); }
 });
 
 test('a 3→4 migration entry exists', () => {

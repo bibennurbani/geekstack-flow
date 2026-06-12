@@ -225,6 +225,14 @@ Open a task and press **Run {agent}** (e.g. *Run coder* on a `PLANNED` task):
 2. The run **continues across iterations** (`claude --resume`, up to 6) until the agent hands off — sets the task to `IN_REVIEW` — so multi-step tasks actually finish.
 3. **Governance is enforced live**: a HIGH/CRITICAL action (push, dependency install, a path your `governance.md` rules escalate) pauses the run and pops an **approval modal** — Action / Risk / Why / Approve / Deny. Deny is non-fatal ("deferred to human"); either decision is recorded in the task log.
 4. On completion the run is recorded at `runs/{task-id}/{run-id}.md` (transcript + tokens + session id), and the agent's own log entries land in the task files as usual.
+5. **⛓ Chain ("run to completion")** — tick the chain toggle (or set `orchestrator.auto_advance: true`): when a role hands off, the next one launches automatically — coder → reviewer → tester → **ingester** — until the task is `INGESTED`, `BLOCKED`, or it bounces backward more than `max_bounces` times. The **Approvals inbox** (🔔 in the nav, with browser notifications) catches any HIGH/CRITICAL pause from *any* run, so unattended chains never wait unnoticed. Reopening a task **reattaches** to its in-flight run; ▶ buttons on every queue row launch agents without opening the task.
+
+### Keep the AI's knowledge fresh
+
+The wiki is the AI's memory — it's only as good as its last ingest. Two mechanisms keep it current:
+
+- **Wiki tab → Knowledge freshness** — tasks awaiting ingest, pending `raw/` files, last-ingest date, wiki last-edit, plus a **▶ Ingest raw now** button.
+- **The git-pull hook** — `geekstackflow hooks .` installs a `post-merge`/`post-rewrite` hook: every `git pull` writes a **pull digest** (commits + changed files) into `.tcgstackflow/raw/` for the Ingester. With `orchestrator.auto_ingest_on_pull: true` and the Cockpit running, the hook **launches the ingester run automatically** — upstream changes flow into the wiki (and the qmd index, via `embed_on_ingest`) without a click.
 
 ### Inspect, report, discuss
 

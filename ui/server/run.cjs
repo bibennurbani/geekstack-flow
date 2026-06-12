@@ -148,8 +148,17 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     for (const res of L.subs) writeSse(res, ev);
   }
   // SSE subscribe (API-6): replay buffered events, then stream live. Disconnect ≠ kill the run.
+  // A QUEUED run has no live entry yet — pre-create it so the subscriber sees a `queued` status
+  // now and the launch's events later (launch()'s ensure() reuses the same entry).
   function subscribe(run_id, res) {
-    const L = live.get(run_id);
+    let L = live.get(run_id);
+    if (!L) {
+      const r = runManager.get(run_id);
+      if (r && !['done', 'failed', 'aborted'].includes(r.state)) {
+        L = ensure(r);
+        emit(run_id, 'status', { state: r.state }); // typically 'queued'
+      }
+    }
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     if (!L) { writeSse(res, { type: 'error', data: { error: 'unknown-run' } }); return res.end(); }
     for (const ev of L.events) writeSse(res, ev);
@@ -185,12 +194,18 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   }
 
   const CONTINUE_PROMPT = 'Continue this task from where you left off. Finish each remaining subtask; when every acceptance criterion is met, update the implementation log and set the task Status to IN_REVIEW to hand off. If you are blocked, say so clearly and stop.';
+  // Pseudo-task ingest runs (task_id RAW-*): fold the raw/ inbox — incl. post-merge pull digests —
+  // into the LLM-wiki so the AI's knowledge stays current. No task files exist for these.
+  const RAW_INGEST_PROMPT = 'Adopt the ingester role per .tcgstackflow/agents/ingester.md and ingest the pending files in .tcgstackflow/raw/ (newest pull digests first, then any other un-archived files). Follow the ingest skill\'s log-first procedure: draft the wiki/log.md entry, update the relevant wiki pages, then move each ingested file to .tcgstackflow/raw/archived/. Re-embed the qmd index if configured (embed_on_ingest). If raw/ is empty, say so and stop.';
+  const isRawRun = (run) => /^RAW(-|$)/i.test(String(run.task_id || ''));
 
   // One claude invocation. Resolves with the exit code; streams deltas + accumulates tokens/session
   // into L. iter 0 sends the role prompt; later iters --resume the session with a continue nudge.
   function spawnOnce(run, L, workspaceDir, iter) {
     return new Promise((resolve) => {
-      const prompt = iter === 0 ? buildRunPrompt(run.task_id, run.role) : CONTINUE_PROMPT;
+      const prompt = iter > 0 ? CONTINUE_PROMPT
+        : isRawRun(run) && run.role === 'ingester' ? RAW_INGEST_PROMPT
+        : buildRunPrompt(run.task_id, run.role);
       const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
       // Resume the LATEST session id — a resumed print-mode session can fork a new id, and resuming
       // the original would silently drop the intermediate iterations' context.
@@ -272,6 +287,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       const before = L.transcript.length;
       code = await spawnOnce(run, L, workspaceDir, iter);
       if (L.aborted || code !== 0) break;                      // aborted, timeout (-2), or spawn/exit failure
+      if (isRawRun(run)) break;                                // raw-inbox ingests are single-shot (no task Status to advance)
       let settled = false;                                     // agent handed off (IN_REVIEW+) — or BLOCKED it for a human
       try { const d = read.buildTaskDetail(run.project_path, run.task_id); settled = !d.error && (ADVANCED.has(d.status) || d.status === 'BLOCKED'); } catch { /* ignore */ }
       if (settled) break;
@@ -289,6 +305,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       statusSafetyNet(run.project_path, run.task_id);
       emit(run.run_id, 'done', { session_id: L.latest_session_id || L.session_id, tokens: L.tokens, iterations: iters });
       runManager.complete(run.run_id);
+      maybeChain(run, workspaceDir); // auto-advance: enqueue the next lifecycle role (after the slot freed)
     } else {
       writeRunRecord(workspaceDir, run, L, 'failed'); // partial transcript for forensics
       emit(run.run_id, 'status', { state: 'error', code, reason: code === -2 ? 'iteration-timeout' : undefined });
@@ -317,6 +334,30 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     L.events = L.events.filter((ev) => ev.type !== 'delta');
   }
 
+  // Auto-advance chain ("run to completion"): after a clean run, launch the next lifecycle role —
+  // coder → reviewer → tester → ingester — until the task is INGESTED, BLOCKED, or it bounces
+  // backward (review/test sent it back) more than orchestrator.max_bounces times. Every chained
+  // launch passes back through the budget re-check, so a chain can't outspend the budget.
+  const PIPELINE = ['planner', 'coder', 'reviewer', 'tester', 'ingester'];
+  function maybeChain(run, workspaceDir) {
+    if (!run.chain || isRawRun(run)) return;
+    let d;
+    try { d = read.buildTaskDetail(run.project_path, run.task_id); } catch { return; }
+    if (!d || d.error) return;
+    if (d.status === 'BLOCKED') return emit(run.run_id, 'chain', { state: 'stopped', reason: 'blocked' });
+    const next = d.next_agent;
+    if (!next || next === 'human') return emit(run.run_id, 'chain', { state: 'done', status: d.status });
+    // Backward (or same-role) movement = a bounce: reviewer/tester sent the task back, or the
+    // role made no progress. Unbounded, this is the coder↔reviewer infinite loop — cap it.
+    const bounced = PIPELINE.indexOf(next) >= 0 && PIPELINE.indexOf(run.role) >= 0 && PIPELINE.indexOf(next) <= PIPELINE.indexOf(run.role);
+    const bounces = (run.bounces || 0) + (bounced ? 1 : 0);
+    let maxB = 1;
+    try { const m = fs.readFileSync(path.join(workspaceDir, 'config.yaml'), 'utf8').match(/^\s+max_bounces:\s*(\d+)/m); if (m) maxB = parseInt(m[1], 10); } catch { /* default */ }
+    if (bounced && bounces > maxB) return emit(run.run_id, 'chain', { state: 'stopped', reason: 'bounce-limit', bounces, next_ready: next });
+    const nextRun = runManager.enqueue(run.project_path, run.task_id, next, { chain: true, bounces });
+    emit(run.run_id, 'chain', { state: 'next', role: next, run_id: nextRun.run_id, bounces });
+  }
+
   // Turn-based discussion: resume an existing session with a user message and stream the reply.
   // READ-ONLY by design (--allowedTools to read tools, no permission-prompt-tool) so a chat can't
   // mutate the project — for real changes, launch a Run. The reply appends to the SAME session
@@ -339,11 +380,19 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   }
 
   // Stop a run from the UI: flag it aborted + kill the live child. The loop finalizes as 'aborted'.
+  // A still-QUEUED run never launched — cancel it straight in the run-manager (queued→aborted).
   function abortRun(run_id) {
     const L = live.get(run_id);
+    const run = runManager.get(run_id);
+    if (!L && !run) return false;
+    if (run && run.state === 'queued') {
+      runManager.abort(run_id);
+      if (L) { emit(run_id, 'status', { state: 'aborted' }); }
+      onRunTerminal(run_id);
+      return true;
+    }
     if (!L) return false;
     L.aborted = true;
-    const run = runManager.get(run_id);
     if (run && run._child) { try { run._child.kill('SIGTERM'); } catch { /* already gone */ } }
     emit(run_id, 'status', { state: 'aborting' });
     return true;
