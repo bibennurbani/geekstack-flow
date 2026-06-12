@@ -14,7 +14,16 @@ chain() { [ -x "$0.pre-gsf" ] && exec "$0.pre-gsf" "$@"; exit 0; }
 # Installed as BOTH post-merge (pull via merge) and post-rewrite (pull --rebase). post-rewrite
 # also fires on `commit --amend` — skip that (but still honor a displaced pre-existing hook).
 case "$(basename "$0")" in post-rewrite) [ "${1:-}" = "rebase" ] || chain "$@" ;; esac
-[ -d .tcgstackflow ] || chain "$@"
+# Locate the geekstack-flow workspace: here, or up to 4 levels up — in a MULTI-PROJECT workspace
+# the sub-projects are separate git repos and .tcgstackflow lives at the workspace root.
+WS=""
+D="$PWD"
+for _ in 1 2 3 4 5; do
+  [ -d "$D/.tcgstackflow" ] && { WS="$D"; break; }
+  [ "$D" = "/" ] && break
+  D=$(dirname "$D")
+done
+[ -n "$WS" ] || chain "$@"
 command -v git >/dev/null 2>&1 || exit 0
 
 # Range of what just arrived. ORIG_HEAD is set by both merge and rebase; fall back to reflog.
@@ -23,16 +32,17 @@ HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null || true)
 [ -n "$BASE" ] && [ -n "$HEAD" ] || exit 0
 [ "$BASE" = "$HEAD" ] && exit 0   # nothing new (already up to date)
 
-mkdir -p .tcgstackflow/raw
+mkdir -p "$WS/.tcgstackflow/raw"
 SHORT=$(git rev-parse --short "$HEAD")
 STAMP=$(date +%Y%m%d-%H%M%S)
-DIGEST=".tcgstackflow/raw/pull-$STAMP-$SHORT.md"
+REPO=$(basename "$PWD")
+DIGEST="$WS/.tcgstackflow/raw/pull-$STAMP-$REPO-$SHORT.md"
 
 {
-  echo "# Pull digest — $(date +%Y-%m-%d) ($BASE..$HEAD)"
+  echo "# Pull digest — $(date +%Y-%m-%d) · $REPO ($BASE..$HEAD)"
   echo
-  echo "Upstream changes that landed via git pull. Raw source for the Ingester: fold what matters"
-  echo "into the wiki (architecture/domain/feature pages), then move this file to raw/archived/."
+  echo "Upstream changes that landed via git pull in repository \`$REPO\`. Raw source for the"
+  echo "Ingester: fold what matters into the wiki, then move this file to raw/archived/."
   echo
   echo "## Commits"
   echo '```'
@@ -48,12 +58,13 @@ DIGEST=".tcgstackflow/raw/pull-$STAMP-$SHORT.md"
 echo "geekstack-flow: pull digest written to $DIGEST"
 
 # Optional auto-ingest: only when explicitly enabled AND the Cockpit answers on localhost.
-if grep -q '^\s*auto_ingest_on_pull:\s*true' .tcgstackflow/config.yaml 2>/dev/null; then
+# project_path is the WORKSPACE root (the registered project), not the sub-repo.
+if grep -q '^\s*auto_ingest_on_pull:\s*true' "$WS/.tcgstackflow/config.yaml" 2>/dev/null; then
   PORT="${GSF_UI_PORT:-4729}"
   if command -v curl >/dev/null 2>&1 && curl -sf -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
     curl -sf -m 5 -X POST "http://127.0.0.1:$PORT/api/run" \
       -H 'Content-Type: application/json' \
-      -d "{\"project_path\":\"$PWD\",\"task_id\":\"RAW-PULL\",\"role\":\"ingester\"}" >/dev/null 2>&1 \
+      -d "{\"project_path\":\"$WS\",\"task_id\":\"RAW-PULL\",\"role\":\"ingester\"}" >/dev/null 2>&1 \
       && echo "geekstack-flow: ingester run launched (watch it in the Cockpit)" \
       || echo "geekstack-flow: auto-ingest skipped (run busy or rejected) — digest stays in raw/"
   else

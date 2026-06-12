@@ -238,6 +238,31 @@ test('installHooks installs post-merge + post-rewrite, preserving a foreign hook
   } finally { cleanup(dir); }
 });
 
+test('multi-repo: a sub-project pull writes the digest into the WORKSPACE raw/', () => {
+  // workspace root with .tcgstackflow, containing a separate git repo (the multi-project case)
+  const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-multi-'));
+  fs.mkdirSync(path.join(wsRoot, '.tcgstackflow'), { recursive: true });
+  fs.writeFileSync(path.join(wsRoot, '.tcgstackflow', 'config.yaml'), 'workspace_schema: 5\n');
+  const sub = path.join(wsRoot, 'api');
+  fs.mkdirSync(sub);
+  const run = (cmd) => cp.execSync(cmd, { cwd: sub, stdio: ['ignore', 'pipe', 'pipe'] });
+  run('git init -q && git config user.email t@t.local && git config user.name t');
+  fs.writeFileSync(path.join(sub, 'x.txt'), '1\n');
+  run('git add -A && git commit -qm one');
+  try {
+    gsf.installHooks(sub); // sub-repo install falls back to the tool template (walk-up script)
+    const first = run('git rev-parse HEAD').toString().trim();
+    fs.writeFileSync(path.join(sub, 'x.txt'), '2\n');
+    run('git add -A && git commit -qm two');
+    fs.writeFileSync(path.join(sub, '.git', 'ORIG_HEAD'), first + '\n');
+    cp.execSync('.git/hooks/post-merge', { cwd: sub, stdio: ['ignore', 'pipe', 'pipe'] });
+    const raw = fs.readdirSync(path.join(wsRoot, '.tcgstackflow', 'raw')).filter((f) => f.startsWith('pull-'));
+    assert.strictEqual(raw.length, 1, 'digest landed in the WORKSPACE raw/, not the sub-repo');
+    assert.match(raw[0], /-api-/, 'digest filename names the sub-repo');
+    assert.match(fs.readFileSync(path.join(wsRoot, '.tcgstackflow', 'raw', raw[0]), 'utf8'), /repository `api`/, 'digest body names the repo');
+  } finally { cleanup(wsRoot); }
+});
+
 test('the hook script writes a pull digest from ORIG_HEAD..HEAD', () => {
   const { dir, run } = gitRepo();
   try {
