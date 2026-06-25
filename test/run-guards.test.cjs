@@ -42,6 +42,14 @@ test('unknown task -> 404', async () => {
   assert.strictEqual(r.j.error, 'task-not-found');
 });
 
+// Card 2 — GET /api/pricing exposes the canonical server table so the SPA stops drifting (ADR 0034:21).
+test('GET /api/pricing -> the canonical list-price table', async () => {
+  const r = await req('GET', '/api/pricing');
+  assert.strictEqual(r.s, 200);
+  assert.strictEqual(r.j.pricing.opus.input, 15, 'opus input $15/M — the single source the SPA fetches');
+  assert.ok(r.j.pricing.sonnet && r.j.pricing.haiku, 'all model rows present');
+});
+
 test('duplicate run on the same task -> 409; chat on a busy project -> 409', async () => {
   const first = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder' });
   assert.strictEqual(first.s, 200, 'first launch accepted');
