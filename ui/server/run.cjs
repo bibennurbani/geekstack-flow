@@ -36,6 +36,31 @@ function readRoleTool(workspaceDir, role) {
   return rm ? rm[1].trim() : 'claude';
 }
 
+// WK-1 — read config.yaml `wiki_search.embed_on_ingest` (default true: the documented intent, ADR 0030).
+// Only an explicit `false` disables the deterministic re-embed; absent → true.
+function embedOnIngest(workspaceDir) {
+  let text = '';
+  try { text = fs.readFileSync(path.join(workspaceDir, 'config.yaml'), 'utf8'); } catch { return true; }
+  const blk = text.split(/^wiki_search:/m)[1] || '';
+  const stop = blk.search(/^\S/m);
+  const scoped = stop > 0 ? blk.slice(0, stop) : blk;
+  const m = scoped.match(/^\s+embed_on_ingest:\s*(true|false)/m);
+  return m ? m[1] === 'true' : true;
+}
+
+// WK-1 — the default re-embed action (injectable for tests). NON-BLOCKING for the embed itself.
+// Presence-checks qmd first and SKIPS silently if absent (qmd is optional/declinable, ADR 0030 — the
+// agent's own `qmd embed` instruction + the index.md fallback still apply). Never throws.
+function defaultEmbed(projectPath) {
+  return new Promise((resolve) => {
+    try { cp.execFileSync('qmd', ['--version'], { stdio: 'ignore' }); }
+    catch { return resolve({ ran: false, skipped: true, at: new Date().toISOString() }); }
+    cp.execFile('qmd', ['embed'], { cwd: projectPath, timeout: 10 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 }, (err) => {
+      resolve({ ran: true, exit: err ? (err.code == null ? -1 : err.code) : 0, at: new Date().toISOString() });
+    });
+  });
+}
+
 // API-5 — flush the runs/ record (ADR 0033 frontmatter + D4 state/ended_at). Written TWICE per
 // run: a `state: running` placeholder at launch (no ended_at — this is what makes the crash
 // orphan-scan able to detect a server death mid-run), then overwritten once with the terminal
@@ -62,8 +87,14 @@ function writeRunRecord(workspaceDir, run, live, state) {
       `  cache_read: ${t.cache_read}`, `  cache_creation: ${t.cache_creation}`,
       `state: ${state}`,
       ...(live.started_at ? [`started_at: ${live.started_at}`] : []),
-      ...(terminal ? [`ended_at: ${new Date().toISOString()}`] : []),
+      // Stable across the WK-1 embed amendment: runLoop stamps live.ended_at once at the terminal point.
+      ...(terminal ? [`ended_at: ${live.ended_at || new Date().toISOString()}`] : []),
       ...(live.git_base ? [`git_base: ${live.git_base}`] : []),
+      // WK-1 — deterministic re-embed outcome (ingester runs only); lets the Cockpit surface a stale index.
+      ...(live.embed ? ['embed:', `  ran: ${!!live.embed.ran}`,
+        ...(live.embed.skipped ? ['  skipped: true'] : []),
+        ...(live.embed.exit !== undefined && live.embed.exit !== null ? [`  exit: ${live.embed.exit}`] : []),
+        ...(live.embed.at ? [`  at: ${live.embed.at}`] : [])] : []),
       '---',
       live.transcript || '',
       '',
@@ -128,7 +159,7 @@ function reconcileOrphanedRuns(workspaceDir, scanOrphanedRuns) {
 // `onRunTerminal(run_id)` fires on every terminal path (done/failed/aborted) — index.cjs uses it to
 // cancel any approvals still pending for the run. `iterationTimeoutMs` is an INACTIVITY timeout per
 // iteration (no stdout for that long → kill), suspended while a governance approval is pending.
-function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6, onRunTerminal = () => {}, iterationTimeoutMs = 15 * 60 * 1000, adapter = runners.get('claude') } = {}) {
+function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6, onRunTerminal = () => {}, iterationTimeoutMs = 15 * 60 * 1000, adapter = runners.get('claude'), embed = defaultEmbed } = {}) {
   const live = new Map(); // run_id -> { events:[], subs:Set<res>, transcript, tokens, session_id, token, paused, aborted }
 
   function ensure(run) {
@@ -288,6 +319,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       if (iter + 1 < maxIters) emit(run.run_id, 'status', { state: 'continuing', iter: iter + 1 });
     }
     L.iterations = iters;
+    L.ended_at = new Date().toISOString(); // stamp once so the terminal record + any WK-1 embed amendment share it
     onRunTerminal(run.run_id); // cancel pending approvals FIRST — their resolved events must precede the terminal event on the stream
     if (L.aborted) { // user stop — not a failure; does NOT advance the task
       writeRunRecord(workspaceDir, run, L, 'aborted');
@@ -299,6 +331,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       emit(run.run_id, 'done', { session_id: L.latest_session_id || L.session_id, tokens: L.tokens, iterations: iters });
       runManager.complete(run.run_id);
       maybeChain(run, workspaceDir); // auto-advance: enqueue the next lifecycle role (after the slot freed)
+      reembedIfIngest(run, workspaceDir, L); // WK-1: deterministic qmd re-embed after a clean ingester run (fire-and-forget)
     } else {
       writeRunRecord(workspaceDir, run, L, 'failed'); // partial transcript for forensics
       emit(run.run_id, 'status', { state: 'error', code, reason: code === -2 ? 'iteration-timeout' : undefined });
@@ -312,6 +345,21 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   function compact(run_id) {
     const L = live.get(run_id); if (!L) return;
     L.events = L.events.filter((ev) => ev.type !== 'delta');
+  }
+
+  // WK-1 — after a clean INGESTER run (task-ingest chain or RAW-* auto-ingest), deterministically
+  // re-embed the qmd index so a reader never retrieves a STALE index when the agent forgets/errors
+  // before its own `qmd embed`. Fire-and-forget: never blocks the task hand-off or the chain. The
+  // embed presence-checks qmd and skips silently when absent (ADR 0030 — qmd is optional). The outcome
+  // is amended onto the run record so a failed/skipped embed is VISIBLE (the missing observability).
+  function reembedIfIngest(run, workspaceDir, L) {
+    if (run.role !== 'ingester' || !embedOnIngest(workspaceDir)) return;
+    emit(run.run_id, 'status', { state: 'embedding' });
+    Promise.resolve()
+      .then(() => embed(run.project_path))
+      .then((r) => { L.embed = r || { ran: false }; })
+      .catch((e) => { L.embed = { ran: false, error: String((e && e.message) || e) }; })
+      .finally(() => { writeRunRecord(workspaceDir, run, L, 'done'); emit(run.run_id, 'embed', L.embed); });
   }
 
   // Auto-advance chain ("run to completion"): after a clean run, launch the next lifecycle role —
@@ -385,4 +433,4 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   };
 }
 
-module.exports = { buildRunPrompt, readRoleTool, writeRunRecord, statusSafetyNet, reconcileOrphanedRuns, createExecutor, ROLES };
+module.exports = { buildRunPrompt, readRoleTool, embedOnIngest, defaultEmbed, writeRunRecord, statusSafetyNet, reconcileOrphanedRuns, createExecutor, ROLES };
