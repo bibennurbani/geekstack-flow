@@ -99,6 +99,8 @@ test('launch (clean exit): captures real tokens+session, writes runs/ record, ad
     assert.strictEqual(fm.tokens.output, 4);
     assert.strictEqual(fm.tokens.cache_read, 16291);
     assert.strictEqual(fm.tokens.cache_creation, 1885);
+    assert.strictEqual(fm.tool, 'claude', 'RA-6: runner stamped on the record');
+    assert.strictEqual(fm.gate, 'mcp-intercept', 'RA-6: Claude fidelity = full approval card');
 
     // D1 safety-net: IN_PROGRESS was not advanced by the (fake) agent -> server set IN_REVIEW
     const d = read.buildTaskDetail(proj, 'T-1');
@@ -319,5 +321,334 @@ test('reconcileOrphanedRuns appends an aborted entry once', () => {
     assert.match(log, /run orphan aborted at pause point/);
     const n2 = runMod.reconcileOrphanedRuns(ws, scanOrphanedRuns);
     assert.strictEqual(n2, 0, 'idempotent — no second entry');
+  } finally { cleanup(proj); }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// RA-0 (ORCH-runner-adapter, ADR 0035) — characterization of the TRANSPORT
+// CONTRACT: the exact (bin, args, env, cwd) the executor sends per iteration and
+// per mode. The tests above pin the LOOP behaviour (what happens given a stream);
+// these pin what RA-2's `buildSpawn` extraction MUST preserve byte-for-byte when
+// the Claude transport moves behind the RunnerAdapter seam. fakeSpawn above
+// discards its args, so the argv/env/cwd is otherwise entirely uncharacterized —
+// a behaviour-preserving refactor needs this net first (Refactorer doctrine).
+// ───────────────────────────────────────────────────────────────────────────
+
+// like fakeSpawn, but RECORDS each spawn(bin, args, options) call for assertion.
+function recordingSpawn(lines, code = 0) {
+  const calls = [];
+  const fn = (bin, args, options = {}) => {
+    calls.push({ bin, args: args.slice(), cwd: options.cwd, env: options.env });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+    setImmediate(() => { for (const l of lines) child.stdout.emit('data', Buffer.from(l + '\n')); child.emit('close', code); });
+    return child;
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+// (a) iteration-0 run argv: the Claude print-mode contract — ungoverned, no --resume, cwd = project_path.
+test('RA-0 transport: iteration-0 run sends the exact Claude argv and pins cwd to project_path', async () => {
+  const { proj } = makeWs();
+  try {
+    const spawn = recordingSpawn(FIXTURE_LINES, 0);
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', maxIters: 1 });
+    exec.launch({ run_id: 'r-argv', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(60);
+    assert.strictEqual(spawn.calls.length, 1, 'one spawn for maxIters:1');
+    const c = spawn.calls[0];
+    assert.strictEqual(c.bin, 'fake');
+    assert.deepStrictEqual(c.args, ['-p', runMod.buildRunPrompt('T-1', 'coder'),
+      '--output-format', 'stream-json', '--verbose', '--include-partial-messages']);
+    assert.ok(!c.args.includes('--resume'), 'iteration 0 never resumes');
+    assert.ok(!c.args.includes('--mcp-config') && !c.args.includes('--permission-prompt-tool'), 'ungoverned: no gate flags');
+    assert.strictEqual(c.cwd, proj, 'cwd pinned to the run project_path (RA-D7)');
+  } finally { cleanup(proj); }
+});
+
+// (b) resume iterations carry --resume <session> and REUSE iteration-0's cwd (Claude lookup is dir+worktree-scoped).
+test('RA-0 transport: resume iterations add --resume and keep iteration-0 cwd', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    const calls = [];
+    let n = 0;
+    const spawn = (bin, args, options = {}) => {
+      calls.push({ args: args.slice(), cwd: options.cwd });
+      const me = ++n;
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(() => {
+        for (const l of FIXTURE_LINES) child.stdout.emit('data', Buffer.from(l + '\n'));
+        if (me >= 2) fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace(/^Status: .*$/m, 'Status: IN_REVIEW'));
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', maxIters: 5 });
+    exec.launch({ run_id: 'r-resume', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(160);
+    assert.strictEqual(calls.length, 2, 'iter 0 + one resume, then the agent hands off');
+    assert.ok(!calls[0].args.includes('--resume'), 'iteration 0 has no --resume');
+    const ri = calls[1].args.indexOf('--resume');
+    assert.ok(ri >= 0, 'resume iteration adds --resume');
+    assert.ok(calls[1].args[ri + 1] && typeof calls[1].args[ri + 1] === 'string', '--resume carries the captured session id');
+    assert.strictEqual(calls[0].cwd, proj);
+    assert.strictEqual(calls[1].cwd, proj, 'resume reuses iteration-0 cwd (session lookup is dir-scoped)');
+  } finally { cleanup(proj); }
+});
+
+// (c) governed run: the in-run governance gate flags + GSF_* env are part of the contract buildSpawn must reproduce.
+test('RA-0 transport: governed run sends the gate flags and GSF_* env', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const spawn = recordingSpawn(FIXTURE_LINES, 0);
+    const governance = { mcpServerPath: '/opt/gov-mcp.cjs', controlUrl: 'http://127.0.0.1:65000/gov', allowedTools: 'Read,Edit' };
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', governance, maxIters: 1 });
+    exec.launch({ run_id: 'r-gov', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(60);
+    const c = spawn.calls[0];
+    assert.deepStrictEqual(c.args.slice(0, 6), ['-p', runMod.buildRunPrompt('T-1', 'coder'),
+      '--output-format', 'stream-json', '--verbose', '--include-partial-messages'], 'base print-mode prefix unchanged');
+    assert.strictEqual(c.args[6], '--mcp-config');
+    assert.ok(typeof c.args[7] === 'string' && c.args[7].endsWith('.json'), '--mcp-config points at a written config file');
+    assert.deepStrictEqual(c.args.slice(8), ['--permission-prompt-tool', 'mcp__tcgflow_governance__approve',
+      '--permission-mode', 'default', '--allowedTools', 'Read,Edit'], 'gate flags + project allowedTools');
+    assert.strictEqual(c.env.GSF_WORKSPACE_DIR, ws);
+    assert.strictEqual(c.env.GSF_CONTROL_URL, governance.controlUrl);
+    assert.strictEqual(c.env.GSF_RUN_ID, 'r-gov');
+    assert.ok(c.env.GSF_RUN_TOKEN, 'a per-run governance token is set');
+  } finally { cleanup(proj); }
+});
+
+// (d) chat() is read-only: --resume + scoped --allowedTools, and NEVER a gate (a chat must not mutate the project).
+test('RA-0 transport: chat() argv is read-only — no gate, scoped tools, cwd = project_path', async () => {
+  const spawn = recordingSpawn(FIXTURE_LINES, 0);
+  const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake' });
+  exec.chat({ project_path: '/some/proj', session_id: 'sess-42', message: 'what did you do?' });
+  await tick(50);
+  const c = spawn.calls[0];
+  assert.deepStrictEqual(c.args, ['-p', 'what did you do?', '--resume', 'sess-42',
+    '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+    '--permission-mode', 'default', '--allowedTools', 'Read,Grep,Glob,LS']);
+  assert.ok(!c.args.includes('--permission-prompt-tool'), 'chat must never carry the gate');
+  assert.ok(!c.args.includes('--mcp-config'), 'chat is ungoverned by design (read-only)');
+  assert.strictEqual(c.cwd, '/some/proj');
+});
+
+// A minimal synthetic stream carrying a chosen session id (the real fixture never forks its id).
+const streamWith = (sid, text = 'work') => [
+  JSON.stringify({ type: 'system', subtype: 'init', session_id: sid }),
+  JSON.stringify({ type: 'assistant', message: { model: 'm', content: [{ type: 'text', text }] } }),
+  JSON.stringify({ type: 'result', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }),
+];
+
+// (e) #1/#2 — a resumed session can FORK a new id; the loop must resume the LATEST, not the original.
+// The real fixture emits one id forever, so this is the only test that distinguishes the two.
+test('RA-0 transport: resume follows the LATEST (forked) session id, not the original', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    const calls = []; let n = 0;
+    const spawn = (bin, args) => {
+      calls.push({ args: args.slice() });
+      const me = ++n;
+      const sid = me === 1 ? 'A' : 'B'; // iter 0 establishes A; the resumed session forks to B
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(() => {
+        for (const l of streamWith(sid)) child.stdout.emit('data', Buffer.from(l + '\n'));
+        if (me >= 3) fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace(/^Status: .*$/m, 'Status: IN_REVIEW'));
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', maxIters: 5 });
+    exec.launch({ run_id: 'r-fork', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(220);
+    assert.strictEqual(calls.length, 3, 'iter 0 + two resumes, then hand-off');
+    const resumeVal = (a) => { const i = a.indexOf('--resume'); return i >= 0 ? a[i + 1] : null; };
+    assert.strictEqual(resumeVal(calls[0].args), null, 'iter 0 never resumes');
+    assert.strictEqual(resumeVal(calls[1].args), 'A', 'iter 1 resumes the id seen so far (A)');
+    assert.strictEqual(resumeVal(calls[2].args), 'B', 'iter 2 resumes the FORKED latest id (B), not the original A');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-fork.md'), 'utf8'));
+    assert.strictEqual(fm.session_id, 'B', 'the run record stores the latest session id');
+    const L = exec.getLive('r-fork');
+    assert.strictEqual(L.session_id, 'A', 'first id is immutable');
+    assert.strictEqual(L.latest_session_id, 'B', 'latest id tracks forks');
+  } finally { cleanup(proj); }
+});
+
+// (f) #5/#6/#7 — a governed CONTINUATION run: the mcp-config CONTENT, the per-run token reused across
+// iterations, and --resume placed before the gate flags on a resumed governed iteration.
+test('RA-0 transport: governed continuation reuses one token, writes a valid mcp-config, resumes before the gate', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    const governance = { mcpServerPath: '/opt/gov-mcp.cjs', controlUrl: 'http://127.0.0.1:65000/gov', allowedTools: 'Read,Edit' };
+    const calls = []; let n = 0;
+    const spawn = (bin, args, options = {}) => {
+      const mi = args.indexOf('--mcp-config');
+      let mcpConfig = null;
+      if (mi >= 0) { try { mcpConfig = JSON.parse(fs.readFileSync(args[mi + 1], 'utf8')); } catch { /* captured at spawn time, before close unlinks it */ } }
+      calls.push({ args: args.slice(), env: options.env, mcpConfig });
+      const me = ++n;
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(() => {
+        for (const l of streamWith('S')) child.stdout.emit('data', Buffer.from(l + '\n'));
+        if (me >= 2) fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace(/^Status: .*$/m, 'Status: IN_REVIEW'));
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', governance, maxIters: 5 });
+    exec.launch({ run_id: 'r-govloop', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(160);
+    assert.strictEqual(calls.length, 2, 'iter 0 + one resume, then hand-off');
+    // #6 — one per-run token, reused every iteration (the MCP server is registered with the first one)
+    assert.ok(calls[0].env.GSF_RUN_TOKEN, 'a per-run token is set');
+    assert.strictEqual(calls[0].env.GSF_RUN_TOKEN, calls[1].env.GSF_RUN_TOKEN, 'the SAME token is reused across iterations');
+    // #5 — the mcp-config file actually wires our governance server, not just an existing path
+    assert.ok(calls[0].mcpConfig, '--mcp-config file was readable at spawn time');
+    assert.strictEqual(calls[0].mcpConfig.mcpServers.tcgflow_governance.command, process.execPath, 'gate server runs under node');
+    assert.strictEqual(calls[0].mcpConfig.mcpServers.tcgflow_governance.args[0], '/opt/gov-mcp.cjs', 'gate server points at the governance MCP');
+    // #7 — on a governed RESUME iteration, --resume precedes the gate flags
+    const a = calls[1].args;
+    assert.ok(a.indexOf('--resume') >= 0 && a.indexOf('--resume') < a.indexOf('--mcp-config'), 'resume comes before the gate flags');
+  } finally { cleanup(proj); }
+});
+
+// (g) #3/#4 — parseLine: the _sawDelta gate must RESET across turns (so an assistant-only turn after a
+// streamed turn is not dropped), and an assistant message's own usage must NOT be summed (only `result`).
+test('RA-0 parse: _sawDelta resets across turns; assistant-block usage is not counted', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const lines = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'g1' }),
+      JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'A' } } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'A' }], usage: { input_tokens: 999, output_tokens: 999, cache_read_input_tokens: 999, cache_creation_input_tokens: 999 } } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'B' }] } }),
+      JSON.stringify({ type: 'result', usage: { input_tokens: 6073, output_tokens: 4, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }),
+    ];
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn: fakeSpawn(lines, 0), claudeBin: 'fake', maxIters: 1 });
+    exec.launch({ run_id: 'r-sd', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(60);
+    const rec = read.readRunTranscript(ws, 'T-1', 'r-sd');
+    assert.strictEqual(rec.transcript, 'AB', "delta 'A' once (assistant dup skipped); assistant-only 'B' appended after the reset");
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-sd.md'), 'utf8'));
+    assert.strictEqual(fm.tokens.input, 6073, 'only the result usage counts (not the assistant block 999)');
+  } finally { cleanup(proj); }
+});
+
+// (h) #8 — parseLine must skip non-JSON lines and survive a JSON object split across two stdout chunks.
+test('RA-0 parse: skips garbage lines and buffers a JSON object split across chunks', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const rm = fakeRunManager();
+    const chunkedSpawn = () => {
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from('this is not json\n'));
+        child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'system', session_id: 'g2' }) + '\n'));
+        child.stdout.emit('data', Buffer.from('{"type":"result","usage":{"input_tokens":42,')); // split mid-object
+        child.stdout.emit('data', Buffer.from('"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}\n'));
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const exec = runMod.createExecutor({ runManager: rm, spawn: chunkedSpawn, claudeBin: 'fake', maxIters: 1 });
+    exec.launch({ run_id: 'r-rb', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(60);
+    assert.deepStrictEqual(rm.calls.complete, ['r-rb'], 'garbage line did not crash the run');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-rb.md'), 'utf8'));
+    assert.strictEqual(fm.tokens.input, 42, 'the split result object was buffered and parsed');
+  } finally { cleanup(proj); }
+});
+
+// (i) #9 — prompt selection (moves with buildSpawn): iter>0 sends the CONTINUE nudge, not the role prompt.
+test('RA-0 transport: resume iterations send the continue nudge, not the role prompt', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    const calls = []; let n = 0;
+    const spawn = (bin, args) => {
+      calls.push(args.slice());
+      const me = ++n;
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(() => {
+        for (const l of streamWith('s')) child.stdout.emit('data', Buffer.from(l + '\n'));
+        if (me >= 2) fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace(/^Status: .*$/m, 'Status: IN_REVIEW'));
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', maxIters: 5 });
+    exec.launch({ run_id: 'r-cont', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(160);
+    assert.strictEqual(calls[0][1], runMod.buildRunPrompt('T-1', 'coder'), 'iter 0 = the role prompt');
+    assert.match(calls[1][1], /^Continue this task from where you left off/, 'iter 1 = the continue nudge');
+    assert.notStrictEqual(calls[1][1], runMod.buildRunPrompt('T-1', 'coder'), 'a resume must not re-send the role prompt');
+  } finally { cleanup(proj); }
+});
+
+// (j) #9 — the RAW-* ingester branch: a single-shot run fed the raw-inbox ingest prompt (no task Status).
+test('RA-0 transport: a RAW-* ingester run is single-shot with the raw-ingest prompt', async () => {
+  const { proj } = makeWs();
+  try {
+    const spawn = recordingSpawn(streamWith('raw'), 0);
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', maxIters: 5 });
+    exec.launch({ run_id: 'r-rawrun', task_id: 'RAW-1', role: 'ingester', project_path: proj });
+    await tick(80);
+    assert.strictEqual(spawn.calls.length, 1, 'raw-inbox ingest is single-shot (no continuation)');
+    assert.match(spawn.calls[0].args[1], /ingest the pending files in \.tcgstackflow\/raw/, 'fed the raw-ingest prompt, not the role prompt');
+  } finally { cleanup(proj); }
+});
+
+// RA-4 (ADR 0035) — the headline win of the seam: the continuation loop is TOOL-AGNOSTIC. Drive it with
+// a FAKE adapter speaking a made-up protocol (no Claude stream-json knowledge at all) and the loop still
+// continues-until-handoff, sums tokens, tracks the latest session id, and resumes — proving the loop
+// logic lives above the seam. This was impossible to test before the RunnerAdapter extraction.
+test('RA-4: the continuation loop drives a non-Claude (fake) adapter end to end', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    // A toy adapter with its OWN line protocol — the loop must know nothing about Claude's format.
+    const toyAdapter = {
+      id: 'toy',
+      capabilities: { gate: 'none', tokens: 'per-turn', stream: 'incremental', resume: true, topology: 'we-spawn' },
+      buildSpawn: (run, ctx, bin) => ({ bin, args: ['toy', '--say', ctx.prompt, ...(ctx.resumeId ? ['--resume', ctx.resumeId] : [])], env: {}, govConfig: null }),
+      parseLine: (line) => {
+        const out = [];
+        if (line.startsWith('SID ')) out.push({ type: 'session', id: line.slice(4) });
+        if (line.startsWith('TXT ')) out.push({ type: 'delta', text: line.slice(4) });
+        if (line.startsWith('TOK ')) out.push({ type: 'tokens', usage: { input: +line.slice(4), output: 0, cache_read: 0, cache_creation: 0 } });
+        return out;
+      },
+      resumeIdFrom: (st) => (st && (st.latest_session_id || st.session_id)) || null,
+    };
+    const calls = []; let n = 0;
+    const spawn = (bin, args) => {
+      calls.push(args.slice());
+      const me = ++n;
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from(`SID sess-${me}\nTXT hello${me}\nTOK 100\n`));
+        if (me >= 2) fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace(/^Status: .*$/m, 'Status: IN_REVIEW'));
+        child.emit('close', 0);
+      });
+      return child;
+    };
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn, claudeBin: 'toy-bin', adapter: toyAdapter, maxIters: 5 });
+    exec.launch({ run_id: 'r-toy', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(160);
+    assert.deepStrictEqual(rm.calls.complete, ['r-toy'], 'loop completed with a non-Claude adapter');
+    assert.strictEqual(calls.length, 2, 'continued until the agent handed off');
+    assert.ok(!calls[0].includes('--resume'), 'iter 0 has no resume');
+    assert.ok(calls[1].includes('--resume'), 'iter 1 resumed via the toy protocol');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-toy.md'), 'utf8'));
+    assert.strictEqual(fm.tokens.input, 200, 'loop summed tokens across iterations from the adapter events');
+    assert.strictEqual(fm.session_id, 'sess-2', 'loop tracked the latest session id from the toy protocol');
+    assert.strictEqual(fm.tool, 'toy', 'RA-6: gate/tool track the active adapter, not a hardcoded claude');
+    assert.strictEqual(read.buildTaskDetail(proj, 'T-1').status, 'IN_REVIEW', 'hand-off detection is tool-independent');
   } finally { cleanup(proj); }
 });

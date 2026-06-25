@@ -6,14 +6,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 const cp = require('child_process');
 const read = require('./read.cjs');
 const sessionReport = require('./session-report.cjs'); // pricing for the launch-time budget re-check
+const runners = require('./runners/index.cjs'); // RunnerAdapter registry/selector (ADR 0035)
 
 const ZERO = () => ({ input: 0, output: 0, cache_read: 0, cache_creation: 0 });
-const num = (x) => (Number.isFinite(+x) ? +x : 0);
 // HEAD sha of the project's git repo at run start — lets the diff viewer show "changes since this run began".
 function gitHead(cwd) { try { return cp.execFileSync('git', ['-C', cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } }
 const ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
@@ -55,6 +54,8 @@ function writeRunRecord(workspaceDir, run, live, state) {
       '---',
       `task: ${run.task_id}`,
       `role: ${run.role}`,
+      ...(live.tool ? [`tool: ${live.tool}`] : []),          // RA-6 — which runner drove this run
+      ...(live.gate ? [`gate: ${live.gate}`] : []),          // RA-6 — governance fidelity (mcp-intercept|hook-command|sandbox-preset|none)
       ...(sid ? [`session_id: ${sid}`] : []),
       'tokens:',
       `  input: ${t.input}`, `  output: ${t.output}`,
@@ -127,7 +128,7 @@ function reconcileOrphanedRuns(workspaceDir, scanOrphanedRuns) {
 // `onRunTerminal(run_id)` fires on every terminal path (done/failed/aborted) — index.cjs uses it to
 // cancel any approvals still pending for the run. `iterationTimeoutMs` is an INACTIVITY timeout per
 // iteration (no stdout for that long → kill), suspended while a governance approval is pending.
-function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6, onRunTerminal = () => {}, iterationTimeoutMs = 15 * 60 * 1000 } = {}) {
+function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6, onRunTerminal = () => {}, iterationTimeoutMs = 15 * 60 * 1000, adapter = runners.get('claude') } = {}) {
   const live = new Map(); // run_id -> { events:[], subs:Set<res>, transcript, tokens, session_id, token, paused, aborted }
 
   function ensure(run) {
@@ -166,30 +167,21 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     res.on('close', () => L.subs.delete(res));
   }
 
+  // Consume the adapter's uniform events. The adapter owns the tool-specific parse; the loop owns
+  // session first/latest tracking, transcript accumulation, token summing (across iterations), and
+  // SSE fan-out. `L` doubles as the adapter's parser state (it threads the text_delta dedupe flag).
   function handleLine(L, run, line) {
-    if (!line) return;
-    let o; try { o = JSON.parse(line); } catch { return; } // ignore non-JSON lines
-    if (o.session_id) {
-      if (!L.session_id) { L.session_id = o.session_id; run.session_id = o.session_id; }
-      L.latest_session_id = o.session_id; // resumes can fork — always resume the newest
-    }
-    const ev = o.event || o; // stream_event wraps the inner event in .event
-    if (ev && ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
-      const txt = ev.delta.text || ''; L._sawDelta = true; L.transcript += txt; emit(run.run_id, 'delta', { text: txt });
-    }
-    // The whole assistant message arrives too — only use it when NO partial deltas streamed for it
-    // (e.g. runs without --include-partial-messages), otherwise we'd double-count the text.
-    if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
-      if (!L._sawDelta) for (const b of o.message.content) if (b.type === 'text' && b.text) { L.transcript += b.text; emit(run.run_id, 'delta', { text: b.text }); }
-      L._sawDelta = false; // reset for the next turn
-    }
-    if (o.type === 'result' && o.usage) {
-      // Accumulate across continuation iterations (one result event per invocation).
-      L.tokens.input += num(o.usage.input_tokens);
-      L.tokens.output += num(o.usage.output_tokens);
-      L.tokens.cache_read += num(o.usage.cache_read_input_tokens);
-      L.tokens.cache_creation += num(o.usage.cache_creation_input_tokens);
-      emit(run.run_id, 'tokens', L.tokens);
+    for (const e of adapter.parseLine(line, L)) {
+      if (e.type === 'session') {
+        if (!L.session_id) { L.session_id = e.id; run.session_id = e.id; }
+        L.latest_session_id = e.id; // resumes can fork — always resume the newest
+      } else if (e.type === 'delta') {
+        L.transcript += e.text; emit(run.run_id, 'delta', { text: e.text });
+      } else if (e.type === 'tokens') {
+        L.tokens.input += e.usage.input; L.tokens.output += e.usage.output;
+        L.tokens.cache_read += e.usage.cache_read; L.tokens.cache_creation += e.usage.cache_creation;
+        emit(run.run_id, 'tokens', L.tokens);
+      }
     }
   }
 
@@ -206,25 +198,25 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       const prompt = iter > 0 ? CONTINUE_PROMPT
         : isRawRun(run) && run.role === 'ingester' ? RAW_INGEST_PROMPT
         : buildRunPrompt(run.task_id, run.role);
-      const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
-      // Resume the LATEST session id — a resumed print-mode session can fork a new id, and resuming
-      // the original would silently drop the intermediate iterations' context.
-      const resumeId = L.latest_session_id || L.session_id;
-      if (iter > 0 && resumeId) args.push('--resume', resumeId);
-      const env = { ...process.env };
+      // The loop chooses WHAT to say + resolves the resume id; the adapter builds HOW to invoke the tool
+      // (argv / --resume idiom / gate flags). Resuming the LATEST session id (a print-mode resume can
+      // fork a new id; resuming the original would silently drop intermediate context) is the adapter's
+      // resumeIdFrom over the loop-tracked state.
+      const ctx = { prompt, iter, resumeId: adapter.resumeIdFrom(L), mode: 'run' };
       // GOV-4 gate (re-applied each iteration; per-run token generated once and reused).
-      let govCfgPath = null;
       if (governance && governance.mcpServerPath && governance.controlUrl) {
         if (!L.token) { L.token = crypto.randomUUID(); run._token = L.token; }
-        govCfgPath = path.join(os.tmpdir(), `gsf-gov-${run.run_id}-${iter}.json`);
-        try {
-          fs.writeFileSync(govCfgPath, JSON.stringify({ mcpServers: { tcgflow_governance: { command: process.execPath, args: [governance.mcpServerPath] } } }));
-          args.push('--mcp-config', govCfgPath, '--permission-prompt-tool', 'mcp__tcgflow_governance__approve', '--permission-mode', 'default', '--allowedTools', governance.allowedTools || 'Read,Grep,Glob,LS');
-          env.GSF_WORKSPACE_DIR = workspaceDir; env.GSF_CONTROL_URL = governance.controlUrl; env.GSF_RUN_ID = run.run_id; env.GSF_RUN_TOKEN = L.token;
-        } catch { govCfgPath = null; }
+        ctx.governance = { mcpServerPath: governance.mcpServerPath, controlUrl: governance.controlUrl, allowedTools: governance.allowedTools, runToken: L.token, workspaceDir };
+      }
+      let spec = adapter.buildSpawn(run, ctx, claudeBin);
+      // Materialize the gov config the adapter described; a write failure → run ungoverned (prior behavior).
+      let govCfgPath = null;
+      if (spec.govConfig) {
+        try { fs.writeFileSync(spec.govConfig.path, spec.govConfig.content); govCfgPath = spec.govConfig.path; }
+        catch { spec = adapter.buildSpawn(run, { ...ctx, governance: null }, claudeBin); }
       }
       let child;
-      try { child = spawn(claudeBin, args, { cwd: run.project_path, env }); }
+      try { child = spawn(spec.bin, spec.args, { cwd: run.project_path, env: spec.env }); }
       catch (e) { if (govCfgPath) { try { fs.unlinkSync(govCfgPath); } catch { /* ignore */ } } return resolve(-1); }
       run._child = child;
       child.on('error', () => resolve(-1)); // ENOENT etc.
@@ -268,10 +260,11 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     const workspaceDir = path.join(run.project_path, '.tcgstackflow');
     if (!L.git_base) L.git_base = gitHead(run.project_path); // for the per-run diff viewer
     L.started_at = new Date().toISOString();
+    L.tool = adapter.id; L.gate = adapter.capabilities && adapter.capabilities.gate; // RA-6: stamp fidelity on the run record
     // Budget re-check at LAUNCH time (not just enqueue) — a run queued behind an active one would
     // otherwise launch unchecked after the earlier run spent the remaining budget (TOCTOU).
     // In-flight (unflushed) tokens of concurrent projects are still invisible — durable-only check.
-    if (!run.force && overBudget(run.project_path)) {
+    if (!run.force && sessionReport.budgetFor(run.project_path).over) {
       emit(run.run_id, 'status', { state: 'error', error: 'over-budget' });
       runManager.fail(run.run_id, 'over-budget');
       onRunTerminal(run.run_id);
@@ -312,19 +305,6 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       runManager.fail(run.run_id, code === -2 ? 'timeout' : 'exit-' + code);
     }
     compact(run.run_id);        // drop the delta replay buffer — the durable record now holds the transcript
-  }
-
-  // Durable-spend vs configured budget for the launch-time re-check (same opus list pricing as the
-  // enqueue guard in index.cjs and the UI badge). Best-effort: unreadable config → not over budget.
-  function overBudget(projectPath) {
-    try {
-      const detail = read.buildProjectDetail(projectPath);
-      const budget = detail.config && detail.config.orchestrator ? detail.config.orchestrator.budget_usd : null;
-      if (budget == null) return false;
-      const tk = { input: 0, output: 0, cache_read: 0, cache_creation: 0 };
-      for (const t of detail.tasks || []) for (const k in tk) tk[k] += (t.tokens_total && t.tokens_total[k]) || 0;
-      return sessionReport.costOf(tk, 'claude-opus').total >= budget;
-    } catch { return false; }
   }
 
   // After a run is terminal, late SSE subscribers only need the final state — the transcript lives
@@ -368,9 +348,9 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     const L = ensure(run);
     L.session_id = session_id;
     emit(chat_id, 'status', { state: 'started' });
-    const args = ['-p', message, '--resume', session_id, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'default', '--allowedTools', 'Read,Grep,Glob,LS'];
+    const spec = adapter.buildSpawn(run, { prompt: message, mode: 'chat', session_id }, claudeBin);
     let child;
-    try { child = spawn(claudeBin, args, { cwd: project_path, env: process.env }); }
+    try { child = spawn(spec.bin, spec.args, { cwd: project_path, env: spec.env }); }
     catch (e) { emit(chat_id, 'status', { state: 'error', error: 'spawn-failed', detail: String((e && e.message) || e) }); return chat_id; }
     child.on('error', () => emit(chat_id, 'status', { state: 'error', error: 'spawn-failed' }));
     let buf = '';
