@@ -32,8 +32,11 @@ async function decide(params, ctx) {
   try { level = ctx.classify(toolName, input, ctx.rules || [], ctx.trusted || []); } catch { level = 'HIGH'; }
   if (level === 'LOW' || level === 'MEDIUM') return allow(input);
   const action = describeAction(toolName, input);
+  // Card 6 [8] — carry the synthesized recipe (files + rollback hint) so the approval card matches the
+  // manual recipe's shape (ADR 0008/0027); index.cjs forwards these to the approval registry.
+  const recipe = (ctx.recipeFor && ctx.recipeFor(toolName, input)) || {};
   try {
-    const res = await ctx.postIntake({ tool_name: toolName, input, risk: level, action });
+    const res = await ctx.postIntake({ tool_name: toolName, input, risk: level, action, files: recipe.files, rollback: recipe.rollback });
     return res && (res.decision === 'approved' || res.decision === 'approve') ? allow(input) : deny(action);
   } catch {
     return deny(action); // FAIL CLOSED
@@ -83,10 +86,10 @@ function postIntake(payload) {
 }
 
 function runStdio() {
-  const { classify, parseProjectRules, parseTrustedCommands } = require('./governance-classify.cjs');
+  const { classify, recipeFor, parseProjectRules, parseTrustedCommands } = require('./governance-classify.cjs');
   let rules = [], trusted = [];
   try { const gtext = fs.readFileSync(path.join(process.env.GSF_WORKSPACE_DIR || '.', 'governance.md'), 'utf8'); rules = parseProjectRules(gtext); trusted = parseTrustedCommands(gtext); } catch { rules = []; trusted = []; }
-  const ctx = { classify, rules, trusted, postIntake };
+  const ctx = { classify, recipeFor, rules, trusted, postIntake };
   let buf = '';
   process.stdin.on('data', async (chunk) => {
     buf += chunk.toString('utf8');
