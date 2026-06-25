@@ -1,5 +1,9 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { api, postJSON } from './api.js';
+import { PRICING, costOf, pricingRows, opusPromptPrices } from './pricing.js';
+import { fmtTok, fmtUsd, relTime } from './format.js';
+import { filterTasks, bucketCounts as bucketCountsOf } from './projection.js';
 
 const projects = ref([]);
 const selected = ref(null);      // null = Home; else project path
@@ -27,8 +31,6 @@ const pendingApproval = ref(null);
 const criticalAck = ref(false);
 let es = null;
 
-const api = (p) => fetch(p).then(r => r.json());
-const postJSON = (p, body) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const fmtNum = (n) => (Number(n) || 0).toLocaleString();
 
 async function loadProjects() {
@@ -272,12 +274,10 @@ function generateAnalysis() {
   const sids = (report.value && report.value.sessions || []).filter(s => s.found).map(s => s.session_id);
   const logs = sids.length ? sids.map(s => '~/.claude/projects/*/' + s + '.jsonl').join(', ') : '(no session logs found on this machine)';
   const txt = `Author a session-telemetry post-mortem as a self-contained dark-themed HTML report (style of a "Where the tokens went" / session_report) for task ${selectedTask.value} in ${selected.value}. `
-    + `Parse these Claude Code session logs: ${logs}. Include: a narrative headline, a "what happened" summary, a token-class breakdown (cache read/write, output, fresh input) with estimated $ using Opus list pricing (input $15 / output $75 / cache-write $18.75 / cache-read $1.50 per M tokens), tool-calls-by-type, a per-turn cache-read trace, and ranked optimization recommendations with rough $ savings. Write the HTML to $TMPDIR and open it.`;
+    + `Parse these Claude Code session logs: ${logs}. Include: a narrative headline, a "what happened" summary, a token-class breakdown (cache read/write, output, fresh input) with estimated $ using Opus list pricing (${opusPromptPrices(pricing.value)} per M tokens), tool-calls-by-type, a per-turn cache-read trace, and ranked optimization recommendations with rough $ savings. Write the HTML to $TMPDIR and open it.`;
   navigator.clipboard.writeText(txt);
   copiedKey.value = 'report'; setTimeout(() => { if (copiedKey.value === 'report') copiedKey.value = ''; }, 1800);
 }
-const fmtTok = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'; return String(n); };
-const fmtUsd = (n) => { n = Number(n) || 0; return n >= 100 ? '$' + Math.round(n) : '$' + n.toFixed(2); };
 const costRows = computed(() => {
   if (!report.value) return [];
   const t = report.value.totals.tokens, c = report.value.totals.cost.by_class, total = report.value.totals.cost.total || 1e-9;
@@ -310,17 +310,10 @@ function toggleSort(col) { taskSort.value = taskSort.value.col === col ? { col, 
 function filterByAgent(role) { taskAgent.value = role; taskBucket.value = 'active'; projectTab.value = 'tasks'; }
 const projectTasks = computed(() => (detail.value && detail.value.tasks) || []);
 const taskStatuses = computed(() => [...new Set(projectTasks.value.map((t) => t.status))].sort());
-const bucketCounts = computed(() => { const c = { active: 0, completed: 0, archive: 0 }; for (const t of projectTasks.value) if (c[t.bucket] != null) c[t.bucket]++; return c; });
-const filteredTasks = computed(() => {
-  let ts = projectTasks.value.slice();
-  if (taskBucket.value !== 'all') ts = ts.filter((t) => t.bucket === taskBucket.value);
-  if (taskStatus.value !== 'all') ts = ts.filter((t) => t.status === taskStatus.value);
-  if (taskAgent.value !== 'all') ts = ts.filter((t) => t.next_agent === taskAgent.value);
-  const q = taskSearch.value.trim().toLowerCase();
-  if (q) ts = ts.filter((t) => (t.id + ' ' + t.title).toLowerCase().includes(q));
-  const { col, dir } = taskSort.value;
-  return ts.sort((a, b) => String(a[col] || '').localeCompare(String(b[col] || '')) * dir);
-});
+const bucketCounts = computed(() => bucketCountsOf(projectTasks.value));
+const filteredTasks = computed(() => filterTasks(projectTasks.value, {
+  bucket: taskBucket.value, status: taskStatus.value, agent: taskAgent.value, search: taskSearch.value, sort: taskSort.value,
+}));
 
 const ROLE_ORDER = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
 const agentList = computed(() => agents.value ? (agents.value.order || ROLE_ORDER).map((r) => agents.value.roles[r]).filter(Boolean) : []);
@@ -329,9 +322,10 @@ const queueGroups = computed(() => agentList.value.filter((a) => a.queue && a.qu
 const readyCount = computed(() => agentList.value.reduce((n, a) => n + (a.queue ? a.queue.length : 0), 0));
 const agentDetail = computed(() => (agents.value && selectedAgent.value) ? agents.value.roles[selectedAgent.value] : null);
 
-// Client-side cost estimate (Opus list pricing per M; matches the Session Report table).
-const PRICE = { input: 15, output: 75, cache_write: 18.75, cache_read: 1.5 };
-const costOfTokens = (t) => t ? (t.input / 1e6 * PRICE.input + t.output / 1e6 * PRICE.output + t.cache_creation / 1e6 * PRICE.cache_write + t.cache_read / 1e6 * PRICE.cache_read) : 0;
+// Client-side cost estimate. `pricing` is the server's live table (GET /api/pricing, fetched on mount);
+// it defaults to the bundled mirror so $ never drifts from session-report.cjs (Card 2 / ADR 0034:21).
+const pricing = ref(PRICING);
+const costOfTokens = (t) => costOf(t, pricing.value.opus);
 const homeTotals = computed(() => {
   const tk = { input: 0, output: 0, cache_read: 0, cache_creation: 0 }; let runs = 0, active = 0;
   for (const a of agentList.value) {
@@ -396,11 +390,7 @@ const settingsRoles = ref({});
 const settingsBudget = ref('');
 const settingsAutoAdvance = ref(false);
 const settingsBusy = ref(false);
-const PRICING_TABLE = [
-  { m: 'Opus', i: 15, o: 75, cw: 18.75, cr: 1.5 },
-  { m: 'Sonnet', i: 3, o: 15, cw: 3.75, cr: 0.3 },
-  { m: 'Haiku', i: 0.8, o: 4, cw: 1, cr: 0.08 },
-];
+const PRICING_TABLE = computed(() => pricingRows(pricing.value)); // derived from the single source
 function initSettings() {
   const o = (detail.value && detail.value.config && detail.value.config.orchestrator) || { roles: {}, budget_usd: null };
   settingsRoles.value = { ...(o.roles || {}) };
@@ -441,19 +431,10 @@ const prettyStatus = (s) => (s || '').replace(/_/g, ' ');
 const roleEntries = computed(() => taskDetail.value && taskDetail.value.tokens ? Object.entries(taskDetail.value.tokens.by_role || {}) : []);
 const timelineNewest = computed(() => taskDetail.value ? [...(taskDetail.value.timeline || [])].reverse() : []);
 
-function relTime(iso) {
-  if (!iso) return 'never synced';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return 'synced';
-  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-  if (mins < 1) return 'synced just now';
-  if (mins < 60) return `synced ${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `synced ${hrs}h ago`;
-  return `synced ${Math.round(hrs / 24)}d ago`;
-}
-
-onMounted(async () => { await loadProjects(); await loadHome(); pollInbox(); inboxTimer = setInterval(pollInbox, 5000); });
+onMounted(async () => {
+  try { const pr = await api('/api/pricing'); if (pr && pr.pricing) pricing.value = pr.pricing; } catch { /* fall back to the bundled mirror */ }
+  await loadProjects(); await loadHome(); pollInbox(); inboxTimer = setInterval(pollInbox, 5000);
+});
 onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(inboxTimer); });
 </script>
 

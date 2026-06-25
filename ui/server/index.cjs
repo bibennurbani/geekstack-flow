@@ -139,6 +139,11 @@ const server = http.createServer((req, res) => {
     if (p === '/api/agents') {
       return sendJSON(res, 200, read.buildAgentsOverview());
     }
+    // List pricing — the single source the SPA consumes so its $ estimates can't drift from the
+    // server's canonical table (Card 2 / ADR 0034:21). Read-only, no params.
+    if (p === '/api/pricing') {
+      return sendJSON(res, 200, { pricing: sessionReport.PRICING });
+    }
     if (p === '/api/project') {
       const proj = u.searchParams.get('path');
       if (!proj) return sendJSON(res, 400, { error: 'missing path param' });
