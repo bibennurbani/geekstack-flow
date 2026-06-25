@@ -129,22 +129,26 @@ function tasksIn(workspaceDir, bucket) {
   return out.filter(Boolean);
 }
 
-function readTask(workspaceDir, bucket, id) {
-  const folder = path.join(workspaceDir, 'tasks', bucket.split('/')[0], ...bucket.split('/').slice(1), id);
+// Card 3 — the ONE task-header reader. Owns the two-file Status fallback, the PLANNED default, the
+// `# TASK {ID} — {title}` separator subtlety, and the STATUS_NEXT_AGENT lookup — so the list view
+// (readTask) and the detail view (buildTaskDetail) can never interpret a header differently. Returns
+// the raw file bodies too, so callers that need the timeline/details don't re-read.
+function readTaskHeader(folder, id) {
   const log = safeRead(path.join(folder, `TASK ${id}.md`));
   const details = safeRead(path.join(folder, `TASK details ${id}.md`));
   const rawStatus = firstMatch(log, /^Status:\s*(.+)$/m) || firstMatch(details, /^Status:\s*(.+)$/m) || 'PLANNED';
   const status = normalizeStatus(rawStatus);
-  // Title format: "# TASK {ID} — {title}". Require whitespace around the separator so the
-  // ID's own internal hyphen (e.g. ES-6965, BUG-flaky) isn't mistaken for the separator.
+  // Title format "# TASK {ID} — {title}": require whitespace around the separator so the ID's own
+  // internal hyphen (e.g. ES-6965, BUG-flaky) isn't mistaken for it.
   const title = firstMatch(log, /^#\s*TASK\s+\S+\s+[—-]\s+(.+)$/m) || id;
-  return {
-    id,
-    title,
-    bucket: bucket.split('/')[0],
-    status,
-    next_agent: STATUS_NEXT_AGENT[status] === undefined ? null : STATUS_NEXT_AGENT[status],
-  };
+  const next_agent = STATUS_NEXT_AGENT[status] === undefined ? null : STATUS_NEXT_AGENT[status];
+  return { log, details, rawStatus, status, title, next_agent };
+}
+
+function readTask(workspaceDir, bucket, id) {
+  const folder = path.join(workspaceDir, 'tasks', bucket.split('/')[0], ...bucket.split('/').slice(1), id);
+  const h = readTaskHeader(folder, id);
+  return { id, title: h.title, bucket: bucket.split('/')[0], status: h.status, next_agent: h.next_agent };
 }
 
 function listTasks(workspaceDir) {
@@ -511,16 +515,11 @@ function buildTaskDetail(projectPath, id) {
   if (!fs.existsSync(path.join(workspaceDir, 'config.yaml'))) return { error: 'not-a-workspace', path: projectPath };
   const found = findTaskFolder(workspaceDir, id);
   if (!found) return { error: 'task-not-found', id };
-  const log = safeRead(path.join(found.folder, `TASK ${id}.md`));
-  const details = safeRead(path.join(found.folder, `TASK details ${id}.md`));
-  const rawStatus = firstMatch(log, /^Status:\s*(.+)$/m) || firstMatch(details, /^Status:\s*(.+)$/m) || 'PLANNED';
-  const status = normalizeStatus(rawStatus);
-  const title = firstMatch(log, /^#\s*TASK\s+\S+\s+[—-]\s+(.+)$/m) || id;
+  const h = readTaskHeader(found.folder, id);
   return {
-    id, bucket: found.bucket, status,
-    next_agent: STATUS_NEXT_AGENT[status] === undefined ? null : STATUS_NEXT_AGENT[status],
-    title, details_body: details,
-    timeline: parseTaskLogTimeline(log),
+    id, bucket: found.bucket, status: h.status, next_agent: h.next_agent,
+    title: h.title, details_body: h.details,
+    timeline: parseTaskLogTimeline(h.log),
     tokens: readRunsForTask(workspaceDir, id),
   };
 }
