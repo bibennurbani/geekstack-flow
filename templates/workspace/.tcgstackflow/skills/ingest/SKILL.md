@@ -108,12 +108,15 @@ aliases: [{synonyms / alternate names}]          # also surface these in the bod
 priority: P0|P1|P2                               # P0 core · P1 important · P2 reference
 status: current|stub|archived
 created: YYYY-MM-DD
-updated: YYYY-MM-DD
+updated: YYYY-MM-DD                               # last EDITED (bumped on every touch)
+# verified: YYYY-MM-DD                            # optional — last CONFIRMED-against-code (distinct from `updated`); the trust signal
 # project: {name}                                # optional — multi-project workspaces only; match a projects[].name
 ---
 ```
 
 `summary` is new and important: qmd's frontmatter indexing is not guaranteed, but the `summary` sentence sits in the body's first chunk, so it gives both BM25 and the embedding a strong, accurate signal — and it doubles as the page's one-line preview for humans.
+
+`verified` is **optional** and distinct from `updated`: `updated` is *last edited*, `verified` is *last confirmed still true against the code*. Stamp it (Ingester only — preserve the single-writer model) when you re-confirm a page matches current code. The Cockpit's per-page freshness signal prefers `verified` over `updated`; a page with neither newer than the latest ingest that named it is flagged stale. Pages without `verified` simply fall back to `updated` — never gate ingest on it.
 
 ### Tag taxonomy (lightweight, recommended — not enforced)
 
