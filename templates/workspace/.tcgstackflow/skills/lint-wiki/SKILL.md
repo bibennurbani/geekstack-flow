@@ -21,7 +21,7 @@ You are surveying the entire wiki and producing a report. Lint never edits pages
 
 ### Procedure
 
-1. **Build the wikilink graph.** Walk every `.md` file under `wiki/` (excluding `adr/` — ADRs are mostly self-contained and don't need lint cross-checks). For each page, record:
+1. **Build the wikilink graph.** Walk every `.md` file under `wiki/` **including `adr/`** — ADRs are walked for the broken-wikilink check (detector 6), since qmd uses paths as IDs and a rotted link inside an ADR breaks retrieval. ADRs are **exempt from the contradiction (1), orphan (3), and missing-cross-reference (5) detectors**: a superseded ADR legitimately disagrees with a later one, and ADRs are point-in-time, sequentially-numbered records reached via the `adr/` directory + the README — not via inbound wikilinks. For each page, record:
    - Outbound `[[wikilinks]]`
    - `aliases` and `title` from frontmatter
    - `updated` date
@@ -57,7 +57,7 @@ A page's `updated` frontmatter is older than the most recent `log.md` ingest ent
 A page with **no inbound `[[wikilinks]]`** from any other wiki page (excluding `log.md`, which doesn't count as a navigation source). Detected by:
 
 - Counting inbound links per page in the graph.
-- Excluding the canonical entry pages (`index.md`, `log.md`) and ADR README from orphan detection.
+- Excluding the canonical entry pages (`index.md`, `log.md`) and **all of `adr/`** from orphan detection (ADRs are sequentially-numbered records reached via the directory + README, not wikilink targets — orphan semantics don't apply).
 
 **Severity:** `major` — orphans are unreachable from the index and likely dead.
 
@@ -68,7 +68,7 @@ A term mentioned in two or more pages but lacking a page of its own (e.g. "RaceP
 - Identifying capitalised multi-word phrases (likely domain concepts) appearing in ≥2 pages.
 - Cross-checking against `aliases` to avoid false positives for terms that are already represented under a different name.
 
-**Severity:** `nit` — proposes a new page; the Ingester's approval gate decides.
+**Severity:** `nit` — proposes a new page; the Ingester's approval gate decides. Apply `ingest`'s append-vs-mint test first: only propose **minting** if the concept is a distinct first-class noun, not a facet better **appended** to one of the pages that mention it.
 
 #### 5. Missing cross-references
 
@@ -102,7 +102,7 @@ A page lacks the `summary:` frontmatter field, or has it empty/placeholder. Per 
 
 A page's frontmatter is missing a required field, or its `tags` drift from the recommended taxonomy. Detected by:
 
-- **Missing required fields** — check each page for `title`, `tags`, `status`, and `updated`. (`summary` is covered by detector 7.)
+- **Missing required fields** — check each page for `title`, `tags`, `status`, and `updated`. (`summary` is covered by detector 7.) **For pages under `adr/`, `updated:` is NOT required** — ADRs are append-only and dated by their sequence number (matches `adr/README.md`); still require `title`, `summary`, `status`, and a `decision` kind-tag.
 - **Off-taxonomy tags** — flag pages whose `tags` contain no recognised **kind** tag (`overview` · `architecture` · `domain` · `feature` · `integration` · `operations` · `decision` · `testing` · `meta`), or carry more than ~4 tags (tag sprawl).
 - **Near-duplicate tags** — compare tags across the whole wiki for near-duplicates that should be consolidated (e.g. `frontend` vs `front-end` vs `ui`, singular vs plural). Consistency beats coverage.
 
@@ -126,6 +126,24 @@ A page whose `title` has common synonyms or alternate names carries no `aliases:
 - Flagging acronym/expansion pairs (e.g. a page titled "Monitoring Program" referenced elsewhere as "MP") that appear nowhere in `aliases` or body prose.
 
 **Severity:** `nit` — proposes adding the alternate names to `aliases` and surfacing them in prose.
+
+#### 11. Near-duplicate pages
+
+Two pages cover overlapping concepts and should likely be merged (e.g. `monitoring-program.md` + `monitoring-program-form.md` describing the same feature). Knowledge fragmented across near-duplicate pages bloats tokens and splits a concept, so retrieval returns partial answers. Detected by:
+
+- Near-identical or substring page titles, or overlapping `aliases`.
+- `qmd vsearch` of each page's title against the rest — pages landing in the same high-scoring cluster are merge candidates.
+
+**Severity:** `nit` — proposes consolidating via `ingest`'s approval gate. (Pairs with the `ingest` skill's dedup-before-mint rule, which prevents most fragmentation at write time; this detector catches what slipped past.)
+
+#### 12. Resolved-but-unapplied contradictions
+
+A `log.md` Decision section records a *resolved* contradiction, but a page it names was never actually updated — so the page qmd surfaces likely still carries the superseded claim. Detected by:
+
+- For each `log.md` entry whose Decision resolves a contradiction, check that every wiki page named in that Decision also appears in the same entry's `Modified` (or `Created`) list with `updated:` ≥ the entry date.
+- A page named in the resolved Decision but absent from Modified/Created is the finding.
+
+**Severity:** `major` — the corrected truth lives only in the chronological log while the page still asserts the stale fact. Proposed fix: re-ingest, applying the resolved fact to the page body. (Keys off the structured Modified/date fields — no free-text prose comparison — and depends on the `ingest` skill naming the page in the Decision, which its step-4 resolved-contradiction rule now requires.)
 
 ### Output
 
