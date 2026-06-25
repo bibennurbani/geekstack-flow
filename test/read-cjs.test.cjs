@@ -271,3 +271,53 @@ test('buildProjectDetail: empty overlay is byte-identical; populated overlay ann
     assert.strictEqual(d.tasks.find((t) => t.id === 'T-1').status, 'PLANNED', 'durable status untouched');
   } finally { cleanup(proj); }
 });
+
+// WK-6/WK-7 (wiki-reliability Tier 2) — per-page staleness: a page a NEWER ingest named but whose own
+// freshness date (verified|updated) predates that ingest was demonstrably skipped → flagged stale.
+function makeWikiWs(pages, logBody) {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-stale-'));
+  const wiki = path.join(proj, '.tcgstackflow', 'wiki');
+  fs.mkdirSync(wiki, { recursive: true });
+  for (const [name, fmObj] of Object.entries(pages)) {
+    const fm = ['---', `title: ${name}`, 'summary: x', 'tags: [domain]', 'status: current', `updated: ${fmObj.updated}`];
+    if (fmObj.verified) fm.push(`verified: ${fmObj.verified}`);
+    fm.push('---', '', `# ${name}`, '', 'body', '');
+    fs.writeFileSync(path.join(wiki, name), fm.join('\n'));
+  }
+  fs.writeFileSync(path.join(wiki, 'log.md'), logBody);
+  return { proj, ws: path.join(proj, '.tcgstackflow') };
+}
+
+test('WK-6/7 stalePagesFor: flags pages a newer ingest named but did not bump; prefers verified; excludes index/log', () => {
+  const { proj, ws } = makeWikiWs({
+    'architecture.md': { updated: '2026-06-15' },                    // stale: ingest 06-20 named it, updated 06-15 <
+    'domain.md': { updated: '2026-06-20' },                          // fresh: updated == ingest date (not <)
+    'strava.md': { updated: '2026-06-25', verified: '2026-06-10' },  // stale by VERIFIED: re-edited but not re-confirmed since 06-10
+    'untouched.md': { updated: '2026-01-01' },                       // never named by an ingest → not stale
+    'index.md': { updated: '2026-01-01' },                           // excluded by design
+  }, [
+    '# Wiki log', '',
+    '## [2026-06-20] ingest | feature X', '',
+    '**Modified:**',
+    '- `wiki/architecture.md` — x',
+    '- `wiki/domain.md` — x',
+    '- `wiki/strava.md` — x',
+    '- `wiki/index.md` — bumped', '',
+    '**Decision:** done.', '',
+  ].join('\n'));
+  try {
+    const byName = Object.fromEntries(read.stalePagesFor(ws).map((s) => [s.name, s]));
+    assert.ok(byName['architecture.md'] && byName['architecture.md'].by === 'updated', 'architecture stale by updated (06-15 < 06-20)');
+    assert.ok(byName['strava.md'] && byName['strava.md'].by === 'verified', 'strava stale by verified (06-10 < 06-20) despite updated 06-25');
+    assert.ok(!byName['domain.md'], 'domain fresh (updated == ingest date)');
+    assert.ok(!byName['untouched.md'], 'never named by an ingest → not stale');
+    assert.ok(!byName['index.md'], 'index.md excluded');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('WK-6 stalePagesFor: no ingest entries → no stale pages', () => {
+  const { proj, ws } = makeWikiWs({ 'architecture.md': { updated: '2020-01-01' } }, '# Wiki log\n\n_(no operations yet)_\n');
+  try {
+    assert.deepStrictEqual(read.stalePagesFor(ws), []);
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});

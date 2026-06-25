@@ -156,6 +156,43 @@ function listTasks(workspaceDir) {
 }
 
 // --- wiki: index map-of-content + recent log entries (locked `## [date] op | title` prefix) ---
+// WK-6/WK-7 — per-page staleness, made VISIBLE continuously (not only on the weekly Lint). A page is
+// stale when the log says a NEWER ingest named it but the page's own freshness date — `verified:` if
+// present (WK-7: "facts confirmed-against-code on X"), else `updated:` — predates that ingest, i.e. an
+// ingest claimed to touch it but it was never bumped (an incomplete ingest / resolved-but-unapplied
+// contradiction). Deterministic: keyed off the log's structured page mentions + dates, no fuzzy match.
+function parseIngestEntries(log) {
+  const out = [];
+  // Split on the locked entry header `## [YYYY-MM-DD] {op} …`, capturing date + op; bodies sit between.
+  const parts = String(log || '').split(/^## \[(\d{4}-\d{2}-\d{2})\]\s+(\S+)[^\n]*$/m);
+  for (let i = 1; i < parts.length; i += 3) {
+    const date = parts[i]; const op = parts[i + 1]; const body = parts[i + 2] || '';
+    if (op !== 'ingest') continue; // only ingest entries name the pages they modified
+    const pages = new Set();
+    for (const m of body.matchAll(/([a-z0-9][a-z0-9_-]*)\.md\b/gi)) pages.add(m[1].toLowerCase());
+    for (const m of body.matchAll(/\[\[([a-z0-9][a-z0-9_/-]*)\]\]/gi)) pages.add(m[1].replace(/^.*\//, '').toLowerCase());
+    out.push({ date, pages });
+  }
+  return out;
+}
+function stalePagesFor(workspaceDir) {
+  const wikiDir = path.join(workspaceDir, 'wiki');
+  const entries = parseIngestEntries(safeRead(path.join(wikiDir, 'log.md')));
+  if (!entries.length) return [];
+  const out = [];
+  for (const entry of safeList(wikiDir)) {
+    if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'log.md' || entry.name === 'index.md') continue;
+    const base = entry.name.replace(/\.md$/, '').toLowerCase();
+    let newest = null;
+    for (const e of entries) if (e.pages.has(base) && (!newest || e.date > newest)) newest = e.date;
+    if (!newest) continue; // no ingest ever named this page → nothing to compare against
+    const fm = parseFrontmatter(safeRead(path.join(wikiDir, entry.name)));
+    const fresh = String(fm.verified || fm.updated || '').slice(0, 10); // YYYY-MM-DD sorts lexicographically
+    if (fresh && fresh < newest) out.push({ name: entry.name, fresh, by: fm.verified ? 'verified' : 'updated', superseded_by: newest });
+  }
+  return out;
+}
+
 function readWiki(workspaceDir) {
   const index = safeRead(path.join(workspaceDir, 'wiki', 'index.md'));
   const log = safeRead(path.join(workspaceDir, 'wiki', 'log.md'));
@@ -178,7 +215,9 @@ function readWiki(workspaceDir) {
   for (const p of pages) {
     try { const m = fs.statSync(path.join(workspaceDir, 'wiki', p)).mtime.toISOString(); if (!wiki_last_edit || m > wiki_last_edit) wiki_last_edit = m; } catch { /* skip */ }
   }
-  return { index, recent_log: recent, page_count: pages.length, pages, last_ingest, raw_pending, wiki_last_edit };
+  // WK-6 — pages the log says were superseded but never bumped; surfaced as a per-page freshness signal.
+  const stale_pages = stalePagesFor(workspaceDir);
+  return { index, recent_log: recent, page_count: pages.length, pages, last_ingest, raw_pending, wiki_last_edit, stale_pages };
 }
 
 // --- governance: the project-specific rules section (the customizable part) ---
@@ -271,6 +310,8 @@ function buildProjectsList() {
       workspace_schema: schema,
       latest_schema: gsf.LATEST_SCHEMA,
       update_available: exists && schema != null && schema < gsf.LATEST_SCHEMA,
+      // WK-8 — the per-project stale-wiki flag CONTEXT.md's Home view promised (now real).
+      stale_wiki: exists ? stalePagesFor(workspaceDir).length > 0 : false,
     };
   });
 }
@@ -677,7 +718,7 @@ function buildRunsHistory(opts = {}) {
 }
 
 module.exports = {
-  buildProjectsList, buildProjectDetail, STATUS_NEXT_AGENT,
+  buildProjectsList, buildProjectDetail, STATUS_NEXT_AGENT, stalePagesFor,
   // Orchestrator (schema 4): reads
   findTaskFolder, parseFrontmatter, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
   // Orchestrator: the one canonical task-file writer + settings writes
