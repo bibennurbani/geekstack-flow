@@ -414,6 +414,44 @@ function reconcileAllProjects() {
   }
 }
 
+// WK-3 — decide which ingester runs to auto-launch for a project so the wiki captures completed work
+// + the raw/ inbox without a human click. PURE + exported for testing. OPT-IN: only when the project
+// set `orchestrator.auto_ingest_on_pull` (each enqueue is a billable agent run, so it's never on by
+// default). Idempotent against the in-flight overlay. Returns [{ task_id, reason }].
+function pendingIngestPlan(detail, overlay = {}) {
+  const plan = [];
+  if (!detail || detail.error) return plan;
+  const orch = detail.config && detail.config.orchestrator;
+  if (!orch || !orch.auto_ingest_on_pull) return plan;
+  for (const t of detail.tasks || []) {
+    if (t.bucket === 'active' && t.status === 'VALIDATED' && !overlay[t.id]) plan.push({ task_id: t.id, reason: 'validated' });
+  }
+  const rawPending = (detail.wiki && detail.wiki.raw_pending) || [];
+  const rawBusy = Object.keys(overlay).some((id) => /^RAW(-|$)/i.test(id));
+  if (rawPending.length && !rawBusy) plan.push({ task_id: 'RAW-INGEST', reason: 'raw', count: rawPending.length });
+  return plan;
+}
+
+// WK-3 — on startup (after the gate is wired), fold any pending VALIDATED tasks + a non-empty raw/
+// inbox into the wiki so a human-validated task whose chain wasn't enabled — or a pull digest that
+// arrived while the Cockpit was down — doesn't sit un-ingested forever. Startup-only (no timer): the
+// pull-hook + one-click queue cover the steady state, and a clock that spawns billable runs unattended
+// is the wrong default. Gated on auto_ingest_on_pull per project.
+function reconcilePendingIngest() {
+  let entries = [];
+  try { entries = gsf.readProjectRegistry(); } catch { return; }
+  for (const entry of entries) {
+    try {
+      const overlay = runManager.overlayFor(entry.path);
+      const detail = read.buildProjectDetail(entry.path, overlay);
+      for (const item of pendingIngestPlan(detail, overlay)) {
+        const r = runManager.enqueue(entry.path, item.task_id, 'ingester', { chain: false });
+        console.log(`  auto-ingest: queued ingester for ${item.task_id} (${item.reason}) in ${entry.name} — ${r.run_id}`);
+      }
+    } catch { /* skip a project that won't reconcile */ }
+  }
+}
+
 // API-9 — on server stop, kill in-flight children and mark their runs aborted (a killed run does
 // NOT advance its task; statusSafetyNet only runs on a clean exit).
 function shutdown() {
@@ -432,6 +470,9 @@ function start(port) {
     reconcileAllProjects();
     const addr = `http://${HOST}:${port}`;
     governance.controlUrl = addr; // GOV-4 — the MCP gate posts approval requests back here
+    // WK-3 — auto-fold pending VALIDATED tasks + raw/ inbox into the wiki. AFTER controlUrl is set and
+    // only when the gate is ready, so an auto-launched ingester run is governed like any other.
+    if (governanceGateReady) reconcilePendingIngest();
     console.log(`Cockpit running at ${addr}  (tool v${gsf.TOOL_VERSION}, latest schema ${gsf.LATEST_SCHEMA})`);
     console.log(`Endpoints: /api/health  /api/projects  /api/project  /api/project/task  POST /api/project/task/status  POST /api/run  /api/runs  /api/run/stream`);
     console.log(`Orchestrator: runs ${governanceGateReady ? 'ENABLED' : 'gated until governance wired (Phase 5)'}`);
@@ -444,4 +485,4 @@ if (require.main === module) {
   start(portArg ? parseInt(portArg, 10) : DEFAULT_PORT);
 }
 
-module.exports = { server, start, DEFAULT_PORT, HOST, runManager, executor, setGovernanceGateReady };
+module.exports = { server, start, DEFAULT_PORT, HOST, runManager, executor, setGovernanceGateReady, pendingIngestPlan };

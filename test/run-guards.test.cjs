@@ -50,6 +50,32 @@ test('GET /api/pricing -> the canonical list-price table', async () => {
   assert.ok(r.j.pricing.sonnet && r.j.pricing.haiku, 'all model rows present');
 });
 
+// WK-3 — auto-capture: pendingIngestPlan decides which ingester runs to queue on startup. Pure → no boot.
+test('WK-3 pendingIngestPlan: opt-in only — empty unless auto_ingest_on_pull is on', () => {
+  const tasks = [{ id: 'T-1', bucket: 'active', status: 'VALIDATED' }];
+  assert.deepStrictEqual(idx.pendingIngestPlan({ config: { orchestrator: {} }, tasks }), [], 'off by default');
+  assert.deepStrictEqual(idx.pendingIngestPlan({ error: 'not-a-workspace' }), [], 'error detail → nothing');
+});
+
+test('WK-3 pendingIngestPlan: VALIDATED active tasks queue an ingester when enabled', () => {
+  const detail = { config: { orchestrator: { auto_ingest_on_pull: true } }, wiki: { raw_pending: [] }, tasks: [
+    { id: 'T-1', bucket: 'active', status: 'VALIDATED' },
+    { id: 'T-2', bucket: 'active', status: 'IN_REVIEW' },    // not validated → skip
+    { id: 'T-3', bucket: 'completed', status: 'VALIDATED' },  // not active → skip
+  ] };
+  assert.deepStrictEqual(idx.pendingIngestPlan(detail, {}).map((p) => p.task_id), ['T-1']);
+});
+
+test('WK-3 pendingIngestPlan: skips in-flight tasks; adds one RAW run for a non-empty inbox (idempotent)', () => {
+  const detail = { config: { orchestrator: { auto_ingest_on_pull: true } }, wiki: { raw_pending: ['digest.md'] }, tasks: [
+    { id: 'T-1', bucket: 'active', status: 'VALIDATED' },
+  ] };
+  // T-1 already running → excluded; raw inbox → RAW-INGEST queued
+  assert.deepStrictEqual(idx.pendingIngestPlan(detail, { 'T-1': { run_state: 'running' } }).map((p) => p.task_id), ['RAW-INGEST']);
+  // a RAW run already in-flight → no duplicate RAW; T-1 now free → queued
+  assert.deepStrictEqual(idx.pendingIngestPlan(detail, { 'RAW-INGEST': { run_state: 'running' } }).map((p) => p.task_id), ['T-1']);
+});
+
 test('duplicate run on the same task -> 409; chat on a busy project -> 409', async () => {
   const first = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder' });
   assert.strictEqual(first.s, 200, 'first launch accepted');

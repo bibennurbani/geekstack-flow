@@ -539,6 +539,16 @@ async function upgradeWorkspace(target) {
     console.log(`\n  ✓ upgraded to schema ${LATEST_SCHEMA}, stamped tcgflow_version: "${TOOL_VERSION}"`);
   }
 
+  // WK-2 — nudge if a git repo's pull-digest hook isn't wired (migration 5's one-time note won't
+  // re-fire on a re-run, so an un-hooked workspace would otherwise get no reminder).
+  try {
+    const pm = path.join(target, '.git', 'hooks', 'post-merge');
+    const hooked = fs.existsSync(pm) && fs.readFileSync(pm, 'utf8').includes('gsf-hook-v1');
+    if (fs.existsSync(path.join(target, '.git')) && !hooked) {
+      console.log('  ~ git pull-digest hook not wired — run `geekstackflow hooks .` so pulls feed the Ingester (keeps the wiki fresh).');
+    }
+  } catch { /* best-effort reminder */ }
+
   // --- refresh tool-owned files from templates (commands + agents) ---
   // The tcgflow-* slash commands and shipped agent profiles are tool product surface,
   // not customization targets — so behavioural fixes ship via `upgrade`. Drifted files
@@ -1264,6 +1274,18 @@ async function main() {
   const rootGitignorePath = path.join(target, '.gitignore');
   if (appendGsfBlockToRootGitignore(target)) {
     console.log(`  ✓ appended geekstack-flow block to ${path.relative(target, rootGitignorePath)}`);
+  }
+
+  // --- wire the git pull-digest hook (WK-2): every `git pull` feeds the Ingester so the wiki — the
+  // AI's memory — captures upstream changes without anyone remembering to. Guarded on a git repo so
+  // installHooks() (which exit(1)s otherwise) is only called when it can succeed; the hook script was
+  // copied into .tcgstackflow/hooks/ above, so installHooks finds it. ---
+  if (fs.existsSync(path.join(target, '.git'))) {
+    const wireHook = await askYesNo('Install the git pull-digest hook (every pull feeds the Ingester — keeps the wiki fresh)?', true);
+    if (wireHook) installHooks(target);
+    else console.log('  ~ skipped — wire it later with `geekstackflow hooks .`');
+  } else {
+    console.log('  ~ not a git repo yet — after `git init`, run `geekstackflow hooks .` to wire the pull-digest hook');
   }
 
   // --- create Obsidian-friendly non-hidden symlink ---
