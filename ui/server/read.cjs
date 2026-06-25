@@ -432,20 +432,77 @@ function parseFrontmatter(text) {
   return out;
 }
 const ZERO_TOKENS = () => ({ input: 0, output: 0, cache_read: 0, cache_creation: 0 });
+const RUN_TOKEN_KEYS = ['input', 'output', 'cache_read', 'cache_creation'];
+
+// Card 3 — the ONE owner of the runs/{run}.md frontmatter contract (ADR 0033/0035/0036). serializeRunRecord
+// turns a structured record into the on-disk YAML+transcript; parseRunRecord turns it back into a TYPED,
+// DEFAULTED record (tokens always the 4 numeric keys; session_id/tool/gate normalized to string-or-null;
+// optional state/embed/timestamps). The executor's write and every read site go through these instead of
+// re-deriving the shape, so the format has ONE executable spec — and a round-trip test proves writer/reader
+// symmetry. Pure (no fs): callers own the file I/O (ADR 0024). The empty-`session_id`-is-truthy-{} trap and
+// the token defaulting are handled here, once, not guarded at every reader.
+function serializeRunRecord(rec = {}) {
+  const t = rec.tokens || ZERO_TOKENS();
+  const terminal = rec.state !== 'running';
+  const sid = rec.session_id; // omit when falsy — an empty `session_id:` parses as a truthy {} downstream
+  const e = rec.embed;
+  return [
+    '---',
+    `task: ${rec.task}`,
+    `role: ${rec.role}`,
+    ...(rec.tool ? [`tool: ${rec.tool}`] : []),
+    ...(rec.gate ? [`gate: ${rec.gate}`] : []),
+    ...(sid ? [`session_id: ${sid}`] : []),
+    'tokens:',
+    `  input: ${t.input || 0}`, `  output: ${t.output || 0}`,
+    `  cache_read: ${t.cache_read || 0}`, `  cache_creation: ${t.cache_creation || 0}`,
+    `state: ${rec.state}`,
+    ...(rec.started_at ? [`started_at: ${rec.started_at}`] : []),
+    ...(terminal ? [`ended_at: ${rec.ended_at || new Date().toISOString()}`] : []),
+    ...(rec.git_base ? [`git_base: ${rec.git_base}`] : []),
+    ...(e ? ['embed:', `  ran: ${!!e.ran}`,
+      ...(e.skipped ? ['  skipped: true'] : []),
+      ...(e.exit !== undefined && e.exit !== null ? [`  exit: ${e.exit}`] : []),
+      ...(e.at ? [`  at: ${e.at}`] : [])] : []),
+    '---',
+    rec.transcript || '',
+    '',
+  ].join('\n');
+}
+function parseRunRecord(text) {
+  const fm = parseFrontmatter(text);
+  const m = String(text || '').match(/^---\s*\n[\s\S]*?\n---\s*\n?([\s\S]*)$/);
+  const ft = (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : {};
+  const tokens = ZERO_TOKENS();
+  for (const k of RUN_TOKEN_KEYS) tokens[k] = Number.isFinite(+ft[k]) ? +ft[k] : 0;
+  const str = (v) => ((typeof v === 'string' && v) ? v : null);
+  return {
+    task: fm.task || null,
+    role: fm.role || null,
+    tool: str(fm.tool),
+    gate: str(fm.gate),
+    session_id: str(fm.session_id),
+    state: fm.state || null,
+    started_at: fm.started_at || null,
+    ended_at: fm.ended_at || null,
+    git_base: fm.git_base || null,
+    tokens,
+    embed: (fm.embed && typeof fm.embed === 'object') ? fm.embed : null,
+    transcript: (m ? m[1] : String(text || '')).trim(),
+  };
+}
+
 function readRunsForTask(workspaceDir, id) {
   const dir = path.join(workspaceDir, 'runs', id);
   const total = ZERO_TOKENS(); const by_role = {}; const runs = [];
   for (const entry of safeList(dir)) {
     if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-    const fm = parseFrontmatter(safeRead(path.join(dir, entry.name)));
-    const role = fm.role || 'unknown';
-    const t = (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : {};
-    const tokens = ZERO_TOKENS();
-    for (const k of Object.keys(tokens)) tokens[k] = Number.isFinite(+t[k]) ? +t[k] : 0;
-    for (const k of Object.keys(total)) total[k] += tokens[k];
+    const rr = parseRunRecord(safeRead(path.join(dir, entry.name)));
+    const role = rr.role || 'unknown';
+    for (const k of RUN_TOKEN_KEYS) total[k] += rr.tokens[k];
     if (!by_role[role]) by_role[role] = ZERO_TOKENS();
-    for (const k of Object.keys(tokens)) by_role[role][k] += tokens[k];
-    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: (typeof fm.session_id === 'string' && fm.session_id) ? fm.session_id : null, state: fm.state || null, tokens });
+    for (const k of RUN_TOKEN_KEYS) by_role[role][k] += rr.tokens[k];
+    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: rr.session_id, state: rr.state, tokens: rr.tokens });
   }
   return { total, by_role, runs };
 }
@@ -454,13 +511,11 @@ function readRunsForTask(workspaceDir, id) {
 function readRunTranscript(workspaceDir, taskId, runId) {
   const text = safeRead(path.join(workspaceDir, 'runs', taskId, runId + '.md'));
   if (!text) return { error: 'run-not-found', run_id: runId };
-  const fm = parseFrontmatter(text);
-  const m = text.match(/^---\s*\n[\s\S]*?\n---\s*\n?([\s\S]*)$/);
+  const rr = parseRunRecord(text);
   return {
-    run_id: runId, role: fm.role || null, session_id: (typeof fm.session_id === 'string' && fm.session_id) ? fm.session_id : null,
-    state: fm.state || null, ended_at: fm.ended_at || null, git_base: fm.git_base || null,
-    tokens: (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : null,
-    transcript: (m ? m[1] : text).trim(),
+    run_id: runId, role: rr.role, session_id: rr.session_id,
+    state: rr.state, ended_at: rr.ended_at, git_base: rr.git_base, tool: rr.tool, gate: rr.gate, embed: rr.embed,
+    tokens: rr.tokens, transcript: rr.transcript,
   };
 }
 
@@ -703,12 +758,12 @@ function buildRunsHistory(opts = {}) {
       if (!td.isDirectory()) continue;
       for (const f of safeList(path.join(runsBase, td.name))) {
         if (!f.isFile() || !f.name.endsWith('.md')) continue;
-        const fm = parseFrontmatter(safeRead(path.join(runsBase, td.name, f.name)));
+        const rr = parseRunRecord(safeRead(path.join(runsBase, td.name, f.name)));
         out.push({
           project: entry.name, project_path: entry.path, task_id: td.name,
-          run_id: f.name.replace(/\.md$/, ''), role: fm.role || 'unknown',
-          state: fm.state || null, session_id: (typeof fm.session_id === 'string' && fm.session_id) ? fm.session_id : null, ended_at: fm.ended_at || null, started_at: fm.started_at || null,
-          tokens: (fm.tokens && typeof fm.tokens === 'object') ? fm.tokens : ZERO_TOKENS(),
+          run_id: f.name.replace(/\.md$/, ''), role: rr.role || 'unknown',
+          state: rr.state, session_id: rr.session_id, ended_at: rr.ended_at, started_at: rr.started_at,
+          tokens: rr.tokens,
         });
       }
     }
@@ -719,7 +774,7 @@ function buildRunsHistory(opts = {}) {
 module.exports = {
   buildProjectsList, buildProjectDetail, STATUS_NEXT_AGENT, stalePagesFor,
   // Orchestrator (schema 4): reads
-  findTaskFolder, parseFrontmatter, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
+  findTaskFolder, parseFrontmatter, serializeRunRecord, parseRunRecord, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
   // Orchestrator: the one canonical task-file writer + settings writes
   appendLogEntry, writeTaskStatus, setRoleTool, setBudget, setAutoAdvance,
   // Agents overview + run history

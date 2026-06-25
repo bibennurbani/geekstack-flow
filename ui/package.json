@@ -1,7 +1,7 @@
 {
   "name": "@geekstackflow/cockpit-ui",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Creative GeekStack Flow — Cockpit SPA (Vue 3 + Vite). Served locally by the zero-dep Node server in ./server.",
   "scripts": {

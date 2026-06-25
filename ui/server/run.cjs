@@ -69,36 +69,17 @@ function writeRunRecord(workspaceDir, run, live, state) {
   try {
     const dir = path.join(workspaceDir, 'runs', run.task_id);
     fs.mkdirSync(dir, { recursive: true });
-    const t = live.tokens || ZERO();
-    const terminal = state !== 'running';
-    // Record the LATEST session id (print-mode resumes can fork a new id per iteration) — it's what
-    // Discuss/⌥-terminal must resume and where the newest session JSONL lives. Omit the line
-    // entirely when unknown: an empty `session_id:` parses as a truthy {} and poisons consumers.
-    const sid = live.latest_session_id || live.session_id;
-    const body = [
-      '---',
-      `task: ${run.task_id}`,
-      `role: ${run.role}`,
-      ...(live.tool ? [`tool: ${live.tool}`] : []),          // RA-6 — which runner drove this run
-      ...(live.gate ? [`gate: ${live.gate}`] : []),          // RA-6 — governance fidelity (mcp-intercept|hook-command|sandbox-preset|none)
-      ...(sid ? [`session_id: ${sid}`] : []),
-      'tokens:',
-      `  input: ${t.input}`, `  output: ${t.output}`,
-      `  cache_read: ${t.cache_read}`, `  cache_creation: ${t.cache_creation}`,
-      `state: ${state}`,
-      ...(live.started_at ? [`started_at: ${live.started_at}`] : []),
-      // Stable across the WK-1 embed amendment: runLoop stamps live.ended_at once at the terminal point.
-      ...(terminal ? [`ended_at: ${live.ended_at || new Date().toISOString()}`] : []),
-      ...(live.git_base ? [`git_base: ${live.git_base}`] : []),
-      // WK-1 — deterministic re-embed outcome (ingester runs only); lets the Cockpit surface a stale index.
-      ...(live.embed ? ['embed:', `  ran: ${!!live.embed.ran}`,
-        ...(live.embed.skipped ? ['  skipped: true'] : []),
-        ...(live.embed.exit !== undefined && live.embed.exit !== null ? [`  exit: ${live.embed.exit}`] : []),
-        ...(live.embed.at ? [`  at: ${live.embed.at}`] : [])] : []),
-      '---',
-      live.transcript || '',
-      '',
-    ].join('\n');
+    // Card 3 — the run-record FORMAT lives in one place (read.serializeRunRecord). The executor supplies
+    // the structured record (the LATEST session id — resumes can fork; tool/gate per ADR 0035; embed per
+    // ADR 0036) and owns only the file write. The empty-session_id / token-defaulting / ended_at rules are
+    // the serializer's, so the writer and every reader share one executable spec.
+    const body = read.serializeRunRecord({
+      task: run.task_id, role: run.role, tool: live.tool, gate: live.gate,
+      session_id: live.latest_session_id || live.session_id,
+      tokens: live.tokens || ZERO(), state,
+      started_at: live.started_at, ended_at: live.ended_at, git_base: live.git_base,
+      embed: live.embed, transcript: live.transcript,
+    });
     fs.writeFileSync(path.join(dir, run.run_id + '.md'), body);
   } catch { /* a failed flush must never crash the server */ }
 }
