@@ -321,3 +321,38 @@ test('WK-6 stalePagesFor: no ingest entries → no stale pages', () => {
     assert.deepStrictEqual(read.stalePagesFor(ws), []);
   } finally { fs.rmSync(proj, { recursive: true, force: true }); }
 });
+
+// Card 3 [9] — the run-record format is one serialize/parse module; this proves writer/reader symmetry,
+// which was impossible to express while the write side (run.cjs) and 4 read sites each owned the shape.
+test('Card 3 run-record: serialize → parse round-trips every field', () => {
+  const rec = {
+    task: 'ES-1', role: 'coder', tool: 'claude', gate: 'mcp-intercept', session_id: 'sess-9',
+    tokens: { input: 10, output: 2, cache_read: 5, cache_creation: 1 }, state: 'done',
+    started_at: '2026-06-25T10:00:00Z', ended_at: '2026-06-25T10:05:00Z', git_base: 'abc123',
+    embed: { ran: true, exit: 0, at: '2026-06-25T10:05:01Z' }, transcript: 'did the work\nacross lines',
+  };
+  const back = read.parseRunRecord(read.serializeRunRecord(rec));
+  assert.strictEqual(back.task, 'ES-1');
+  assert.strictEqual(back.role, 'coder');
+  assert.strictEqual(back.tool, 'claude');
+  assert.strictEqual(back.gate, 'mcp-intercept');
+  assert.strictEqual(back.session_id, 'sess-9');
+  assert.deepStrictEqual(back.tokens, { input: 10, output: 2, cache_read: 5, cache_creation: 1 });
+  assert.strictEqual(back.state, 'done');
+  assert.strictEqual(back.ended_at, '2026-06-25T10:05:00Z');
+  assert.strictEqual(back.git_base, 'abc123');
+  assert.strictEqual(back.embed.ran, 'true');  // serialized as a bool; parseFrontmatter reads scalars as strings
+  assert.strictEqual(back.embed.exit, 0);
+  assert.strictEqual(back.transcript, 'did the work\nacross lines');
+});
+
+test('Card 3 run-record: parse defaults — tokens always 4 keys; absent session_id never poisons', () => {
+  const running = read.serializeRunRecord({ task: 'T', role: 'coder', state: 'running', tokens: {} });
+  assert.ok(!/^session_id:/m.test(running), 'no session_id line when absent (the truthy-{} trap)');
+  assert.ok(!/^ended_at:/m.test(running), 'no ended_at while running');
+  const back = read.parseRunRecord(running);
+  assert.strictEqual(back.session_id, null);
+  assert.strictEqual(back.state, 'running');
+  assert.deepStrictEqual(back.tokens, { input: 0, output: 0, cache_read: 0, cache_creation: 0 });
+  assert.deepStrictEqual(read.parseRunRecord('').tokens, { input: 0, output: 0, cache_read: 0, cache_creation: 0 }, 'garbage → safe defaults, never throws');
+});

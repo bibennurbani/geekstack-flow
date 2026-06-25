@@ -125,11 +125,11 @@ function buildTaskReport(workspaceDir, taskId, opts = {}) {
   let turns = 0, records = 0, mcp_calls = 0, start = null, end = null, found = 0;
 
   for (const f of files) {
-    const fm = read.parseFrontmatter(fs.readFileSync(path.join(runsDir, f.name), 'utf8'));
-    const session_id = fm.session_id || '';
+    const rr = read.parseRunRecord(fs.readFileSync(path.join(runsDir, f.name), 'utf8'));
+    const session_id = rr.session_id || '';
     const logFile = findSessionLog(session_id, opts.claudeHome);
     const parsed = logFile ? parseSessionLog(logFile) : null;
-    const entry = { run_id: f.name.replace(/\.md$/, ''), session_id, role: fm.role || 'unknown', found: !!parsed };
+    const entry = { run_id: f.name.replace(/\.md$/, ''), session_id, role: rr.role || 'unknown', found: !!parsed };
     if (parsed) {
       found++;
       for (const k of Object.keys(totalTokens)) totalTokens[k] += parsed.tokens[k];
@@ -143,8 +143,7 @@ function buildTaskReport(workspaceDir, taskId, opts = {}) {
     } else {
       // Run record exists but the session JSONL isn't on this machine — fall back to the run's own
       // frontmatter totals so the report still counts it (no per-turn trace for it).
-      const ft = fm.tokens && typeof fm.tokens === 'object' ? fm.tokens : {};
-      const ftk = { input: +ft.input || 0, output: +ft.output || 0, cache_read: +ft.cache_read || 0, cache_creation: +ft.cache_creation || 0 };
+      const ftk = rr.tokens; // typed 4-key tokens from parseRunRecord (one coercion, not re-derived here)
       for (const k of Object.keys(totalTokens)) totalTokens[k] += ftk[k];
       entry.turns = 0; entry.tokens = ftk; entry.model = '';
     }
