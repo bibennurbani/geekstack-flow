@@ -23,7 +23,8 @@ This is the map of content (MOC) for the project wiki: the single page that link
 
 ## Decisions
 
-- [[adr/0001-{slug}]] — _(first ADR will replace this stub)_
+- [[adr/README]] — how ADRs work + when to write one (the index of decisions)
+- _No ADRs yet — the first decision creates `adr/0001-{slug}.md` and is linked here by the Ingester._
 
 ## Meta
 
