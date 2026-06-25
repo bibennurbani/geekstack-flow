@@ -31,7 +31,9 @@ The user typed `/tcgflow-init` or said something equivalent: *"set up geekstackf
 
 5. **Report what was created** — `.tcgstackflow/`, the root adapter files, and (for multi-project) the auto-detected `projects:` array.
 
-6. **Bootstrap qmd wiki-search** (realizes the `wiki_search` config block `init.js` scaffolds — ADR 0030; `init.js` the *script* stays dependency-free and does **not** install qmd):
+6. **Wire the git pull-digest hook.** `init` offers this (default yes) when the target is a git repo; if it was skipped, the directory wasn't a git repo yet, or you're just confirming, run `geekstackflow hooks .`. Every `git pull` then writes a pull digest to `.tcgstackflow/raw/` for the Ingester, so upstream/teammate changes reach the wiki without anyone remembering to ingest (CONTEXT.md *Pull digest*). **LOW risk** — idempotent; any pre-existing hook is preserved and chained. Optionally set `orchestrator.auto_ingest_on_pull: true` to auto-launch an ingester run when the Cockpit is up.
+
+7. **Bootstrap qmd wiki-search** (realizes the `wiki_search` config block `init.js` scaffolds — ADR 0030; `init.js` the *script* stays dependency-free and does **not** install qmd):
    - **Ensure qmd is installed.** Run `qmd --version`. If missing, install it — `npm install -g @tobilu/qmd`. This is a **HIGH action** per `governance.md` (global npm install + ~2 GB of local models): issue a permission request first. Needs Node ≥ 22, ~2 GB disk for models, and `brew install sqlite` on macOS.
    - **Register collections + set a retrieval context per collection** (the `--mask` and `context` values come from config.yaml's `wiki_search` block). The `wiki` collection is mandatory:
      ```bash
@@ -45,7 +47,7 @@ The user typed `/tcgflow-init` or said something equivalent: *"set up geekstackf
      ```
    - **Run the first embed and confirm.** `qmd embed` so the collections are indexed and the `wiki-search` skill works on first use, then `qmd status` to confirm the collections registered and embedded.
 
-7. **Suggest the next move:** invoke `/tcgflow-plan` for a first task (commonly a scan-and-populate task to fill `wiki/project-overview.md` and `wiki/architecture.md` from the codebase).
+8. **Suggest the next move:** invoke `/tcgflow-plan` for a first task (commonly a scan-and-populate task to fill `wiki/project-overview.md` and `wiki/architecture.md` from the codebase).
 
 ## Notes
 

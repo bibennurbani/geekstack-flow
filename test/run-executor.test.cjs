@@ -603,6 +603,73 @@ test('RA-0 transport: a RAW-* ingester run is single-shot with the raw-ingest pr
   } finally { cleanup(proj); }
 });
 
+// WK-1 (wiki-reliability) — deterministic re-embed: a clean INGESTER run re-embeds the qmd index on the
+// server, so a reader never gets a stale index when the agent forgets/errors before its own `qmd embed`.
+// The embed action is injected (fake) so we test the GATING without a real qmd.
+test('WK-1: a clean ingester run deterministically re-embeds and records the outcome', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const embedCalls = [];
+    const fakeEmbed = (p) => { embedCalls.push(p); return Promise.resolve({ ran: true, exit: 0, at: '2026-06-25T00:00:00Z' }); };
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 1, embed: fakeEmbed });
+    exec.launch({ run_id: 'r-ing', task_id: 'T-1', role: 'ingester', project_path: proj });
+    await tick(90);
+    assert.deepStrictEqual(embedCalls, [proj], 'embed invoked once with the project path');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-ing.md'), 'utf8'));
+    assert.strictEqual(fm.state, 'done');
+    assert.strictEqual(fm.embed.ran, 'true', 'embed outcome amended onto the run record (Cockpit can surface stale-index)');
+  } finally { cleanup(proj); }
+});
+
+test('WK-1: a non-ingester run does NOT re-embed', async () => {
+  const { proj } = makeWs();
+  try {
+    const embedCalls = [];
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 1, embed: (p) => { embedCalls.push(p); return Promise.resolve({ ran: true }); } });
+    exec.launch({ run_id: 'r-cod', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(90);
+    assert.deepStrictEqual(embedCalls, [], 'embed is ingester-only');
+  } finally { cleanup(proj); }
+});
+
+test('WK-1: embed_on_ingest:false disables the deterministic re-embed', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    fs.writeFileSync(path.join(ws, 'config.yaml'), 'workspace_schema: 5\nwiki_search:\n  engine: qmd\n  embed_on_ingest: false\norchestrator:\n  roles:\n    coder: claude\n');
+    const embedCalls = [];
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 1, embed: (p) => { embedCalls.push(p); return Promise.resolve({ ran: true }); } });
+    exec.launch({ run_id: 'r-ing2', task_id: 'T-1', role: 'ingester', project_path: proj });
+    await tick(90);
+    assert.deepStrictEqual(embedCalls, [], 'gated off by config');
+  } finally { cleanup(proj); }
+});
+
+test('WK-1: a skipped embed (qmd absent) is recorded; the run still completes', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 1, embed: () => Promise.resolve({ ran: false, skipped: true, at: '2026-06-25T00:00:00Z' }) });
+    exec.launch({ run_id: 'r-skip', task_id: 'T-1', role: 'ingester', project_path: proj });
+    await tick(90);
+    assert.deepStrictEqual(rm.calls.complete, ['r-skip'], 'run completes regardless of embed');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-skip.md'), 'utf8'));
+    assert.strictEqual(fm.embed.ran, 'false');
+    assert.strictEqual(fm.embed.skipped, 'true');
+  } finally { cleanup(proj); }
+});
+
+test('WK-1: embedOnIngest defaults true, respects an explicit false', () => {
+  const { proj, ws } = makeWs();
+  try {
+    assert.strictEqual(runMod.embedOnIngest(ws), true, 'absent wiki_search block → default true (ADR 0030 intent)');
+    fs.writeFileSync(path.join(ws, 'config.yaml'), 'wiki_search:\n  embed_on_ingest: false\norchestrator:\n  roles:\n    coder: claude\n');
+    assert.strictEqual(runMod.embedOnIngest(ws), false);
+    fs.writeFileSync(path.join(ws, 'config.yaml'), 'wiki_search:\n  embed_on_ingest: true\n');
+    assert.strictEqual(runMod.embedOnIngest(ws), true);
+  } finally { cleanup(proj); }
+});
+
 // RA-4 (ADR 0035) — the headline win of the seam: the continuation loop is TOOL-AGNOSTIC. Drive it with
 // a FAKE adapter speaking a made-up protocol (no Claude stream-json knowledge at all) and the loop still
 // continues-until-handoff, sums tokens, tracks the latest session id, and resumes — proving the loop

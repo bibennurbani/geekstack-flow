@@ -28,12 +28,17 @@ tokens:
 state: done            # running | done | failed | aborted   (Orchestrator-written; see note)
 ended_at: 2026-06-09T14:32:00Z
 git_base: 3f2a1bc94…   # optional — HEAD sha of the project repo at run start
+embed:                 # ingester runs only (WK-1 / ADR 0036) — outcome of the deterministic qmd re-embed
+  ran: true            #   false + skipped: true when qmd is absent
+  exit: 0
+  at: 2026-06-25T14:33:10Z
 ---
 <the raw agent transcript follows the frontmatter>
 ```
 
 - `task`, `role`, `session_id`, `tokens.{input,output,cache_read,cache_creation}` are the keys fixed by **ADR 0033**. Token counts are accumulated across the run's continuation iterations — the Orchestrator re-invokes `claude --resume` (max 6 iterations) until the agent advances Status to IN_REVIEW; each iteration's final `result` event (`usage.input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`) is summed into the frontmatter totals. **Raw counts only in the run record — no dollar conversion here** (ADR 0033). Dollar-cost estimates appear only in the Cockpit's Session Report, computed from the session JSONL at list prices (ADR 0034).
 - `tool` and `gate` are **Orchestrator-written** (ADR 0035): `tool` is the runner that drove the run (`claude` today; `codex`/`copilot` are follow-on adapters) and `gate` is its governance **fidelity** — `mcp-intercept` (Claude's full pause-and-approve approval card), `hook-command` (a fail-closed pre-tool hook), `sandbox-preset` (the tool's own sandbox policy, no card), or `none`. The Cockpit can surface `gate` as a per-run badge so reduced governance is visible. Both are additive and absent on pre-0035 records.
+- `embed` (ingester runs only) records the outcome of the Orchestrator's deterministic qmd re-embed (ADR 0036): `ran` true/false, `exit`, `at`, and `skipped: true` when qmd is absent. It lets the Cockpit surface a "re-index failed / index may be stale" signal instead of the failure being silent. Additive; absent on non-ingester runs and pre-0036 records.
 - `state`, `ended_at`, and (when the project is a git repo) `git_base` are **Orchestrator-written** fields beyond ADR 0033's human-visible keys. `state` + `ended_at` let the crash-reconcile scan tell a clean terminal record (`state: done|failed|aborted` present) from a half-written one (no terminal marker → the server died mid-run). `git_base` is the repo HEAD captured at run start; the Cockpit's per-run diff viewer shows "changes since this run began" from it. This is a documented refinement of ADR 0033's frontmatter shape.
 
 ## How the Cockpit uses these
