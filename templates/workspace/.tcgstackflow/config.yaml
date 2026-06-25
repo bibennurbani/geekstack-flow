@@ -5,7 +5,7 @@
 #   tcgflow_version  : the tool semver that last touched this workspace (informational).
 #   workspace_schema : layout version; `upgrade` runs migrations keyed off it. See ADR 0021.
 tcgflow_version: "0.0.0"             # stamped by init
-workspace_schema: 5                  # current layout (schema 5 = hooks/ + Trusted Commands; 4 = runs/ + orchestrator.roles)
+workspace_schema: 6                  # current layout (6 = run-record tool/gate/embed per ADR 0035/0036; 5 = hooks/ + Trusted Commands; 4 = runs/ + orchestrator.roles)
 
 project:
   name: ""                          # filled by init

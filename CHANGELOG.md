@@ -4,6 +4,19 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-25
+
+### Added — Per-tool runner adapter, wiki-reliability, governance depth, internal deepenings (schema 6)
+
+- **Per-tool runner-adapter seam (ADR 0035)** — the Orchestrator's transport is no longer fused to Claude's CLI: a pure `RunnerAdapter` (argv / stream-parse / `--resume` idiom / governance-gate behind one small interface) makes the continuation loop tool-agnostic; `readRoleTool` becomes the selector. Claude ships as the reference adapter; the cost-spreading goal (Codex/Copilot) is reachable behind the seam rather than a `501`.
+- **One budget computation** — `sessionReport.budgetFor()` consolidates the spend-vs-budget math that was duplicated in `run.cjs`/`index.cjs`; pricing is a parameter (follows the role's tool).
+- **Cockpit: pure seams + pricing single source** — `api.js`/`pricing.js`/`format.js`/`projection.js`/`useRun.js` extracted from the 1,332-line `App.vue` (the SPA's first test surface; vitest added). New `GET /api/pricing` is the one list-price source, ending the 4× Opus-price drift (ADR 0034:21).
+- **Wiki reliability** — deterministic `qmd embed` after a clean ingester run (**ADR 0036**; no more silently-stale index, outcome recorded on the run record); the git pull-digest hook is installed by `init`; startup auto-folds pending `VALIDATED` tasks + the `raw/` inbox (opt-in `auto_ingest_on_pull`); per-page staleness surfaced (`stale_pages` + the Home `stale_wiki` flag); optional `verified:` page-freshness field; dedup-before-mint + apply-resolved-contradiction-to-the-page + file→page coverage map + ADR retrieval parity + an explicit retrieval token-budget.
+- **Governance gate depth** — the classifier closes the indirection blind spot (`make deploy`/`npm run deploy`/`psql DROP`/`docker push` no longer tunnel through as MEDIUM; routine `npm run test`/`make build`/`docker compose up` stay MEDIUM — no approval fatigue); the orchestrated approval card now carries a synthesized Files list + Rollback hint (ADR 0008/0027 fidelity).
+- **Run-record contract (schema 6)** — `runs/{run}.md` frontmatter gains `tool`/`gate` (ADR 0035) and `embed` (ADR 0036); the format now lives in one `serialize/parse` module in `read.cjs` (round-trip tested). `upgrade` refreshes `runs/README.md` (the contract doc) in existing workspaces.
+- **Internal deepenings + test seams** — one task-header reader (kills a byte-identical parse); characterization tests for the `init.js` project-detection cascade. Two suites now: `npm test` (node --test — server/CLI) and `npm --prefix ui test` (vitest — SPA).
+- New ADRs: **0035** (runner-adapter seam + per-tool fidelity tiers), **0036** (orchestrator deterministically re-embeds qmd after ingest).
+
 ### Added — Auto-advance chains, knowledge freshness, and the git-pull ingest hook
 
 - **Auto-advance chain ("run to completion")** — a chained Run launches the next lifecycle role on hand-off (coder → reviewer → tester → ingester) until `INGESTED`/`BLOCKED` or the `max_bounces` limit; per-launch toggle or `orchestrator.auto_advance: true`. Budget re-checked at every chained launch.

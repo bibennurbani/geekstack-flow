@@ -70,12 +70,13 @@ const GLOBAL_TEMPLATE = path.join(SCRIPT_DIR, 'templates/global/.tcgstackflow');
 // schema 3 = wiki_search (qmd) config block in config.yaml — ADR 0030
 // schema 4 = runs/ area for the Orchestrator + orchestrator.roles tool map — ADR 0024/0025/0032/0033
 // schema 5 = hooks/ area (git pull-digest hook) + Trusted Commands governance section
+// schema 6 = run-record frontmatter gains tool/gate/embed (per-tool runner adapter + deterministic re-embed) — ADR 0035/0036
 function readToolVersion() {
   try { return JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, 'package.json'), 'utf8')).version || '0.0.0'; }
   catch { return '0.0.0'; }
 }
 const TOOL_VERSION = readToolVersion();
-const LATEST_SCHEMA = 5;
+const LATEST_SCHEMA = 6;
 
 function parseArgs(argv) {
   const args = { force: false, help: false, upgrade: false, register: false, drift: false, ui: false, hooks: false, port: null, migrateFrom: null, target: process.cwd() };
@@ -436,6 +437,30 @@ const MIGRATIONS = [
         }
       }
 
+      return n;
+    },
+  },
+  {
+    from: 5, to: 6,
+    label: 'run-record contract gains tool/gate/embed (ADR 0035/0036) — refresh runs/README.md',
+    apply(target, workspaceDir) {
+      let n = 0;
+      // The runs/{run}.md frontmatter evolved this release: `tool` + `gate` (per-tool runner adapter,
+      // ADR 0035) and `embed` (deterministic re-embed outcome, ADR 0036). runs/README.md is the
+      // tool-owned contract doc (not a customization surface), so refresh it from the template — that's
+      // how existing workspaces learn the new fields. Idempotent: only rewrite when the content differs.
+      const readme = path.join(workspaceDir, 'runs', 'README.md');
+      const tpl = path.join(WORKSPACE_TEMPLATE, 'runs', 'README.md');
+      if (fs.existsSync(tpl)) {
+        const want = fs.readFileSync(tpl, 'utf8');
+        let have = ''; try { have = fs.readFileSync(readme, 'utf8'); } catch { have = ''; }
+        if (have !== want) {
+          fs.mkdirSync(path.dirname(readme), { recursive: true });
+          fs.writeFileSync(readme, want);
+          console.log('    ✓ refreshed runs/README.md (run-record contract: + tool/gate/embed, ADR 0035/0036)');
+          n++;
+        }
+      }
       return n;
     },
   },

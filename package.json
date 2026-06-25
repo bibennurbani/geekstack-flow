@@ -1,6 +1,6 @@
 {
   "name": "geekstackflow",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A structured AI workflow for planning, coding, reviewing, testing, refactoring, and shipping software. Karpathy-style LLM wiki with mandatory qmd search, two-file task tracking, six agent roles, seventeen starter skills, multi-tool portable (Claude Code, Codex, GitHub Copilot), multi-project workspace aware.",
   "bin": {
     "geekstackflow": "./init.js",

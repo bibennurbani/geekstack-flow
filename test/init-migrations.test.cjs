@@ -39,8 +39,25 @@ function makeWorkspace() {
 
 const mig34 = gsf.MIGRATIONS.find((m) => m.from === 3 && m.to === 4);
 
-test('LATEST_SCHEMA is 5', () => {
-  assert.strictEqual(gsf.LATEST_SCHEMA, 5);
+test('LATEST_SCHEMA is 6', () => {
+  assert.strictEqual(gsf.LATEST_SCHEMA, 6);
+});
+
+const mig56 = gsf.MIGRATIONS.find((m) => m.from === 5 && m.to === 6);
+
+test('5→6 refreshes runs/README to the current run-record contract (tool/gate/embed); idempotent', () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-mig6-'));
+  const ws = path.join(target, '.tcgstackflow');
+  fs.mkdirSync(path.join(ws, 'runs'), { recursive: true });
+  fs.writeFileSync(path.join(ws, 'runs', 'README.md'), 'stale contract doc — no tool/gate/embed\n');
+  try {
+    assert.ok(mig56, 'a 5→6 migration entry exists');
+    assert.strictEqual(mig56.apply(target, ws), 1, 'refreshed the contract doc');
+    const readme = fs.readFileSync(path.join(ws, 'runs', 'README.md'), 'utf8');
+    assert.match(readme, /tool:/);
+    assert.match(readme, /embed:/, 'documents the new run-record fields');
+    assert.strictEqual(mig56.apply(target, ws), 0, 're-run is a no-op (idempotent)');
+  } finally { fs.rmSync(target, { recursive: true, force: true }); }
 });
 
 const mig45 = gsf.MIGRATIONS.find((m) => m.from === 4 && m.to === 5);
