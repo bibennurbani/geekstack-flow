@@ -91,3 +91,35 @@ test('Trusted Commands cap HIGH at MEDIUM, never CRITICAL, never compound-evil',
   assert.strictEqual(g.classify('Bash', { command: 'npx playwright install' }, [], trusted), 'HIGH', 'different npx command not covered');
   assert.strictEqual(g.classify('Bash', { command: 'git push --force' }, [], trusted), 'CRITICAL', 'CRITICAL untouchable');
 });
+
+test('Card 6 — indirection tier: dispatchers/DB clients no longer tunnel CRITICAL through MEDIUM', () => {
+  // these were MEDIUM before — exactly the governance.md CRITICAL/HIGH actions wearing a coding-task costume
+  assert.strictEqual(g.classify('Bash', { command: 'make deploy' }), 'CRITICAL');
+  assert.strictEqual(g.classify('Bash', { command: 'npm run deploy' }), 'CRITICAL');
+  assert.strictEqual(g.classify('Bash', { command: 'pnpm run release' }), 'CRITICAL');
+  assert.strictEqual(g.classify('Bash', { command: 'psql -c "DROP TABLE users"' }), 'CRITICAL');
+  assert.strictEqual(g.classify('Bash', { command: 'mysql -e "TRUNCATE sessions"' }), 'CRITICAL');
+  assert.strictEqual(g.classify('Bash', { command: 'docker push myimg:latest' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'mysql < drop.sql' }), 'HIGH', 'file-fed DB client is opaque');
+  assert.strictEqual(g.classify('Bash', { command: 'npm run migrate' }), 'HIGH');
+  assert.strictEqual(g.classify('Bash', { command: 'just migrate:up' }), 'HIGH');
+  // NO over-capture — routine scripts/builds/dev/local-docker stay MEDIUM (no approval fatigue)
+  assert.strictEqual(g.classify('Bash', { command: 'npm run test' }), 'MEDIUM');
+  assert.strictEqual(g.classify('Bash', { command: 'npm run build' }), 'MEDIUM');
+  assert.strictEqual(g.classify('Bash', { command: 'make build' }), 'MEDIUM');
+  assert.strictEqual(g.classify('Bash', { command: 'docker compose up -d' }), 'MEDIUM');
+  assert.strictEqual(g.classify('Bash', { command: 'docker build .' }), 'MEDIUM');
+  // compound still maxes
+  assert.strictEqual(g.classify('Bash', { command: 'npm run build && make deploy' }), 'CRITICAL');
+});
+
+test('Card 6 — recipeFor synthesizes files + a rollback hint for the approval card', () => {
+  assert.deepStrictEqual(g.recipeFor('Edit', { file_path: 'src/auth/login.ts' }).files, ['src/auth/login.ts']);
+  assert.match(g.recipeFor('Bash', { command: 'git push --force' }).rollback, /force-push/i);
+  assert.match(g.recipeFor('Bash', { command: 'psql -c "DROP TABLE users"' }).rollback, /destructive db|snapshot|backup/i);
+  assert.match(g.recipeFor('Bash', { command: 'make deploy' }).rollback, /production|rollback|redeploy/i);
+  const r = g.recipeFor('Bash', { command: 'rm -rf build/cache.json' });
+  assert.ok(r.files.includes('build/cache.json'), 'file target extracted from the command');
+  assert.match(r.rollback, /deletion|irreversible|backup/i);
+  assert.deepStrictEqual(g.recipeFor('Bash', { command: 'git status' }), { files: [], rollback: '' }, 'benign action → empty recipe');
+});
