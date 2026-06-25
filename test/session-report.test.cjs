@@ -120,3 +120,27 @@ test('buildTaskReport falls back to run frontmatter when the session log is miss
     assert.strictEqual(r.sessions[0].found, false);
   } finally { cleanup(claudeHome, proj); }
 });
+
+// RA-5 (Card 7 / ADR 0035) — the one spend-vs-budget computation, now directly unit-testable via the
+// injected `detail` (previously reachable only through an HTTP 409 + a real workspace on disk).
+test('budgetFor: over budget at opus list price, using injected detail (no fs)', () => {
+  const detail = { config: { orchestrator: { budget_usd: 1 } }, tasks: [{ tokens_total: { input: 1e6, output: 0, cache_read: 0, cache_creation: 0 } }] };
+  const b = sr.budgetFor('/x', { detail });
+  assert.strictEqual(b.budget, 1);
+  assert.ok(Math.abs(b.spend - 15) < 1e-9, '1M input tokens = $15 at the opus list price');
+  assert.strictEqual(b.over, true);
+});
+
+test('budgetFor: under budget → not over (spend still reported)', () => {
+  const detail = { config: { orchestrator: { budget_usd: 1000 } }, tasks: [{ tokens_total: { input: 1e6, output: 0, cache_read: 0, cache_creation: 0 } }] };
+  const b = sr.budgetFor('/x', { detail });
+  assert.strictEqual(b.over, false);
+  assert.ok(b.spend > 0 && b.spend < 1000);
+});
+
+test('budgetFor: no budget configured → never over', () => {
+  const detail = { config: { orchestrator: { budget_usd: null } }, tasks: [{ tokens_total: { input: 2e6, output: 0, cache_read: 0, cache_creation: 0 } }] };
+  const b = sr.budgetFor('/x', { detail });
+  assert.strictEqual(b.budget, null);
+  assert.strictEqual(b.over, false);
+});

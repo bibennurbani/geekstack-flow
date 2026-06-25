@@ -91,6 +91,25 @@ function costOf(tokens, model) {
   return { by_class, total };
 }
 
+// One spend-vs-budget computation (Card 7 / ADR 0035) — replaces the math previously duplicated in
+// the enqueue guard (index.cjs) and the launch re-check (run.cjs overBudget). Sums the project's
+// durable Run-token total, prices it (default opus list pricing; `model` is a PARAMETER so it can
+// follow the role's tool once non-Claude runners land), and compares to orchestrator.budget_usd.
+// Best-effort: unreadable config → not over. Returns { spend, budget, over } — the guard shows
+// spend+budget in its 409, the launch re-check reads only .over. `opts.detail` lets a caller that
+// already read buildProjectDetail (index.cjs reuses it for the chain decision) avoid a second read.
+function budgetFor(projectPath, opts = {}) {
+  const model = opts.model || 'claude-opus';
+  try {
+    const detail = opts.detail || read.buildProjectDetail(projectPath);
+    const budget = detail.config && detail.config.orchestrator ? detail.config.orchestrator.budget_usd : null;
+    const tk = { input: 0, output: 0, cache_read: 0, cache_creation: 0 };
+    for (const t of detail.tasks || []) for (const k in tk) tk[k] += (t.tokens_total && t.tokens_total[k]) || 0;
+    const spend = costOf(tk, model).total;
+    return { spend, budget, over: budget != null && spend >= budget };
+  } catch { return { spend: 0, budget: null, over: false }; }
+}
+
 // Aggregate every run (session) of a task into one report.
 function buildTaskReport(workspaceDir, taskId, opts = {}) {
   const runsDir = path.join(workspaceDir, 'runs', taskId);
@@ -224,4 +243,4 @@ h1{font-size:34px;margin:8px 0 0;font-weight:700;letter-spacing:-.01em}h2{font-s
 </div></body></html>`;
 }
 
-module.exports = { buildTaskReport, renderReportHtml, parseSessionLog, findSessionLog, costOf, priceFor, toolCategory, PRICING };
+module.exports = { buildTaskReport, renderReportHtml, parseSessionLog, findSessionLog, costOf, budgetFor, priceFor, toolCategory, PRICING };

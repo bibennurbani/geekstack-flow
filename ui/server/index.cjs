@@ -25,6 +25,7 @@ const DEFAULT_PORT = 4729;
 const { createRunManager, scanOrphanedRuns } = require('./run-manager.cjs');
 const { createApprovals } = require('./approvals.cjs');
 const runMod = require('./run.cjs');
+const runners = require('./runners/index.cjs'); // RunnerAdapter registry — the selector for the launch door (ADR 0035)
 const sessionReport = require('./session-report.cjs');
 
 // GOV-4 governance config. controlUrl is filled once the server binds a port (in start()).
@@ -264,15 +265,12 @@ const server = http.createServer((req, res) => {
           const existing = runManager.overlayFor(project_path)[task_id];
           if (existing) return sendJSON(res, 409, { error: 'task-already-running', run_id: existing.run_id, run_state: existing.run_state });
           const detail = read.buildProjectDetail(project_path);
-          const budget = detail.config && detail.config.orchestrator ? detail.config.orchestrator.budget_usd : null;
-          if (budget != null && !force) {
-            const tk = { input: 0, output: 0, cache_read: 0, cache_creation: 0 };
-            for (const t of detail.tasks || []) for (const k in tk) tk[k] += (t.tokens_total && t.tokens_total[k]) || 0;
-            const spend = sessionReport.costOf(tk, 'claude-opus').total;
-            if (spend >= budget) return sendJSON(res, 409, { error: 'over-budget', spend: +spend.toFixed(2), budget, hint: 'raise the budget in Settings, or pass force: true' });
+          if (!force) { // one owned spend-vs-budget computation (Card 7); reuse the detail we just read
+            const b = sessionReport.budgetFor(project_path, { detail });
+            if (b.over) return sendJSON(res, 409, { error: 'over-budget', spend: +b.spend.toFixed(2), budget: b.budget, hint: 'raise the budget in Settings, or pass force: true' });
           }
           const tool = runMod.readRoleTool(ws, role);
-          if (tool === 'codex') return sendJSON(res, 501, { error: 'runner-not-implemented', tool: 'codex' }); // ADR 0025 — Codex deferred
+          if (!runners.get(tool)) return sendJSON(res, 501, { error: 'runner-not-implemented', tool }); // ADR 0025/0035 — only a registered RunnerAdapter can launch (codex/copilot are follow-on plans)
           if (!governanceGateReady) return sendJSON(res, 503, { error: 'governance-gate-not-ready' }); // API-8
           // chain: explicit per-launch flag, falling back to the workspace's auto_advance default.
           const doChain = chain !== undefined ? !!chain : !!(detail.config.orchestrator && detail.config.orchestrator.auto_advance);
