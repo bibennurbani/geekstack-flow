@@ -52,7 +52,7 @@ function openReportHtmlFor(pp, id, runId) {
   window.open('/api/project/task/report.html?path=' + encodeURIComponent(pp) + '&id=' + encodeURIComponent(id) + '&run=' + encodeURIComponent(runId), '_blank');
 }
 async function openRunGlobal(pp, id, runId) {
-  runLoading.value = true; runView.value = null;
+  runLoading.value = true; runView.value = null; runViewProject.value = pp;
   runView.value = await api('/api/project/task/run?path=' + encodeURIComponent(pp) + '&id=' + encodeURIComponent(id) + '&run=' + encodeURIComponent(runId));
   runLoading.value = false;
 }
@@ -210,9 +210,10 @@ function openReportHtml(runId = null) {
 }
 // --- runs / transcript viewer ---
 const runView = ref(null);
+const runViewProject = ref(null); // project path for the open transcript — the CLI resume command needs it
 const runLoading = ref(false);
 async function openRun(runId) {
-  runLoading.value = true; runView.value = null;
+  runLoading.value = true; runView.value = null; runViewProject.value = selected.value;
   runView.value = await api('/api/project/task/run?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(selectedTask.value) + '&run=' + encodeURIComponent(runId));
   runLoading.value = false;
 }
@@ -221,6 +222,12 @@ function closeRun() { runView.value = null; }
 function copyResume(projectPath, sessionId, key) {
   if (!sessionId) return;
   navigator.clipboard.writeText(`cd "${projectPath}" && claude --resume ${sessionId}`);
+  copiedKey.value = key; setTimeout(() => { if (copiedKey.value === key) copiedKey.value = ''; }, 1600);
+}
+// Copy arbitrary text (e.g. the bare session id) with the same transient ✓ feedback.
+function copyText(text, key) {
+  if (!text) return;
+  navigator.clipboard.writeText(String(text));
   copiedKey.value = key; setTimeout(() => { if (copiedKey.value === key) copiedKey.value = ''; }, 1600);
 }
 
@@ -1088,8 +1095,19 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
         <template v-else-if="runView && !runView.error">
           <div class="chips" style="margin-bottom:10px">
             <span class="badge soft">{{ runView.run_id.slice(0, 8) }}…</span>
-            <span v-if="runView.session_id" class="badge soft">session {{ runView.session_id.slice(0, 8) }}…</span>
             <span v-if="runView.state" class="badge" :class="runView.state === 'done' ? 'st-COMPLETED' : 'soft'">{{ runView.state }}</span>
+            <span v-if="runView.tool" class="badge soft">{{ runView.tool }}</span>
+          </div>
+          <!-- Full session id + CLI resume helpers — so a run can be continued in your own terminal
+               (the badge used to truncate it to 8 chars, which isn't enough to `--resume`). -->
+          <div v-if="runView.session_id" style="margin-bottom:10px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:5px">Session ID <span style="text-transform:none;letter-spacing:0">· resume this run on the CLI</span></div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <code class="mono" style="user-select:all;font-size:12.5px;word-break:break-all;color:var(--text-2);flex:1;min-width:220px" title="Click to select, then copy">{{ runView.session_id }}</code>
+              <button class="btn" style="padding:3px 9px;font-size:11px" :class="{ 'btn-copied': copiedKey === 'rv-id' }" title="Copy the session id" @click="copyText(runView.session_id, 'rv-id')">{{ copiedKey === 'rv-id' ? '✓ copied' : 'copy id' }}</button>
+              <button class="btn" style="padding:3px 9px;font-size:11px" :class="{ 'btn-copied': copiedKey === 'rv-cmd' }" title="Copy: cd <project> && claude --resume <id>" @click="copyResume(runViewProject, runView.session_id, 'rv-cmd')">{{ copiedKey === 'rv-cmd' ? '✓ copied' : '⌥ resume cmd' }}</button>
+            </div>
+            <div class="mono" style="font-size:11.5px;color:var(--text-3);margin-top:6px;word-break:break-all">claude --resume {{ runView.session_id }}</div>
           </div>
           <pre class="stream-pane" style="max-height:62vh">{{ runView.transcript || '(empty transcript)' }}</pre>
         </template>
