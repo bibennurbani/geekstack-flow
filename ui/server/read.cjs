@@ -12,6 +12,7 @@ const path = require('path');
 // init.js is at the package root (../../ from ui/server/). Requiring it is side-effect-free
 // thanks to its `require.main === module` guard.
 const gsf = require(path.join(__dirname, '..', '..', 'init.js'));
+const cf = require('./config-fields.cjs'); // config.yaml parse/edit primitives (Card 3 [0])
 
 // Status → next-ready agent (ADR 0023). Shared conceptually with the agent profiles' hand-offs.
 const STATUS_NEXT_AGENT = {
@@ -73,9 +74,7 @@ function readConfig(workspaceDir) {
     projects: [],
   };
   // sub-projects (multi-project): parse the top-level `projects:` list entries
-  const projBlock = text.split(/^projects:/m)[1] || '';
-  const stop = projBlock.search(/^\S/m); // next top-level key ends the block
-  const scoped = stop > 0 ? projBlock.slice(0, stop) : projBlock;
+  const scoped = cf.block(text, 'projects');
   const re = /^\s+-\s+name:\s*(.+)$/gm;
   let m;
   while ((m = re.exec(scoped))) {
@@ -87,21 +86,19 @@ function readConfig(workspaceDir) {
     });
   }
   // orchestrator: per-role tool map + optional spend budget
-  const orchBlock = text.split(/^orchestrator:/m)[1] || '';
-  const ostop = orchBlock.search(/^\S/m);
-  const oscoped = ostop > 0 ? orchBlock.slice(0, ostop) : orchBlock;
+  const oscoped = cf.block(text, 'orchestrator');
   const roles = {};
   for (const role of AGENT_ROLES) {
-    const rm = oscoped.match(new RegExp('^\\s+' + role + ':\\s*(\\S+)', 'm'));
-    if (rm) roles[role] = rm[1].trim();
+    const v = cf.blockScalar(text, 'orchestrator', role);
+    if (v) roles[role] = v;
   }
   const bm = oscoped.match(/^\s+budget_usd:\s*([\d.]+)/m);
   cfg.orchestrator = {
     roles,
     budget_usd: bm ? parseFloat(bm[1]) : null,
-    auto_advance: /^\s+auto_advance:\s*true/m.test(oscoped),                            // chain runs by default
+    auto_advance: cf.blockHasTrue(text, 'orchestrator', 'auto_advance'),                // chain runs by default
     max_bounces: parseInt(firstMatch(oscoped, /^\s+max_bounces:\s*(\d+)/m) || '1', 10), // review/test bounces before a chain stops
-    auto_ingest_on_pull: /^\s+auto_ingest_on_pull:\s*true/m.test(oscoped),              // post-merge hook may launch an ingester run
+    auto_ingest_on_pull: cf.blockHasTrue(text, 'orchestrator', 'auto_ingest_on_pull'),  // post-merge hook may launch an ingester run
   };
   return cfg;
 }
@@ -661,17 +658,11 @@ function setRoleTool(workspaceDir, role, tool) {
   fs.writeFileSync(file, text.replace(re, '$1' + tool));
 }
 function setAutoAdvance(workspaceDir, on) {
+  // Surgical replace-or-insert INSIDE the orchestrator block (an auto_advance key in another block
+  // must not match) — the editBlockLine primitive owns that idiom now. Throws no-orchestrator-block.
   const file = path.join(workspaceDir, 'config.yaml');
   const text = fs.readFileSync(file, 'utf8');
-  if (!/^orchestrator:/m.test(text)) throw new Error('no-orchestrator-block');
-  // Operate INSIDE the orchestrator block only — an auto_advance key in another block must not match.
-  const parts = text.split(/^(orchestrator:.*)$/m); // [before, header, rest]
-  const stop = parts[2].search(/^\S/m);
-  let block = stop > 0 ? parts[2].slice(0, stop) : parts[2];
-  const tail = stop > 0 ? parts[2].slice(stop) : '';
-  if (/^\s+auto_advance:/m.test(block)) block = block.replace(/^(\s+auto_advance:\s*)\S+/m, '$1' + (on ? 'true' : 'false'));
-  else block = '\n  auto_advance: ' + (on ? 'true' : 'false') + block;
-  fs.writeFileSync(file, parts[0] + parts[1] + block + tail);
+  fs.writeFileSync(file, cf.editBlockLine(text, 'orchestrator', 'auto_advance', on ? 'true' : 'false'));
 }
 function setBudget(workspaceDir, usd) {
   const file = path.join(workspaceDir, 'config.yaml');

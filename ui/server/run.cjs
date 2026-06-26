@@ -9,6 +9,7 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const read = require('./read.cjs');
+const cf = require('./config-fields.cjs'); // config.yaml parse primitives (Card 3 [0])
 const git = require('./git.cjs'); // the one seam for git shell-outs (Card 5 [22])
 const sessionReport = require('./session-report.cjs'); // pricing for the launch-time budget re-check
 const runners = require('./runners/index.cjs'); // RunnerAdapter registry/selector (ADR 0035)
@@ -30,23 +31,15 @@ function buildRunPrompt(taskId, agent) {
 function readRoleTool(workspaceDir, role) {
   let text = '';
   try { text = fs.readFileSync(path.join(workspaceDir, 'config.yaml'), 'utf8'); } catch { text = ''; }
-  const orch = text.split(/^orchestrator:/m)[1] || '';
-  const stop = orch.search(/^\S/m);
-  const scoped = stop > 0 ? orch.slice(0, stop) : orch; // scope to the orchestrator: block
-  const rm = scoped.match(new RegExp('^\\s+' + role + ':\\s*(\\S+)', 'm'));
-  return rm ? rm[1].trim() : 'claude';
+  return cf.blockScalar(text, 'orchestrator', role, 'claude');
 }
 
 // WK-1 — read config.yaml `wiki_search.embed_on_ingest` (default true: the documented intent, ADR 0030).
-// Only an explicit `false` disables the deterministic re-embed; absent → true.
+// Only an explicit `false` disables the deterministic re-embed; absent (or unreadable) → true.
 function embedOnIngest(workspaceDir) {
   let text = '';
   try { text = fs.readFileSync(path.join(workspaceDir, 'config.yaml'), 'utf8'); } catch { return true; }
-  const blk = text.split(/^wiki_search:/m)[1] || '';
-  const stop = blk.search(/^\S/m);
-  const scoped = stop > 0 ? blk.slice(0, stop) : blk;
-  const m = scoped.match(/^\s+embed_on_ingest:\s*(true|false)/m);
-  return m ? m[1] === 'true' : true;
+  return cf.blockScalar(text, 'wiki_search', 'embed_on_ingest', 'true') !== 'false';
 }
 
 // WK-1 — the default re-embed action (injectable for tests). NON-BLOCKING for the embed itself.
