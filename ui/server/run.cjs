@@ -9,12 +9,13 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const read = require('./read.cjs');
+const git = require('./git.cjs'); // the one seam for git shell-outs (Card 5 [22])
 const sessionReport = require('./session-report.cjs'); // pricing for the launch-time budget re-check
 const runners = require('./runners/index.cjs'); // RunnerAdapter registry/selector (ADR 0035)
 
 const ZERO = () => ({ input: 0, output: 0, cache_read: 0, cache_creation: 0 });
 // HEAD sha of the project's git repo at run start — lets the diff viewer show "changes since this run began".
-function gitHead(cwd) { try { return cp.execFileSync('git', ['-C', cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } }
+const gitHead = (cwd) => git.head(cwd);
 const ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
 // A run that advanced Status to (or past) IN_REVIEW means the agent self-handed-off (D1) → no safety-net.
 const ADVANCED = new Set(['IN_REVIEW', 'IN_TEST', 'VALIDATED', 'INGESTED', 'COMPLETED']);

@@ -11,7 +11,6 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const cp = require('child_process');
 const { URL } = require('url');
 
 const read = require('./read.cjs');
@@ -27,6 +26,7 @@ const { createApprovals } = require('./approvals.cjs');
 const runMod = require('./run.cjs');
 const runners = require('./runners/index.cjs'); // RunnerAdapter registry — the selector for the launch door (ADR 0035)
 const sessionReport = require('./session-report.cjs');
+const git = require('./git.cjs'); // the one seam for git shell-outs (Card 5 [22])
 
 // GOV-4 governance config. controlUrl is filled once the server binds a port (in start()).
 const governance = {
@@ -192,9 +192,7 @@ function handleRequest(req, res) {
       if (rec.error) return sendJSON(res, 404, rec);
       if (!rec.git_base) return sendJSON(res, 200, { git_base: null, diff: '', note: 'No git base captured for this run (it predates diff capture, or the project is not a git repo).' });
       try {
-        const stat = cp.execFileSync('git', ['-C', proj, 'diff', '--stat', rec.git_base], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
-        const full = cp.execFileSync('git', ['-C', proj, 'diff', rec.git_base], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-        return sendJSON(res, 200, { git_base: rec.git_base, diff: (stat ? stat + '\n' : '') + full });
+        return sendJSON(res, 200, { git_base: rec.git_base, diff: git.diffSince(proj, rec.git_base) });
       } catch (e) { return sendJSON(res, 200, { git_base: rec.git_base, diff: '', note: 'git diff failed: ' + String((e && e.message) || e).slice(0, 200) }); }
     }
     // Settings write: orchestrator role→tool map + spend budget (config.yaml).
