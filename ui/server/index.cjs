@@ -124,7 +124,12 @@ function serveFallback(res) {
   res.end(FALLBACK_HTML);
 }
 
-const server = http.createServer((req, res) => {
+// Card 5 [19] — the request handler is a NAMED function, so the 18-endpoint request→validation→dispatch
+// mapping is reachable with an in-memory request/response double (no live TCP socket, no patched globals)
+// — see test/router-handlers.test.cjs. Collaborators stay the module singletons (already exported and
+// patchable, e.g. run-guards patches executor.launch), keeping this a low-risk extraction rather than a
+// full dependency-injection rewrite of the whole server.
+function handleRequest(req, res) {
   let u;
   try { u = new URL(req.url, `http://${HOST}`); } catch { return sendJSON(res, 400, { error: 'bad-url' }); }
   const p = u.pathname;
@@ -344,7 +349,8 @@ const server = http.createServer((req, res) => {
   } catch (err) {
     return sendJSON(res, 500, { error: 'server-error', detail: String(err && err.message || err) });
   }
-});
+}
+const server = http.createServer(handleRequest);
 
 const FALLBACK_HTML = `<!doctype html><html><head><meta charset="utf-8">
 <title>GeekStack Flow — Cockpit</title>
@@ -485,4 +491,4 @@ if (require.main === module) {
   start(portArg ? parseInt(portArg, 10) : DEFAULT_PORT);
 }
 
-module.exports = { server, start, DEFAULT_PORT, HOST, runManager, executor, setGovernanceGateReady, pendingIngestPlan };
+module.exports = { server, start, handleRequest, DEFAULT_PORT, HOST, runManager, executor, approvals, setGovernanceGateReady, pendingIngestPlan };
