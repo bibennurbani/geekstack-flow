@@ -33,16 +33,67 @@ HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null || true)
 [ "$BASE" = "$HEAD" ] && exit 0   # nothing new (already up to date)
 
 mkdir -p "$WS/.tcgstackflow/raw"
+CFG="$WS/.tcgstackflow/config.yaml"
 SHORT=$(git rev-parse --short "$HEAD")
+BSHORT=$(git rev-parse --short "$BASE" 2>/dev/null || echo "$BASE")
 STAMP=$(date +%Y%m%d-%H%M%S)
 REPO=$(basename "$PWD")
 DIGEST="$WS/.tcgstackflow/raw/pull-$STAMP-$REPO-$SHORT.md"
 
+# --- Change signals: give the Ingester structured raw material, not just a stat ---
+NCOMMITS=$(git rev-list --count "$BASE..$HEAD" 2>/dev/null || echo "?")
+# Only sum NUMERIC fields — binary files render as "-\t-\t<path>" in --numstat, and awk's coercion
+# of "-" is platform-inconsistent (BSD/macOS vs GNU). Guarding on /^[0-9]+$/ keeps totals correct.
+LINES=$(git diff --numstat "$BASE..$HEAD" 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {a+=$1} $2 ~ /^[0-9]+$/ {d+=$2} END {printf "+%d / -%d", a, d}')
+NFILES=$(git diff --name-only "$BASE..$HEAD" 2>/dev/null | grep -c . || echo 0)
+NEW_FILES=$(git diff --diff-filter=A --name-only "$BASE..$HEAD" 2>/dev/null | head -40)
+DEL_FILES=$(git diff --diff-filter=D --name-only "$BASE..$HEAD" 2>/dev/null | head -40)
+# Contract-ish / cross-cutting paths: changes here are the kind most likely to ripple to OTHER
+# sub-projects (shared deps, API contracts, schemas, migrations, generated types, shared packages).
+CONTRACTY=$(git diff --name-only "$BASE..$HEAD" 2>/dev/null | grep -Ei '(^|/)(package\.json|pnpm-lock.*|yarn\.lock|package-lock\.json|go\.mod|Cargo\.toml|requirements.*\.txt|pyproject\.toml|composer\.json|Gemfile|.*\.csproj)$|\.proto$|openapi|swagger|(^|/)schema|migrations?/|\.d\.ts$|(^|/)(packages|libs|shared|contracts?|protos?)/' | head -40)
+# Configured sub-project names (multi-project workspaces). `- name:` list items live only under the
+# projects: block; the singular project.name uses a different (un-dashed) indent, so this won't catch it.
+PROJ_NAMES=$(sed -n 's/^[[:space:]]*-[[:space:]]*name:[[:space:]]*//p' "$CFG" 2>/dev/null | tr -d "\"'" | grep -c . || echo 0)
+PROJ_LIST=$(sed -n 's/^[[:space:]]*-[[:space:]]*name:[[:space:]]*//p' "$CFG" 2>/dev/null | tr -d "\"'" | sed 's/^/  - /')
+
 {
-  echo "# Pull digest — $(date +%Y-%m-%d) · $REPO ($BASE..$HEAD)"
+  echo "# Pull digest — $(date +%Y-%m-%d) · $REPO ($BSHORT..$SHORT)"
   echo
-  echo "Upstream changes that landed via git pull in repository \`$REPO\`. Raw source for the"
-  echo "Ingester: fold what matters into the wiki, then move this file to raw/archived/."
+  echo "Upstream changes that landed via \`git pull\` in repository \`$REPO\`. Raw source for the"
+  echo "Ingester. Fold what matters into the wiki, then move this file to raw/archived/."
+  echo
+  echo "## For the Ingester — capture these three things in the wiki"
+  echo
+  echo "1. **What changed** — the concrete facts: which features/modules/files moved, any new or"
+  echo "   removed capabilities, dependency/schema/contract changes. Fold this into the bodies of the"
+  echo "   wiki pages that document the affected areas — don't merely log it."
+  echo "2. **Cross-project impact** — does this change ripple to OTHER projects in this workspace?"
+  echo "   Shared deps, API/contract/schema changes, and generated types are the usual carriers. If"
+  echo "   yes, name the affected project(s) and update their wiki pages too. If no, say so explicitly"
+  echo "   in the log Decision section (\`no cross-project impact — {why}\`)."
+  echo "3. **Summary explanation** — a plain-language paragraph of *what this change is about and why*"
+  echo "   it happened, written so a future AI session grasps the intent, not just the diff."
+  echo
+  echo "## What changed (signals)"
+  echo
+  echo "- Commits: $NCOMMITS · Files: ${NFILES:-0} · Lines: ${LINES:-+0 / -0}"
+  if [ -n "$NEW_FILES" ]; then echo "- New files:"; echo "$NEW_FILES" | sed 's/^/    - /'; fi
+  if [ -n "$DEL_FILES" ]; then echo "- Deleted files:"; echo "$DEL_FILES" | sed 's/^/    - /'; fi
+  if [ -n "$CONTRACTY" ]; then
+    echo "- ⚠ Contract / cross-cutting paths touched (likely cross-project ripple — assess #2):"
+    echo "$CONTRACTY" | sed 's/^/    - /'
+  fi
+  echo
+  echo "## Workspace context"
+  echo
+  echo "- This pull landed in repository directory: \`$REPO\`"
+  if [ "${PROJ_NAMES:-0}" -gt 1 ] 2>/dev/null; then
+    echo "- This is a **multi-project workspace**. Sibling projects to weigh for cross-project impact:"
+    echo "$PROJ_LIST"
+    echo "- Use \`wiki/index.md\` + the per-project pages as the authoritative project map; the list above is a hint."
+  else
+    echo "- Single-project workspace — cross-project impact (#2) is usually N/A; note it as such."
+  fi
   echo
   echo "## Commits"
   echo '```'
@@ -52,6 +103,11 @@ DIGEST="$WS/.tcgstackflow/raw/pull-$STAMP-$REPO-$SHORT.md"
   echo "## Files changed"
   echo '```'
   git diff --stat "$BASE..$HEAD" 2>/dev/null | tail -80
+  echo '```'
+  echo
+  echo "## Diff (truncated to 500 lines — read the repo for full context)"
+  echo '```diff'
+  git diff "$BASE..$HEAD" 2>/dev/null | head -500
   echo '```'
 } > "$DIGEST" 2>/dev/null || exit 0
 

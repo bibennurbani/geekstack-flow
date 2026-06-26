@@ -22,6 +22,7 @@ For task ingestion (the most common trigger):
 For `raw/` ingestion:
 
 - Files in `.tcgstackflow/raw/` plus a short topic provided by the user (e.g. "design doc for new payment flow")
+- **Pull digests** (`raw/pull-*.md`, written by the git post-merge hook on every `git pull`) are the highest-frequency Raw source. Each carries a three-part contract — fold in **(1)** what changed (into the page bodies), **(2)** cross-project impact in multi-project workspaces (name affected projects, or record "no cross-project impact — {why}"), and **(3)** a plain-language summary of what the change is about and why. See the `ingest` skill's *Pull-digest ingest* section.
 
 For MCP-driven ingestion:
 

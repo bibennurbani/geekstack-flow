@@ -461,6 +461,23 @@ const MIGRATIONS = [
           n++;
         }
       }
+      // The pull-digest hook (.tcgstackflow/hooks/post-merge) is a tool-owned script, not a
+      // customization surface — and installHooks() prefers this workspace copy over the bundled
+      // template. So refresh it here, otherwise re-running `geekstackflow hooks .` would re-wire the
+      // STALE local copy. This release's digest captures what-changed + cross-project impact + a
+      // plain-language summary for the Ingester. Idempotent; only rewrites when content differs.
+      const hookDst = path.join(workspaceDir, 'hooks', 'post-merge');
+      const hookTpl = path.join(WORKSPACE_TEMPLATE, 'hooks', 'post-merge');
+      if (fs.existsSync(hookTpl)) {
+        const want = fs.readFileSync(hookTpl, 'utf8');
+        let have = ''; try { have = fs.readFileSync(hookDst, 'utf8'); } catch { have = ''; }
+        if (have !== want) {
+          fs.mkdirSync(path.dirname(hookDst), { recursive: true });
+          fs.writeFileSync(hookDst, want);
+          console.log('    ✓ refreshed hooks/post-merge (pull digest now captures cross-project impact + a summary — re-run `geekstackflow hooks .` to wire it)');
+          n++;
+        }
+      }
       return n;
     },
   },

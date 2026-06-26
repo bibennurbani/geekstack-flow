@@ -45,17 +45,23 @@ test('LATEST_SCHEMA is 6', () => {
 
 const mig56 = gsf.MIGRATIONS.find((m) => m.from === 5 && m.to === 6);
 
-test('5→6 refreshes runs/README to the current run-record contract (tool/gate/embed); idempotent', () => {
+test('5→6 refreshes runs/README (tool/gate/embed) + the pull-digest hook (cross-project impact); idempotent', () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-mig6-'));
   const ws = path.join(target, '.tcgstackflow');
   fs.mkdirSync(path.join(ws, 'runs'), { recursive: true });
+  fs.mkdirSync(path.join(ws, 'hooks'), { recursive: true });
   fs.writeFileSync(path.join(ws, 'runs', 'README.md'), 'stale contract doc — no tool/gate/embed\n');
+  fs.writeFileSync(path.join(ws, 'hooks', 'post-merge'), '#!/bin/sh\n# gsf-hook-v1 — stale: only commits + stat, no cross-project impact\n');
   try {
     assert.ok(mig56, 'a 5→6 migration entry exists');
-    assert.strictEqual(mig56.apply(target, ws), 1, 'refreshed the contract doc');
+    assert.strictEqual(mig56.apply(target, ws), 2, 'refreshed the contract doc AND the pull hook');
     const readme = fs.readFileSync(path.join(ws, 'runs', 'README.md'), 'utf8');
     assert.match(readme, /tool:/);
     assert.match(readme, /embed:/, 'documents the new run-record fields');
+    const hook = fs.readFileSync(path.join(ws, 'hooks', 'post-merge'), 'utf8');
+    assert.match(hook, /gsf-hook-v1/, 'still the gsf hook');
+    assert.match(hook, /Cross-project impact/i, 'digest now prompts for cross-project impact');
+    assert.match(hook, /Summary explanation/i, 'digest now prompts for a plain-language summary');
     assert.strictEqual(mig56.apply(target, ws), 0, 're-run is a no-op (idempotent)');
   } finally { fs.rmSync(target, { recursive: true, force: true }); }
 });

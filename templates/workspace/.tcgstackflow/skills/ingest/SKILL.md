@@ -23,7 +23,7 @@ You are folding a Raw source into the wiki. The procedure is **log-first** — t
 
 1. **Inventory the Raw source.**
    - **Task ingest** — read `tasks/active/{ID}/TASK details {ID}.md` and `TASK {ID}.md`. Summarise the diff (use `git log` / `git diff` against the merge-base, or the file lists from log entries).
-   - **`raw/` ingest** — list files in `.tcgstackflow/raw/`, summarise each in one line. If the user gave a topic phrase, use it.
+   - **`raw/` ingest** — list files in `.tcgstackflow/raw/`, summarise each in one line. If the user gave a topic phrase, use it. **Pull digests** (`pull-*.md`, written by the git post-merge hook) are the common case and have a stricter contract — see [Pull-digest ingest](#pull-digest-ingest-git-pull--wiki) below.
    - **MCP ingest** — capture the MCP output as the source-of-record.
 2. **Plan.** Use the `wiki-search` skill (qmd) to surface the pages the Raw touches, and walk `wiki/index.md` to place them in the Map of Content. Identify:
    - **Affected existing pages** — pages whose topic overlaps the Raw. Walk the wikilink graph one hop from each to catch downstream impact.
@@ -56,6 +56,18 @@ You are folding a Raw source into the wiki. The procedure is **log-first** — t
 8. **Finalise the `log.md` entry.** Replace the proposed file lists with the actual file lists after changes are applied. Bump the touched pages' frontmatter and `wiki/index.md` if pages were added/removed/renamed.
 9. **Schema doc co-evolution.** If this ingest introduced a new convention (a renamed page, a new agent role, a new skill, a new project-specific governance rule), update `tools/claude/CLAUDE.md` and `tools/codex/AGENTS.md` *in the same ingest*. Don't leave the schema docs out of sync.
 10. **Re-embed the wiki search index.** Run an incremental `qmd embed` so qmd reflects the new/changed pages (the Ingester is the only wiki writer; readers rely on a fresh index). Refreshes the `docs/` collection too. If qmd is unavailable, note it — `index.md` stays the fallback.
+
+### Pull-digest ingest (git pull → wiki)
+
+A **pull digest** (`raw/pull-*.md`) is written by the git post-merge hook on every `git pull`, so the wiki stays current with upstream work the local user didn't author. It is the highest-frequency Raw source, and it carries a **mandatory three-part contract** — the digest's own header restates it. The wiki knowledge you fold in **must** cover all three:
+
+1. **What changed** — the concrete facts (features/modules/files moved, capabilities added or removed, dependency/schema/contract changes). Fold these into the **bodies** of the wiki pages that document the affected areas — bump their `updated:`. Logging it in `log.md` alone is *not* enough: the pages qmd surfaces must carry the new truth.
+2. **Cross-project impact** — only meaningful in a **multi-project workspace** (`config.yaml` lists `projects:`). Ask: does this change ripple to *other* projects? Shared dependencies, API/contract/schema changes, generated types, and shared packages are the usual carriers (the digest flags "contract / cross-cutting paths" to prompt this). The wiki's per-project pages + `index.md` are the authoritative project map.
+   - **If yes:** name the affected project(s) in the Decision section and update *their* wiki pages too (walk the wikilink graph one hop from the changed area).
+   - **If no:** record it explicitly — `no cross-project impact — {why}` — in the Decision section. Silence is an unverified gap, not a "no".
+3. **Summary explanation** — a short, plain-language paragraph of *what this change is about and why it happened*, written so a future AI session grasps the **intent**, not just the mechanical diff. This belongs in the `log.md` **Context** and on the lead summary of the most-affected page.
+
+Everything else follows the standard Procedure (log-first draft, approval gate for new pages/deletions, archive the digest to `raw/archived/`, re-embed). The digest is immutable Raw — read it, never edit it.
 
 ### Output
 
