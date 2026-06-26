@@ -1010,6 +1010,59 @@ function renderProjectsYaml(projects) {
   }).join('\n');
 }
 
+// --- init plan (Card 5 [3]): the PURE decisions main() makes, lifted out of its prompts + fs writes ---
+// main() was a single flow that interleaved stdin prompts, a template copy, a config.yaml mutation
+// cascade, and the single-vs-multi-project decision. These three pure functions carry the decision
+// logic so it's testable without prompting or touching disk; main() keeps the I/O (ask, copy, write).
+
+// The placeholder substitution map applied across the workspace template (walkAndSubstitute).
+function initVars(answers) {
+  return {
+    'project-name': answers.projectName,
+    'cloud-id': answers.cloudId || '',
+    'admin-key': answers.adminKey || '',
+    'timezone': answers.timezone || '+0800',
+    'submission-mode': answers.submissionMode || 'approval',
+    'stack': answers.stack || '',
+    'package-manager': answers.packageManager || 'pnpm',
+  };
+}
+
+// Render the final config.yaml from the template text + answers + detected sub-projects. A pure
+// text→text transform mirroring main()'s replace cascade exactly (so init output is unchanged), now
+// unit-testable. The field replacements and the multi-project edits touch disjoint lines, so folding
+// them into one pass is equivalent to the original write-then-rewrite.
+function renderConfigYaml(templateText, answers, detected = [], toolVersion = TOOL_VERSION) {
+  let yaml = templateText;
+  yaml = yaml.replace(/tcgflow_version: "0.0.0"/, `tcgflow_version: "${toolVersion}"`);
+  yaml = yaml.replace(/name: ""/, `name: "${answers.projectName}"`);
+  yaml = yaml.replace(/primary_stack: ""/, `primary_stack: "${answers.stack || ''}"`);
+  yaml = yaml.replace(/package_manager: pnpm/, `package_manager: ${answers.packageManager || 'pnpm'}`);
+  yaml = yaml.replace(/cloudId: ""/, `cloudId: "${answers.cloudId || ''}"`);
+  yaml = yaml.replace(/admin_key: ""/, `admin_key: "${answers.adminKey || ''}"`);
+  yaml = yaml.replace(/timezone: "\+0800"/, `timezone: "${answers.timezone || '+0800'}"`);
+  yaml = yaml.replace(/submission_mode: approval/, `submission_mode: ${answers.submissionMode || 'approval'}`);
+  yaml = yaml.replace(/enabled: false/, `enabled: ${!!answers.enableTempo}`);
+  yaml = yaml.replace(/claude: true/, `claude: ${!!answers.enableClaude}`);
+  yaml = yaml.replace(/codex: false/, `codex: ${!!answers.enableCodex}`);
+  yaml = yaml.replace(/github: false/, `github: ${!!answers.enableGithub}`);
+  if (detected.length >= 2) {
+    yaml = yaml.replace(/workspace_kind: single/, 'workspace_kind: multi-project');
+    yaml = yaml.replace(/projects: \[\]/, `projects:\n${renderProjectsYaml(detected)}`);
+  }
+  return yaml;
+}
+
+// The init plan: decisions derived from the answers + project detection, with NO I/O.
+function computeInitPlan(answers, detected = []) {
+  return {
+    vars: initVars(answers),
+    workspace_kind: detected.length >= 2 ? 'multi-project' : 'single',
+    project_count: detected.length,
+    projects: detected,
+  };
+}
+
 function substitutePlaceholders(filePath, vars) {
   let content = fs.readFileSync(filePath, 'utf8');
   let changed = false;
@@ -1159,48 +1212,26 @@ async function main() {
   }
   copyDirSync(WORKSPACE_TEMPLATE, workspaceDest);
 
-  const vars = {
-    'project-name': projectName,
-    'cloud-id': cloudId,
-    'admin-key': adminKey,
-    'timezone': timezone,
-    'submission-mode': submissionMode,
-    'stack': stack,
-    'package-manager': packageManager,
-  };
-  walkAndSubstitute(workspaceDest, vars);
+  // The decisions (substitution map, single-vs-multi, rendered config.yaml) are pure — computeInitPlan
+  // + renderConfigYaml own them (testable without prompts/disk); main() applies the I/O around them.
+  const answers = { projectName, stack, packageManager, enableTempo, cloudId, adminKey, timezone, submissionMode, enableClaude, enableCodex, enableGithub };
+  const detected = detectProjects(target);
+  const plan = computeInitPlan(answers, detected);
 
-  // --- update config.yaml with concrete values ---
+  walkAndSubstitute(workspaceDest, plan.vars);
+
+  // --- update config.yaml with concrete values (incl. the multi-project layout when detected) ---
   const configPath = path.join(workspaceDest, 'config.yaml');
   if (fs.existsSync(configPath)) {
-    let yaml = fs.readFileSync(configPath, 'utf8');
-    yaml = yaml.replace(/tcgflow_version: "0.0.0"/, `tcgflow_version: "${TOOL_VERSION}"`);
-    yaml = yaml.replace(/name: ""/, `name: "${projectName}"`);
-    yaml = yaml.replace(/primary_stack: ""/, `primary_stack: "${stack}"`);
-    yaml = yaml.replace(/package_manager: pnpm/, `package_manager: ${packageManager}`);
-    yaml = yaml.replace(/cloudId: ""/, `cloudId: "${cloudId}"`);
-    yaml = yaml.replace(/admin_key: ""/, `admin_key: "${adminKey}"`);
-    yaml = yaml.replace(/timezone: "\+0800"/, `timezone: "${timezone}"`);
-    yaml = yaml.replace(/submission_mode: approval/, `submission_mode: ${submissionMode}`);
-    yaml = yaml.replace(/enabled: false/, `enabled: ${enableTempo}`);
-    yaml = yaml.replace(/claude: true/, `claude: ${enableClaude}`);
-    yaml = yaml.replace(/codex: false/, `codex: ${enableCodex}`);
-    yaml = yaml.replace(/github: false/, `github: ${enableGithub}`);
-    fs.writeFileSync(configPath, yaml);
+    fs.writeFileSync(configPath, renderConfigYaml(fs.readFileSync(configPath, 'utf8'), answers, detected, TOOL_VERSION));
   }
 
-  // --- detect multi-project layout ---
-  const detected = detectProjects(target);
-  if (detected.length >= 2) {
-    let yaml = fs.readFileSync(configPath, 'utf8');
-    yaml = yaml.replace(/workspace_kind: single/, 'workspace_kind: multi-project');
-    yaml = yaml.replace(/projects: \[\]/, `projects:\n${renderProjectsYaml(detected)}`);
-    fs.writeFileSync(configPath, yaml);
-    console.log(`  ✓ detected ${detected.length} sub-projects, written to config.yaml:`);
+  if (plan.workspace_kind === 'multi-project') {
+    console.log(`  ✓ detected ${plan.project_count} sub-projects, written to config.yaml:`);
     for (const p of detected) {
       console.log(`     - ${p.name.padEnd(24)} (${p.path}) — ${p.stack}`);
     }
-  } else if (detected.length === 1) {
+  } else if (plan.project_count === 1) {
     console.log(`  ~ single sub-project detected (${detected[0].path}) — workspace_kind stays 'single'`);
   }
 
@@ -1406,6 +1437,7 @@ async function main() {
 // Expose detection helpers so they can be unit-tested without running the full installer.
 module.exports = {
   detectProjects, analyseProject, slugify, renderProjectsYaml, SKIP_DIRS,
+  computeInitPlan, initVars, renderConfigYaml,
   readWorkspaceSchema, stampWorkspaceVersion, upgradeWorkspace, installHooks,
   readProjectRegistry, writeProjectRegistry, registerProject, isWorkspace, REGISTRY_PATH,
   reportDriftFromTemplate, adapterDrifted, reportWorkspaceDrift,
