@@ -18,7 +18,8 @@
 - [How to use it](#how-to-use-it) — the daily workflow
 - [The task lifecycle](#the-task-lifecycle)
 - [The Cockpit (Orchestrator)](#the-cockpit-orchestrator)
-- [Commands reference](#commands-reference)
+- [CLI reference](#cli-reference) — the `geekstackflow` commands
+- [Commands reference](#commands-reference) — the `/tcgflow-*` slash commands
 - [Skills reference](#skills-reference)
 - [Multi-project workspaces](#multi-project-workspaces)
 - [Migrating an existing project](#migrating-an-existing-project)
@@ -39,7 +40,7 @@ After `geekstackflow init`, your project has a `.tcgstackflow/` folder containin
 - **18 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
 - **Governance** (`governance.md`) — four risk levels (LOW/MEDIUM/HIGH/CRITICAL) + a permission-request recipe + your project-specific rules. Enforced live during orchestrated runs (approve/deny in the browser).
 - **Tool adapters** (`tools/`) — generated `CLAUDE.md`, `AGENTS.md` (Codex), and `.github/copilot-instructions.md` (Copilot), all pointing back at `.tcgstackflow/` as the single source of truth.
-- **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, and session id (workspace schema 4).
+- **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, session id, the runner `tool`/`gate`, and the qmd re-embed outcome (workspace schema 6).
 - **A local Cockpit / Orchestrator** — `geekstackflow ui` opens a browser dashboard over all your projects that also *runs* the workflow: launch any agent on a task, watch the live stream, approve HIGH/CRITICAL actions, browse run history and per-run reports/diffs, chat with a finished run, and track token spend against a budget — plus task board, wiki activity, Jira status, governance, timesheet.
 
 Plus a **global** home at `~/.tcgstackflow/` for cross-project memory (`memory/`) and a shared tech-skill library (`skills/`).
@@ -65,7 +66,17 @@ Two binaries are installed, identical: **`geekstackflow`** and the short alias *
 
 ## Quick start
 
-### A new or existing codebase (no prior AI scaffolding)
+Pick your starting point:
+
+- **New project** — a codebase with no prior AI scaffolding → run `init`. See [New project](#new-project) below.
+- **Update an existing workspace** — you already have `.tcgstackflow/` and pulled a newer version of the tool → run `upgrade`. See [Update an existing workspace](#update-an-existing-workspace) below.
+- **A project with ad-hoc AI infra** (`.taskRef/`, `ai-mem/`, a hand-written `CLAUDE.md`) → use the migration flow, not plain `init`. See [Migrating an existing project](#migrating-an-existing-project).
+
+> Want the guided 5-minute walkthrough with example prompt answers? See [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
+### New project
+
+Scaffold the workspace from scratch:
 
 ```bash
 cd /path/to/your/project
@@ -77,7 +88,7 @@ You'll be prompted for:
 | Prompt | Notes |
 |---|---|
 | Project name | defaults to the folder name |
-| Primary stack | e.g. "Next.js 16 + Prisma" (skipped for multi-project workspaces — auto-detected) |
+| Primary stack | e.g. "Next.js 16 + Prisma" (multi-project workspaces auto-detect each sub-project's stack) |
 | Package manager | pnpm / npm / yarn / bun |
 | Tempo integration? | if yes: Atlassian cloudId, quarterly admin key, timezone, submission mode |
 | Claude Code? | writes `CLAUDE.md` (default yes) |
@@ -86,23 +97,38 @@ You'll be prompted for:
 | Install `/tcgflow-*` slash commands? | to `~/.claude/skills/` (default yes when Claude is enabled) |
 | Obsidian symlink? | non-hidden `tcgstackflow/ → .tcgstackflow/` so Obsidian's picker can open it |
 
-Init also: auto-detects sub-projects (multi-project), registers the project in your Cockpit (`~/.tcgstackflow/projects.yaml`), and seeds `~/.tcgstackflow/` on first run.
+`init` also auto-detects sub-projects (multi-project), registers the project in your Cockpit (`~/.tcgstackflow/projects.yaml`), seeds `~/.tcgstackflow/` on first run, and — if the folder is a git repo — offers to install the **git pull-digest hook** so every `git pull` feeds upstream changes to the Ingester (skip it now, wire it later with `geekstackflow hooks .`).
 
-**Then open the project in your AI tool** (it reads `CLAUDE.md`/`AGENTS.md`) and seed the wiki from your real code:
+Then three short steps to a working setup:
+
+**1. Turn on wiki search.** In your AI tool, run `/tcgflow-init` — it installs and indexes [qmd](https://github.com/tobi/qmd), the mandatory wiki-search layer (a HIGH action: it asks first, then `npm i -g @tobilu/qmd` + ~2 GB of local models; needs **Node ≥ 22**, plus `brew install sqlite` on macOS). Decline and the workspace falls back to `index.md` navigation.
+
+**2. Seed the wiki from your real code.** The wiki ships as stubs — fill it from the actual codebase:
 
 ```
-/tcgflow-plan  "scan this codebase and populate wiki/project-overview.md and architecture.md"
+/tcgflow-plan  "scan this codebase and populate wiki/project-overview.md and wiki/architecture.md"
 ```
 
-…or just talk to it: *"plan a task to document this codebase's architecture."*
+…or just say *"plan a task to document this codebase's architecture."*
 
-### Launch the Cockpit
+**3. Launch the Cockpit.**
 
 ```bash
 geekstackflow ui          # → http://127.0.0.1:4729 (opens your browser)
 ```
 
 Open a task and press **Run** — the Orchestrator launches the right agent, streams it live, and pauses for your approval on HIGH/CRITICAL actions. See [The Cockpit (Orchestrator)](#the-cockpit-orchestrator).
+
+### Update an existing workspace
+
+When you pull a newer version of the tool, propagate it into a project so it picks up the new commands, agent profiles, schema migrations, and the enriched pull-digest hook:
+
+```bash
+geekstackflow upgrade /path/to/project    # or: /tcgflow-upgrade in your AI tool
+geekstackflow hooks   /path/to/project    # (re)wire the git pull-digest hook into .git/hooks
+```
+
+`upgrade` is **non-destructive**: it runs the schema migrations (now up to **schema 6**), refreshes the tool-owned commands + agent profiles (backing up any drift to `.bak`), additively adds new skills, and prints a **drift report**. It never overwrites your work — tasks, wiki, existing skills, and tool adapters are left untouched, and `config.yaml`/`governance.md` are only *additively extended* by migrations (new blocks/sections appended), never clobbered. Restart Claude Code afterward to pick up the refreshed slash commands. Full details: [Upgrading a workspace](#upgrading-a-workspace).
 
 ---
 
@@ -232,18 +258,38 @@ Open a task and press **Run {agent}** (e.g. *Run coder* on a `PLANNED` task):
 The wiki is the AI's memory — it's only as good as its last ingest. Two mechanisms keep it current:
 
 - **Wiki tab → Knowledge freshness** — tasks awaiting ingest, pending `raw/` files, last-ingest date, wiki last-edit, plus a **▶ Ingest raw now** button.
-- **The git-pull hook** — `geekstackflow hooks .` installs a `post-merge`/`post-rewrite` hook: every `git pull` writes a **pull digest** (commits + changed files) into `.tcgstackflow/raw/` for the Ingester. With `orchestrator.auto_ingest_on_pull: true` and the Cockpit running, the hook **launches the ingester run automatically** — upstream changes flow into the wiki (and the qmd index, via `embed_on_ingest`) without a click.
+- **The git-pull hook** — `geekstackflow hooks .` installs a `post-merge`/`post-rewrite` hook: every `git pull` writes a **pull digest** into `.tcgstackflow/raw/` for the Ingester. The digest captures **what changed**, the **cross-project impact** (which sibling projects a shared-dependency / API / schema change ripples to, in a multi-project workspace), and a **plain-language summary** of what the change is about — so the wiki gains the *meaning* of upstream work, not just a file list. With `orchestrator.auto_ingest_on_pull: true` and the Cockpit running, the hook **launches the ingester run automatically** — upstream changes flow into the wiki (and the qmd index, via `embed_on_ingest`) without a click.
 
 ### Inspect, report, discuss
 
 - **Session report** — per task (or per run): token classes, a $-cost waterfall (list-price estimate, ADR 0034), tool-calls-by-type, and a per-turn cache-read trace, parsed from the actual Claude session logs. **Open report ↗** exports it as standalone HTML; `/tcgflow-session-report` authors the AI editorial version (narrative + optimization recommendations).
-- **Per run** — read the **transcript**, view the **diff** since the run started (`git_base` is captured at launch), or copy **⌥ terminal** to resume that exact session interactively in your own CLI (`claude --resume <session_id>`).
+- **Per run** — read the **transcript** (it shows the run's **full session id** with **copy id** and **⌥ resume cmd** buttons), view the **diff** since the run started (`git_base` is captured at launch), or copy the resume command to continue that exact session in your own CLI (`cd "<project>" && claude --resume <session_id>`).
 - **Discuss** — a chat box on the task that resumes the latest run's session **read-only** and streams the agent's answer ("what did you do and why?").
 - **Settings** — per-role runner tool map (`orchestrator.roles`, ADR 0025 — all-`claude` today, `codex` deferred) and an optional **spend budget** that flags the project when estimated spend exceeds it. Persisted to `config.yaml`.
 
 Before the SPA is built, the server serves a built-in fallback page (read-only browse + copy-prompt) — so `geekstackflow ui` works even without `npm run build`.
 
 > The Orchestrator is no longer a roadmap item: read-only is retired (ADR 0032). "Copy prompt" became "Run" exactly as designed (ADRs 0020–0027), with per-run token capture (0033) and $-cost session reports (0034). Copy-prompt remains as the manual alternative for an already-open tool.
+
+---
+
+## CLI reference
+
+The `geekstackflow` binary (alias **`tcgflow`**; `node init.js …` works the same) — this is the terminal command line, distinct from the in-tool `/tcgflow-*` slash commands below. Zero runtime dependencies. `dir` defaults to the current directory in every form.
+
+| Command | Does |
+|---|---|
+| `geekstackflow init [dir]` *(or just `geekstackflow [dir]`)* | Scaffold `.tcgstackflow/` in `dir` — the interactive setup (prompts, adapters, registry, optional git hook) |
+| `geekstackflow upgrade [dir]` | In-place upgrade: schema migrations, refresh tool-owned files, additive new skills, drift report |
+| `geekstackflow ui [--port N]` | Launch the Cockpit / Orchestrator over all registered projects at `http://127.0.0.1:4729` |
+| `geekstackflow hooks [dir]` | Install the git `post-merge`/`post-rewrite` **pull-digest hook** into `.git/hooks` (preserves any existing hook as `*.pre-gsf`) |
+| `geekstackflow register [dir]` | Add an already-initialised project to the Cockpit registry without re-running init (e.g. after cloning to a new machine) |
+| `geekstackflow drift [dir]` | Read-only report of which existing skills / tool adapters differ from the current templates (the files `upgrade` won't auto-merge) |
+| `geekstackflow --migrate-from <old> [dir]` | During init, collect old AI infra from `<old>` into `migration-notes/` for manual review (collects, never auto-merges) |
+| `geekstackflow --force [dir]` | Overwrite an existing `.tcgstackflow/` (and root adapters) during init |
+| `geekstackflow --help` *(`-h`)* | Show usage |
+
+Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `register`, `drift`, `ui`, and `hooks` are subcommands only.
 
 ---
 
@@ -337,14 +383,17 @@ When you update the tool, propagate changes into a project:
 
 ```bash
 geekstackflow upgrade /path/to/project     # or: /tcgflow-upgrade
+geekstackflow hooks   /path/to/project     # (re)wire the enriched git pull-digest hook (if the project is a git repo)
 ```
 
 This:
-- runs any **layout migrations** keyed off `workspace_schema` (e.g. the pre-v0.2 dotfile rename),
+- runs any **layout migrations** keyed off `workspace_schema` (e.g. the pre-v0.2 dotfile rename; the 5→6 step refreshes the tool-owned `runs/README.md` contract doc **and** the workspace's `hooks/post-merge` so the enriched pull digest — cross-project impact + summary — is picked up),
 - **refreshes tool-owned files** — `tcgflow-*` commands (in the workspace *and* `~/.claude/skills/`) and agent profiles are updated to the latest templates, backing up any drifted file to `{name}.bak`,
 - **additively adds new skills** (absent → added; existing → never overwritten),
 - **prints a drift report** — exactly which existing skills and tool adapters differ from the new templates (the files it won't auto-merge), so you know precisely what to review,
 - registers the project in the Cockpit and stamps the version.
+
+`upgrade` does **not** itself touch `.git/hooks` — run `geekstackflow hooks .` to (re)wire the pull-digest hook (it prefers the workspace's freshly-refreshed `hooks/post-merge`).
 
 **Your customizations are never clobbered** — `governance.md`, `config.yaml`, existing skills, and tool-adapter content are left for manual merge. The drift report (re-runnable anytime with `geekstackflow drift /path/to/project`) tells you which of those drifted from the new templates, so the merge is targeted, not guesswork. Restart Claude Code afterward to pick up refreshed slash commands. (ADR 0021.)
 
@@ -354,14 +403,16 @@ This:
 
 ```
 geekstack-flow/
-├── init.js                 # the CLI (init / upgrade / register / drift / ui) — zero dependencies
-├── package.json            # bin: { geekstackflow, tcgflow }, v0.2.0
+├── init.js                 # the CLI (init / upgrade / register / drift / ui / hooks) — zero dependencies
+├── package.json            # bin: { geekstackflow, tcgflow }, v0.3.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
-├── docs/adr/               # 34 Architecture Decision Records
+├── docs/adr/               # 36 Architecture Decision Records
 ├── test/                   # node --test suite (run with `npm test`)
 ├── ui/                     # the Cockpit/Orchestrator (Vue 3 + Vite SPA + zero-dep Node server)
 │   ├── server/             #   read.cjs (data) · index.cjs (http) · run.cjs (agent executor)
 │   │                       #   run-manager · approvals · governance-mcp · governance-classify · session-report
+│   │                       #   config-fields.cjs (config.yaml parse/edit) · git.cjs (git seam)
+│   │   └── runners/        #   per-tool runner-adapter seam — claude.cjs + index.cjs (ADR 0035)
 │   ├── src/                #   App.vue + styles
 │   └── public/fonts/       #   self-hosted UI fonts
 └── templates/
@@ -370,9 +421,10 @@ geekstack-flow/
     │   ├── agents/        # 6 role profiles
     │   ├── skills/        # 17 skills
     │   ├── commands/      # 18 tcgflow-* commands
+    │   ├── hooks/         # post-merge pull-digest hook (wired by `geekstackflow hooks`)
     │   ├── wiki/          # starter pages + adr/
     │   ├── tasks/         # README + weekly/ + active/completed/archive/
-    │   ├── runs/          # orchestrated run records, {task-id}/{run-id}.md (schema 4)
+    │   ├── runs/          # orchestrated run records, {task-id}/{run-id}.md (schema 6)
     │   ├── raw/  prompts/
     │   └── tools/         # claude/ codex/ github/ adapters
     └── global/.tcgstackflow/      # copied to ~/.tcgstackflow/ (memory/ + skills/)
@@ -383,7 +435,7 @@ geekstack-flow/
 ## Design & decisions
 
 - **[CONTEXT.md](CONTEXT.md)** — the project's domain language (Wiki, Raw, Ingest/Query/Lint, Agent, Skill, Command, Cockpit, Orchestrator, Workspace vs Jira status, …).
-- **[docs/adr/](docs/adr/)** — 34 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034).
+- **[docs/adr/](docs/adr/)** — 36 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036).
 
 ## Inspirations
 
