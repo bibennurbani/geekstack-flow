@@ -42,11 +42,12 @@ test('diagnoseCollection: not-registered → fail', () => {
   assert.match(d.message, /NOT registered/);
 });
 
-test('diagnoseCollection: registered but wrong path (the global-name collision) → fail', () => {
+test('diagnoseCollection: resolves to another project (the global-namespace collision) → fail', () => {
   const shown = { name: 'wiki', path: '/other/.tcgstackflow/wiki' };
   const d = gsf.diagnoseCollection('wiki', '/w/.tcgstackflow/wiki', shown, { vectors: 10 });
   assert.strictEqual(d.level, 'fail');
-  assert.match(d.message, /GLOBAL namespace/);
+  assert.match(d.message, /NOT this project/);
+  assert.match(d.message, /ADR 0038/);
 });
 
 test('diagnoseCollection: right path but 0 embeddings → warn', () => {

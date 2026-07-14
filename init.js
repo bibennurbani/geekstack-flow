@@ -137,6 +137,8 @@ const GITIGNORE_BLOCK = [
   '.tcgstackflow/.obsidian/workspace-mobile.json',
   '.tcgstackflow/.obsidian/cache',
   '.tcgstackflow/.obsidian/graph.json',
+  '# qmd project-local index (ADR 0038) — machine-local cache, rebuilt by `qmd init` + `qmd embed`',
+  '.qmd/',
   '# Migration scratch (regeneratable by init.js --migrate-from)',
   '.tcgstackflow/migration-notes/',
   "# Obsidian-friendly non-hidden symlink — uncomment if you don't want to track it.",
@@ -1119,10 +1121,12 @@ async function askYesNo(prompt, defaultYes = false) {
 // THIS project's path (qmd collection names are a GLOBAL namespace, so projects collide on `wiki`), and
 // the index has embeddings. Read-only — it never installs qmd (honors the dependency-free invariant).
 
-// Impure: run a read-only qmd command. Returns { ok, out }; ok:false on a missing binary or non-zero exit.
-function runQmd(argv) {
+// Impure: run a read-only qmd command, optionally in a given cwd so it resolves that project's
+// PROJECT-LOCAL index (ADR 0038 — qmd walks up from cwd to find `.qmd`). Returns { ok, out };
+// ok:false on a missing binary or non-zero exit.
+function runQmd(argv, cwd) {
   try {
-    const out = require('child_process').execFileSync('qmd', argv, { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const out = require('child_process').execFileSync('qmd', argv, { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'], ...(cwd ? { cwd } : {}) });
     return { ok: true, out };
   } catch (e) { return { ok: false, out: (e && e.stdout) ? String(e.stdout) : '' }; }
 }
@@ -1173,7 +1177,7 @@ function diagnoseCollection(name, expectedPath, shown, status) {
     return { level: 'fail', message: `"${name}" is declared in config.yaml but NOT registered in qmd — run the /tcgflow-init qmd step (\`qmd collection add … --name ${name}\`)` };
   }
   if (expectedPath && path.resolve(shown.path) !== path.resolve(expectedPath)) {
-    return { level: 'fail', message: `"${name}" is registered but points at ${shown.path} — NOT this project. qmd collection names are a GLOBAL namespace, so another project claimed "${name}". Fix: give each project a unique collection name, or use a project-local index (\`qmd init\`).` };
+    return { level: 'fail', message: `"${name}" resolves to ${shown.path} — NOT this project. Without a project-local index this project shares the GLOBAL qmd namespace and another project owns "${name}". Fix (ADR 0038): \`qmd init\` here, then re-add collections + \`qmd embed\`.` };
   }
   if (status && status.vectors === 0) {
     return { level: 'warn', message: `"${name}" is registered${expectedPath ? ' at the right path' : ''}, but the qmd index has 0 embeddings — run \`qmd embed\`` };
@@ -1194,9 +1198,8 @@ function runDoctor(target) {
     process.exit(1);
   }
   const qmdVer = runQmd(['--version']);
-  const status = qmdVer.ok ? parseQmdStatus(runQmd(['status']).out) : null;
   if (!qmdVer.ok) console.log('⚠ qmd is not installed — every workspace degrades to the index.md Map-of-Content fallback (ADR 0030). Install: `npm i -g @tobilu/qmd` (a HIGH action).');
-  else console.log(`qmd present · global index: ${status.files} files, ${status.vectors} vectors embedded`);
+  else console.log('qmd present · each project should carry its own project-local index (.qmd, ADR 0038)');
 
   let fails = 0, warns = 0;
   for (const proj of reg) {
@@ -1205,12 +1208,17 @@ function runDoctor(target) {
     const schema = readWorkspaceSchema(path.join(proj.path, '.tcgstackflow', 'config.yaml'));
     if (schema < LATEST_SCHEMA) { console.log(`  ⚠ workspace_schema ${schema} < ${LATEST_SCHEMA} — run \`geekstackflow upgrade\``); warns++; }
     if (!qmdVer.ok) { console.log('  – qmd unavailable → index.md fallback in effect'); continue; }
+    // ADR 0038 — each project must have its OWN local index, else it shares (and collides on) the global one.
+    const hasLocal = fs.existsSync(path.join(proj.path, '.qmd'));
+    if (!hasLocal) { console.log('  ✗ no project-local qmd index (.qmd) — this project falls back to the GLOBAL index and collides with others on shared collection names (ADR 0038). Fix: `cd` here, then `qmd init && qmd collection add .tcgstackflow/wiki --name wiki --mask "*.md" && qmd embed`'); fails++; }
+    // Run qmd with cwd = the project so `show`/`status` resolve THIS project's local index (walk-up).
+    const status = parseQmdStatus(runQmd(['status'], proj.path).out);
     let cfg = '';
     try { cfg = fs.readFileSync(path.join(proj.path, '.tcgstackflow', 'config.yaml'), 'utf8'); } catch { /* ignore */ }
     const declared = parseDeclaredCollections(cfg);
     if (!declared.length) { console.log('  ⚠ no wiki_search collections declared in config.yaml'); warns++; continue; }
     for (const name of declared) {
-      const shown = runQmd(['collection', 'show', name]);
+      const shown = runQmd(['collection', 'show', name], proj.path);
       const parsed = shown.ok ? parseQmdCollectionShow(shown.out) : null;
       const d = diagnoseCollection(name, expectedCollectionPath(name, proj.path), parsed, status);
       console.log(`  ${DOCTOR_ICON[d.level]} ${d.message}`);

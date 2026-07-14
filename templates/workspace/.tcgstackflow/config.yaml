@@ -50,6 +50,8 @@ skills:
 # Complements (does not replace) wiki/index.md navigation; index.md is the always-current fallback.
 wiki_search:
   engine: qmd                       # https://github.com/tobi/qmd — local hybrid (BM25 + vector + rerank)
+  index: project-local              # ADR 0038 — `/tcgflow-init` runs `qmd init` → a project-local .qmd/ index (gitignored),
+                                    # so collection names are scoped to THIS project and never collide with other projects' `wiki`
   interface: cli                    # 'cli' is canonical/tool-portable; the qmd MCP (mcp.recommended) is an optional Claude convenience
   embed_on_ingest: true             # the Ingester re-embeds all collections after each ingest/lint
   mask: "*.md"                      # qmd indexes only Markdown (qmd collection add --mask)

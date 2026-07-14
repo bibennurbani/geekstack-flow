@@ -31,7 +31,15 @@ The user typed `/tcgflow-upgrade` or said *"upgrade this workspace"*, *"migrate 
 
 4. **Report the changes** the script made — including the **drift report** it prints at the end: the existing skills and `tools/{claude,codex,github}/` adapters that differ from the new templates and were *not* auto-merged (these are the files to review). New skills not yet installed are flagged too.
 
-5. **Bootstrap qmd wiki-search after the schema-2→3 migration.** That migration injects the `wiki_search` config block into the existing workspace (ADR 0030); `init.js` the script does **not** install qmd. So once the migration has run: if qmd is absent, run the setup — `qmd --version`, and if missing `npm install -g @tobilu/qmd` (a **HIGH action** per `governance.md` — global npm install + ~2 GB models, Node ≥ 22, `brew install sqlite` on macOS — issue a permission request first), then register collections (`qmd collection add .tcgstackflow/wiki --name wiki`, plus `qmd collection add docs --name docs` when a `docs/` dir exists). Then **re-embed** with `qmd embed` so the index reflects the upgraded workspace.
+5. **Bootstrap qmd wiki-search with a PROJECT-LOCAL index (ADR 0030 + 0038).** The schema-2→3 migration injects the `wiki_search` config block (ADR 0030); `init.js` the script does **not** install or run qmd. Once it has run: if qmd is absent, install it — `qmd --version`, else `npm install -g @tobilu/qmd` (a **HIGH action** per `governance.md` — global npm install + ~2 GB models, Node ≥ 22, `brew install sqlite` on macOS — permission request first). Then **create the project-local index and re-register into it** (ADR 0038 — this is the migration that fixes the global-collection collision where multiple geekstackflow projects fought over one global `wiki`):
+   ```bash
+   qmd init                                                   # create .qmd/ (gitignored) if absent
+   qmd collection add .tcgstackflow/wiki --name wiki --mask "*.md"
+   qmd context add qmd://wiki "Project knowledge wiki — architecture, domain, features, decisions, operations"
+   # + a docs / docs-<subproject> collection per docs/ dir (see /tcgflow-init)
+   qmd embed                                                  # re-embed into the local index
+   ```
+   Run `geekstackflow doctor` afterwards to confirm each declared collection now resolves to **this** project's path (not another project's).
 
 6. **Offer two follow-up steps** (don't auto-run unless the user asks):
 

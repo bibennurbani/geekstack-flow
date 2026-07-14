@@ -35,7 +35,11 @@ The user typed `/tcgflow-init` or said something equivalent: *"set up geekstackf
 
 7. **Bootstrap qmd wiki-search** (realizes the `wiki_search` config block `init.js` scaffolds — ADR 0030; `init.js` the *script* stays dependency-free and does **not** install qmd):
    - **Ensure qmd is installed.** Run `qmd --version`. If missing, install it — `npm install -g @tobilu/qmd`. This is a **HIGH action** per `governance.md` (global npm install + ~2 GB of local models): issue a permission request first. Needs Node ≥ 22, ~2 GB disk for models, and `brew install sqlite` on macOS.
-   - **Register collections + set a retrieval context per collection** (the `--mask` and `context` values come from config.yaml's `wiki_search` block). The `wiki` collection is mandatory:
+   - **Create the PROJECT-LOCAL index first (ADR 0038).** Run `qmd init` in the workspace root — it creates a `.qmd/` index so the collections below register into **this project's** index, not qmd's shared **global** namespace. This is essential on a machine with more than one geekstackflow project: without it, every project registers `--name wiki` into the one global `wiki` collection and they collide (only the last-embedded wins), so agents silently search the wrong project's wiki. `.qmd/` is gitignored (a regenerable cache).
+     ```bash
+     qmd init
+     ```
+   - **Register collections + set a retrieval context per collection** (the `--mask` and `context` values come from config.yaml's `wiki_search` block). Run these from the workspace root so they land in the local index. The `wiki` collection is mandatory:
      ```bash
      qmd collection add .tcgstackflow/wiki --name wiki --mask "*.md"
      qmd context add qmd://wiki "Project knowledge wiki — architecture, domain glossary, features, decisions (ADRs), operations"
