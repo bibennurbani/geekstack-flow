@@ -47,7 +47,7 @@ qmd vsearch "<concept>"      -c wiki --json          # pure semantic — for fuz
 
 1. Open the top-ranked pages qmd returned (`qmd get "<filepath>"` or read the file directly).
 2. Follow their `[[wikilinks]]` **one hop** to catch directly-related pages.
-3. If results look thin or stale, fall back to `wiki/index.md` and navigate the Map of Content by hand — it is always current.
+3. If results look thin, **refine before you retreat**: switch `query`↔`search`↔`vsearch` or sharpen the query (per the retrieval-budget rule below) — a mediocre first result set is not grounds to abandon qmd. Only if a refined search still comes up short (or the index is genuinely stale) do you fall back to `wiki/index.md` and navigate the Map of Content by hand — it is always current.
 
 **Retrieval budget (the token-efficiency contract).** Default to `-n 8` hits and **open only the pages you'll actually use** — a hit's score + `summary` tells you if it's relevant before you read the body. Traverse `[[wikilinks]]` **one hop**, not transitively. The entire point of qmd is to avoid loading the wiki into context, so **never read every page "to be safe."** If the top hits don't cover the question, *refine the query* (or switch `query`↔`search`↔`vsearch`) before widening `-n`.
 
@@ -73,8 +73,8 @@ The relevant page set for the task at hand — not narration. Use the content to
 
 ## Anti-patterns
 
-- **Skipping qmd and grepping the wiki by hand** when qmd is available — you miss semantically-relevant pages no wikilink path reaches.
-- **Treating qmd as the only way in.** It is the discovery layer; `index.md` + `[[wikilinks]]` remain the structure and the fallback.
+- **Grepping the wiki by hand to discover pages.** A raw full-text `grep`/`rg` over wiki page *bodies* misses semantically-relevant pages no wikilink path reaches, and it is **never** the fallback — the **only** sanctioned non-qmd discovery is structured `index.md` + `[[wikilink]]` navigation. In an orchestrated Claude run the governance gate soft-denies a pre-qmd wiki body-grep and redirects you to qmd (ADR 0037); on every tier the discovery path you took is recorded in the run record. (The `grep "^## \[" log.md` timeline read is a *structural log* operation, not discovery — it stays fine.)
+- **Treating qmd as the only way in.** It is the discovery layer; `index.md` + `[[wikilinks]]` remain the structure and the *sanctioned* fallback when qmd is declined, missing, or stale.
 - **Silently installing qmd.** The global install + 2 GB model download is HIGH — request permission first.
 - **Trusting a stale index.** Right after an ingest the index should be fresh (the Ingester re-embeds); if you suspect drift, `qmd embed` before searching.
 - **Fabricating a fallback.** If qmd is unavailable and you can't navigate `index.md` either, say so — never invent page content.

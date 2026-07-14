@@ -32,7 +32,10 @@ const git = require('./git.cjs'); // the one seam for git shell-outs (Card 5 [22
 const governance = {
   mcpServerPath: path.join(__dirname, 'governance-mcp.cjs'),
   controlUrl: null,
-  allowedTools: 'Read,Grep,Glob,LS',
+  // ADR 0037 — Grep is deliberately NOT pre-allowed: it must route through the permission gate so the
+  // qmd query-path guard can see (and soft-deny) a pre-qmd raw wiki body-grep. The gate auto-allows Grep
+  // as LOW in every other case, so this adds no human friction. Read/Glob/LS stay pre-allowed.
+  allowedTools: 'Read,Glob,LS',
 };
 
 let executor;
@@ -322,6 +325,20 @@ function handleRequest(req, res) {
           run_id, task_id: run.task_id, project_path: run.project_path,
           action, risk, why: body.why, files: body.files, rollback: body.rollback,
         }).then((decision) => sendJSON(res, 200, { decision }));
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+    }
+    // ADR 0037 — loopback intake for the qmd query-path discovery signal from the MCP gate.
+    // Fire-and-forget (the gate never waits on this); token-authenticated, loopback-only. Records
+    // which discovery path a run took (qmd | index-fallback | redirected) into the run's live record.
+    if (p === '/api/run/wiki-discovery') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { run_id, token, path: dpath, reason } = body || {};
+        const run = runManager.get(run_id);
+        if (!run) return sendJSON(res, 404, { error: 'unknown-run' });
+        if (!token || token !== executor.tokenFor(run_id)) return sendJSON(res, 403, { error: 'bad-token' });
+        executor.noteDiscovery(run_id, { path: dpath, reason });
+        return sendJSON(res, 200, { ok: true });
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
     // GOV-2 — browser decision (approve/deny) resolves a pending approval. CRITICAL approvals

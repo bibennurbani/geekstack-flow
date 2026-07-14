@@ -113,6 +113,17 @@ PROJ_LIST=$(sed -n 's/^[[:space:]]*-[[:space:]]*name:[[:space:]]*//p' "$CFG" 2>/
 
 echo "geekstack-flow: pull digest written to $DIGEST"
 
+# ADR 0037 — freshness backstop. A `git pull` that lands wiki/ or docs/ changes OUTSIDE the ingest flow
+# leaves the qmd index stale until the next ingest — precisely when readers are told to distrust it and
+# fall back to index.md. If qmd is installed and this pull touched wiki/ or docs/, refresh the index
+# incrementally in the BACKGROUND (never block the pull). Non-fatal, best-effort. The orchestrated
+# Ingester still re-embeds deterministically (ADR 0036); this covers the non-orchestrated edit path.
+if command -v qmd >/dev/null 2>&1 \
+  && git diff --name-only "$BASE..$HEAD" 2>/dev/null | grep -Eq '(^|/)\.tcgstackflow/wiki/|(^|/)docs/'; then
+  ( cd "$WS" && qmd embed >/dev/null 2>&1 ) &
+  echo "geekstack-flow: qmd re-embed started in background (wiki/docs changed upstream)"
+fi
+
 # Optional auto-ingest: only when explicitly enabled AND the Cockpit answers on localhost.
 # project_path is the WORKSPACE root (the registered project), not the sub-repo.
 if grep -q '^\s*auto_ingest_on_pull:\s*true' "$WS/.tcgstackflow/config.yaml" 2>/dev/null; then

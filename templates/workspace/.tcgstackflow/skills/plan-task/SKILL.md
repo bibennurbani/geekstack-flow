@@ -26,7 +26,7 @@ You are writing two files inside `tasks/active/{ID}/` and adding one row to `tas
 3. **Write `TASK {ID}.md` — the implementation log scaffold.** Top sections only — no entries yet (those come from `update-task-log` once the Coder starts). See template below.
 4. **Write `TASK details {ID}.md` — the planning doc.** Use the template below. Fill in:
    - **Overview** — one paragraph from the resolved grill output.
-   - **Context** — wiki pages and prior related tasks, as `[[wikilinks]]`.
+   - **Context** — wiki pages (discovered via the `wiki-search` skill (qmd), not by hand-grepping the wiki; `index.md` is the fallback) and prior related tasks, as `[[wikilinks]]`.
    - **Stack/Technologies** — the slice of the project's stack this task touches.
    - **Key Files** — best-effort list from grill output.
    - **Risk** — any HIGH/CRITICAL actions the plan implies. Empty if none.

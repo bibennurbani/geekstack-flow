@@ -44,7 +44,7 @@ function buildSpawn(run, ctx, bin = 'claude') {
       path: cfgPath,
       content: JSON.stringify({ mcpServers: { tcgflow_governance: { command: process.execPath, args: [governance.mcpServerPath] } } }),
     };
-    args.push('--mcp-config', cfgPath, '--permission-prompt-tool', 'mcp__tcgflow_governance__approve', '--permission-mode', 'default', '--allowedTools', governance.allowedTools || 'Read,Grep,Glob,LS');
+    args.push('--mcp-config', cfgPath, '--permission-prompt-tool', 'mcp__tcgflow_governance__approve', '--permission-mode', 'default', '--allowedTools', governance.allowedTools || 'Read,Glob,LS');
     env.GSF_WORKSPACE_DIR = governance.workspaceDir;
     env.GSF_CONTROL_URL = governance.controlUrl;
     env.GSF_RUN_ID = run.run_id;

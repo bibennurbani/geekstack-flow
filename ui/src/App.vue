@@ -435,6 +435,15 @@ const overBudget = computed(() => projectBudget.value != null && projectSpend.va
 
 const updateCount = computed(() => projects.value.filter(p => p.update_available).length);
 const prettyStatus = (s) => (s || '').replace(/_/g, ' ');
+// ADR 0037 — hover text for the wiki-discovery badge (which path this run used to recall the wiki).
+function wikiDiscoveryTitle(w) {
+  if (!w) return '';
+  const parts = [];
+  if (w.path === 'qmd') parts.push(`Discovered via qmd${w.queries ? ` (${w.queries} ${w.queries === 1 ? 'query' : 'queries'})` : ''}`);
+  else if (w.path === 'index-fallback') parts.push(`index.md Map-of-Content fallback${w.reason ? ` (qmd ${w.reason})` : ''}`);
+  if (w.redirects) parts.push(`${w.redirects} pre-qmd wiki grep${w.redirects === 1 ? '' : 's'} redirected to qmd`);
+  return parts.join(' · ');
+}
 const roleEntries = computed(() => taskDetail.value && taskDetail.value.tokens ? Object.entries(taskDetail.value.tokens.by_role || {}) : []);
 const timelineNewest = computed(() => taskDetail.value ? [...(taskDetail.value.timeline || [])].reverse() : []);
 
@@ -778,6 +787,10 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                 <button v-if="r.session_id" class="btn" style="padding:3px 9px;font-size:11px" :class="{ 'btn-copied': copiedKey === 'term' + r.run_id }"
                   title="Copy a command to resume this session in your own terminal" @click.stop="copyResume(selected, r.session_id, 'term' + r.run_id)">{{ copiedKey === 'term' + r.run_id ? '✓' : '⌥ term' }}</button>
                 <span class="mono muted" style="font-size:12px">{{ fmtTok((r.tokens.input||0)+(r.tokens.output||0)+(r.tokens.cache_read||0)+(r.tokens.cache_creation||0)) }} tok</span>
+                <!-- ADR 0037 — which wiki-discovery path this run took (qmd | index-fallback). Absent → no badge. -->
+                <span v-if="r.wiki_discovery && r.wiki_discovery.path" class="badge"
+                  :class="r.wiki_discovery.path === 'qmd' ? 'st-COMPLETED' : 'soft'"
+                  :title="wikiDiscoveryTitle(r.wiki_discovery)">🔍 {{ r.wiki_discovery.path === 'qmd' ? 'qmd' : 'index-fallback' }}<span v-if="r.wiki_discovery.redirects"> ⚠︎{{ r.wiki_discovery.redirects }}</span></span>
                 <span class="badge" :class="r.state === 'done' ? 'st-COMPLETED' : r.state === 'failed' ? 'st-BLOCKED' : 'soft'">{{ r.state || '?' }}</span>
               </div>
 

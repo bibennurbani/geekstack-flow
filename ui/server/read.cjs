@@ -443,6 +443,7 @@ function serializeRunRecord(rec = {}) {
   const terminal = rec.state !== 'running';
   const sid = rec.session_id; // omit when falsy — an empty `session_id:` parses as a truthy {} downstream
   const e = rec.embed;
+  const w = rec.wiki_discovery; // ADR 0037 — which discovery path this run took (qmd | index-fallback | none)
   return [
     '---',
     `task: ${rec.task}`,
@@ -461,6 +462,10 @@ function serializeRunRecord(rec = {}) {
       ...(e.skipped ? ['  skipped: true'] : []),
       ...(e.exit !== undefined && e.exit !== null ? [`  exit: ${e.exit}`] : []),
       ...(e.at ? [`  at: ${e.at}`] : [])] : []),
+    ...(w && (w.path || w.redirects) ? ['wiki_discovery:', `  path: ${w.path || 'none'}`,
+      ...(w.reason ? [`  reason: ${w.reason}`] : []),
+      ...(w.queries ? [`  queries: ${w.queries}`] : []),
+      ...(w.redirects ? [`  redirects: ${w.redirects}`] : [])] : []),
     '---',
     rec.transcript || '',
     '',
@@ -485,6 +490,7 @@ function parseRunRecord(text) {
     git_base: fm.git_base || null,
     tokens,
     embed: (fm.embed && typeof fm.embed === 'object') ? fm.embed : null,
+    wiki_discovery: (fm.wiki_discovery && typeof fm.wiki_discovery === 'object') ? fm.wiki_discovery : null,
     transcript: (m ? m[1] : String(text || '')).trim(),
   };
 }
@@ -499,7 +505,7 @@ function readRunsForTask(workspaceDir, id) {
     for (const k of RUN_TOKEN_KEYS) total[k] += rr.tokens[k];
     if (!by_role[role]) by_role[role] = ZERO_TOKENS();
     for (const k of RUN_TOKEN_KEYS) by_role[role][k] += rr.tokens[k];
-    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: rr.session_id, state: rr.state, tokens: rr.tokens });
+    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: rr.session_id, state: rr.state, tokens: rr.tokens, wiki_discovery: rr.wiki_discovery });
   }
   return { total, by_role, runs };
 }
@@ -512,6 +518,7 @@ function readRunTranscript(workspaceDir, taskId, runId) {
   return {
     run_id: runId, role: rr.role, session_id: rr.session_id,
     state: rr.state, ended_at: rr.ended_at, git_base: rr.git_base, tool: rr.tool, gate: rr.gate, embed: rr.embed,
+    wiki_discovery: rr.wiki_discovery,
     tokens: rr.tokens, transcript: rr.transcript,
   };
 }
