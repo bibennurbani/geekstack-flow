@@ -72,7 +72,7 @@ function writeRunRecord(workspaceDir, run, live, state) {
       session_id: live.latest_session_id || live.session_id,
       tokens: live.tokens || ZERO(), state,
       started_at: live.started_at, ended_at: live.ended_at, git_base: live.git_base,
-      embed: live.embed, transcript: live.transcript,
+      embed: live.embed, wiki_discovery: live.wiki_discovery, transcript: live.transcript,
     });
     fs.writeFileSync(path.join(dir, run.run_id + '.md'), body);
   } catch { /* a failed flush must never crash the server */ }
@@ -401,10 +401,25 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     return true;
   }
 
+  // ADR 0037 — fold the governance gate's discovery telemetry into the run's live record. Strongest
+  // signal wins: any observed qmd search → path 'qmd' (queries counted); a boot-time qmd-absent report
+  // → 'index-fallback' (unless qmd was later used); redirects (a soft-denied pre-qmd wiki grep) are
+  // counted as a compliance signal. Flushed into the run record on the next write. Never throws.
+  function noteDiscovery(run_id, payload = {}) {
+    const L = live.get(run_id); if (!L) return false;
+    const w = L.wiki_discovery || { queries: 0, redirects: 0 };
+    if (payload.path === 'qmd') { w.path = 'qmd'; w.queries = (w.queries || 0) + 1; }
+    else if (payload.path === 'redirected') { w.redirects = (w.redirects || 0) + 1; }
+    else if (payload.path === 'index-fallback') { if (w.path !== 'qmd') { w.path = 'index-fallback'; if (payload.reason) w.reason = payload.reason; } }
+    L.wiki_discovery = w;
+    return true;
+  }
+
   return {
     launch, subscribe, abortRun, chat, getLive: (id) => live.get(id) || null, ROLES,
     pushEvent: (id, type, data) => emit(id, type, data),   // GOV-2 — approvals push onto the run's SSE
     tokenFor: (id) => { const L = live.get(id); return L ? L.token : null; }, // GOV-4 — intake auth
+    noteDiscovery,                                          // ADR 0037 — gate telemetry → run record
   };
 }
 

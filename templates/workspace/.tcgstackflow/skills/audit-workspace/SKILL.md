@@ -93,7 +93,18 @@ An agent's `Reads:` or `Writes:` section refers to a path that doesn't exist (e.
 
 **Severity:** `major` — re-run `init.js --force` or manually regenerate.
 
-#### 9. Multi-project drift
+#### 9. qmd-first discovery drift (ADR 0030 / 0037)
+
+The qmd-first discovery discipline is a *convention*; this detector makes it a checkable invariant. Flag two drifts:
+
+- **Wiki-recalling skill without a discovery step** — a project-local skill whose body reads/recalls the wiki (mentions `wiki/`, `[[wikilinks]]`, "read the wiki pages", or greps wiki content) but does **not** reference the `wiki-search` skill / qmd. Such a skill, run outside its agent profile, would grep or read the wiki by hand — the bypass ADR 0037's per-run discovery record is designed to surface.
+- **Agent profile missing the `index.md` fallback clause** — an agent that uses `wiki-search` but omits the "`index.md` is the always-current fallback when qmd is unavailable" clause the other profiles carry (a resilience/consistency gap; the Refactorer profile was the original offender, fixed in ADR 0037).
+
+**Example:** `skills/plan-task/SKILL.md` says "name the relevant wiki pages as `[[wikilinks]]`" with no `wiki-search`/qmd step → an agent could hand-scan the wiki.
+
+**Severity:** `major` — undermines the mandatory discovery layer; proposed fix routes through `ingest` (skill/agent text is workspace prose).
+
+#### 10. Multi-project drift
 
 For workspaces with `workspace_kind: multi-project`:
 

@@ -30,7 +30,7 @@ You are walking a diff and deciding whether the task can move to `VALIDATED`. Ho
    - Readability — naming, function length, nested complexity
    - Security — input validation, secret handling, authn/authz boundaries
    - Tests — exist for the acceptance criteria, actually exercise the behaviour (not just smoke "compiles")
-   - Consistency — alignment with `wiki/architecture.md` and `wiki/domain.md` (e.g. uses the project's preferred naming, doesn't reintroduce a deleted concept)
+   - Consistency — alignment with the wiki: use the `wiki-search` skill (qmd) to surface the feature / domain / architecture pages the diff actually touches (not only `wiki/architecture.md` + `wiki/domain.md`; `index.md` is the fallback when qmd is unavailable), e.g. uses the project's preferred naming, doesn't reintroduce a deleted concept
    - Cleanup pass — the Coder's diff leaves no imports or dead code *its own change* orphaned, no commented-out scratch; touched files are formatted. Missing cleanup is a `nit`/`major`, not a `blocker`.
    - Project rules — anything in `governance.md`'s Project-Specific Rules section
 7. **Decide the verdict.**

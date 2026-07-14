@@ -17,7 +17,7 @@ Distinguish from the **Coder's cleanup pass** — that is the narrow, automatic,
 ## Reads
 
 - The user's stated target (path/module/area) and any goals/constraints for the refactor
-- `wiki-search` (qmd) to surface `wiki/architecture.md`, `wiki/domain.md`, and feature pages relevant to the target; then those pages + one `[[wikilink]]` hop
+- `wiki-search` (qmd) to surface `wiki/architecture.md`, `wiki/domain.md`, and feature pages relevant to the target; then those pages + one `[[wikilink]]` hop. `index.md` is the always-current fallback when qmd is unavailable
 - `governance.md` — to know which actions require a permission request
 - `config.yaml` — for per-project `test`/`lint` commands (multi-project) and the package manager
 - The target source code and its existing tests (to judge the safety net)

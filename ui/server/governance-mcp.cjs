@@ -28,6 +28,15 @@ async function decide(params, ctx) {
   const args = (params && params.arguments) || {};
   const toolName = args.tool_name || args.tool || 'unknown';
   const input = args.input || {};
+  // ADR 0037 (observe half) — a qmd search flips the run's `qmdSeen` state and reports the discovery
+  // path into the run record. Purely observational: it NEVER changes the allow/deny outcome (a query-
+  // time enforcement gate is designed but deferred until the record shows real bypassing). Fails silent.
+  const st = ctx.state;
+  try {
+    if (st && ctx.isQmdInvocation && ctx.isQmdInvocation(toolName, input)) {
+      if (!st.qmdSeen) { st.qmdSeen = true; if (ctx.reportDiscovery) ctx.reportDiscovery({ path: 'qmd' }); }
+    }
+  } catch { /* observation must never affect the gate outcome */ }
   let level;
   try { level = ctx.classify(toolName, input, ctx.rules || [], ctx.trusted || []); } catch { level = 'HIGH'; }
   if (level === 'LOW' || level === 'MEDIUM') return allow(input);
@@ -85,11 +94,31 @@ function postIntake(payload) {
   });
 }
 
+// ADR 0037 — fire-and-forget discovery telemetry to the Cockpit loopback. Best-effort: the observe
+// half must never block or crash a run. Silent on any error (missing control URL, non-Claude tier, etc.).
+function postDiscovery(payload) {
+  try {
+    const base = process.env.GSF_CONTROL_URL; if (!base) return;
+    const url = new URL('/api/run/wiki-discovery', base);
+    const body = Buffer.from(JSON.stringify({ run_id: process.env.GSF_RUN_ID, token: process.env.GSF_RUN_TOKEN, ...payload }));
+    const lib = url.protocol === 'https:' ? require('https') : require('http');
+    const req = lib.request({ hostname: url.hostname, port: url.port, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': body.length } });
+    req.on('error', () => {}); req.write(body); req.end();
+  } catch { /* observe half never throws */ }
+}
+
 function runStdio() {
-  const { classify, recipeFor, parseProjectRules, parseTrustedCommands } = require('./governance-classify.cjs');
+  const { classify, recipeFor, parseProjectRules, parseTrustedCommands, isQmdInvocation } = require('./governance-classify.cjs');
   let rules = [], trusted = [];
   try { const gtext = fs.readFileSync(path.join(process.env.GSF_WORKSPACE_DIR || '.', 'governance.md'), 'utf8'); rules = parseProjectRules(gtext); trusted = parseTrustedCommands(gtext); } catch { rules = []; trusted = []; }
-  const ctx = { classify, recipeFor, rules, trusted, postIntake };
+  // ADR 0037 — one-time qmd presence check at gate boot. Absent → the index.md fallback is legal, so the
+  // discovery gate stands down (it must never block a workspace that simply hasn't installed qmd). Done
+  // ASYNC — a blocking spawn here would stall the stdio loop and delay the first JSON-RPC reply.
+  const state = { qmdSeen: false, qmdAbsent: false };
+  require('child_process').execFile('qmd', ['--version'], { timeout: 5000 }, (err) => {
+    if (err) { state.qmdAbsent = true; postDiscovery({ path: 'index-fallback', reason: 'missing' }); }
+  });
+  const ctx = { classify, recipeFor, rules, trusted, postIntake, isQmdInvocation, state, reportDiscovery: postDiscovery };
   let buf = '';
   process.stdin.on('data', async (chunk) => {
     buf += chunk.toString('utf8');

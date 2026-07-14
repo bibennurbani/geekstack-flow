@@ -1,5 +1,7 @@
 # Wiki Operations are Ingest / Query / Lint, with a locked log-entry prefix
 
+> **Amended by ADR 0030 / 0036 / 0037.** The **Query** operation described here now routes through the mandatory **qmd** discovery layer (0030), whose index the orchestrator keeps fresh deterministically (0036) and whose discovery path is recorded per run — with a query-time gate designed but deferred (0037). The locked `## [` log prefix and the `grep "^## \[" log.md` timeline read below are unchanged and remain a *structural log* operation (explicitly not "grep-the-wiki" discovery — see 0037).
+
 Karpathy's LLM-Wiki gist defines three operations on a wiki: **Ingest** (fold a Raw source into wiki pages), **Query** (answer a question from the wiki, optionally filing the answer back), and **Lint** (periodic health-check for contradictions, stale claims, orphan pages, missing cross-references). V1 adopts all three as named operations, each producing a `log.md` entry using the prefix `## [YYYY-MM-DD] {operation} | {title}`. This prefix is **locked** — it lets simple grep tools (`grep "^## \[" log.md | tail -5`) return the wiki's recent history without parsing markdown.
 
 ## Operation specs

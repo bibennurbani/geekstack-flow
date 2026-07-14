@@ -324,6 +324,20 @@ function handleRequest(req, res) {
         }).then((decision) => sendJSON(res, 200, { decision }));
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
+    // ADR 0037 — loopback intake for the qmd query-path discovery signal from the MCP gate.
+    // Fire-and-forget (the gate never waits on this); token-authenticated, loopback-only. Records
+    // which discovery path a run took (qmd | index-fallback | redirected) into the run's live record.
+    if (p === '/api/run/wiki-discovery') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { run_id, token, path: dpath, reason } = body || {};
+        const run = runManager.get(run_id);
+        if (!run) return sendJSON(res, 404, { error: 'unknown-run' });
+        if (!token || token !== executor.tokenFor(run_id)) return sendJSON(res, 403, { error: 'bad-token' });
+        executor.noteDiscovery(run_id, { path: dpath, reason });
+        return sendJSON(res, 200, { ok: true });
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+    }
     // GOV-2 — browser decision (approve/deny) resolves a pending approval. CRITICAL approvals
     // require an explicit rollback acknowledgment (ack: true) — enforced HERE so no client path
     // (task panel, inbox, curl) can one-click a CRITICAL action (ADR 0008).
