@@ -1,7 +1,7 @@
 ---
 title: Architecture Decision Records
 summary: How ADRs work in this wiki, and the minimal frontmatter every ADR carries so qmd retrieves decisions on "why did we …" queries.
-tags: [meta, decisions]
+tags: [meta]
 priority: P1
 created: 2026-05-30
 updated: 2026-05-30

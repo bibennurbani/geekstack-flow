@@ -79,3 +79,13 @@ Per the audit (grill session → ADR 0037): qmd is mandatory-to-**install** and 
 ### QPE-7 — drift detector
 - In `audit-workspace` (and/or `lint-wiki`): flag any skill whose body recalls the wiki but lacks a `wiki-search`/qmd reference, and any agent profile missing the `index.md`-fallback clause.
 - **AC:** detector documented in the skill; catches the pre-fix Refactorer state as a positive control.
+
+---
+
+## 3. Follow-ups from the efficiency audit (2026-07-14)
+
+A second audit asked: is qmd set up efficiently per project, is it token-efficient, and is the wiki best-practice? Landed the S-effort batch (multi-project docs registration fixed in `/tcgflow-init`; `session-report` now counts wiki access qmd-vs-direct; wiki-search prose no longer over-claims an unmeasured saving; scaffold tag drift fixed + a filled authoring exemplar + a new MoC-reachability lint detector #13). **Deferred M-effort items** (planned, not built):
+
+- **`geekstackflow doctor` / drift check** — parse `qmd status` / `qmd collection list` against each workspace's `config.yaml` `wiki_search` block and report, per collection, whether it is actually **registered + embedded**. Turns the "MANDATORY wiki collection" from a config *declaration* into a *verified* fact (closes the "declared ≠ realized" gap — the #1 reason qmd isn't guaranteed set up for every project).
+- **`wiki_discovery` → budget signal** — extend the per-run record from a binary path (`qmd`/`index-fallback`) to include `pages_opened` / `max -n` / hop-depth, so the badge distinguishes a disciplined run from a wasteful one (a `qmd` call followed by reading 40 pages currently earns the same clean badge).
+- **Ingest-time frontmatter/chunk validator** — a deterministic gate at the ingest re-embed step that fails on missing `title`/`summary`/`tags`/`status`/`updated` or off-taxonomy kind tags, and emits per-chunk token counts for lint detector 9 — converting the report-only checks into an enforced, measured gate.

@@ -145,6 +145,15 @@ A `log.md` Decision section records a *resolved* contradiction, but a page it na
 
 **Severity:** `major` — the corrected truth lives only in the chronological log while the page still asserts the stale fact. Proposed fix: re-ingest, applying the resolved fact to the page body. (Keys off the structured Modified/date fields — no free-text prose comparison — and depends on the `ingest` skill naming the page in the Decision, which its step-4 resolved-contradiction rule now requires.)
 
+#### 13. Not reachable from the Map of Content (`index.md`)
+
+Karpathy's pattern makes `index.md` the single entry point — every page should be reachable from it. The **orphan** detector (3) is weaker: it counts an inbound `[[wikilink]]` from *any* page, so a page linked only by a sibling (but absent from `index.md`) passes orphan detection yet is still invisible to an agent that starts at the Map of Content.
+
+- Build the set of pages reachable from `index.md` by following `[[wikilinks]]` transitively (one component). Flag any non-entry, non-`adr/` page **not** in that set — even if some other page links it.
+- Excludes `index.md` itself, `log.md`, and all of `adr/` (reached via the directory + README, per detectors 3/6).
+
+**Severity:** `major` — a page outside the Map of Content is discoverable only by qmd, so it silently vanishes for any index-first (or qmd-unavailable fallback) navigation. Proposed fix: add it to the appropriate `index.md` section (route through `ingest`).
+
 ### Output
 
 Short user-facing summary:

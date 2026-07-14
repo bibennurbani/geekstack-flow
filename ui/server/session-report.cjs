@@ -33,6 +33,22 @@ function toolCategory(name) {
   return 'other';
 }
 
+// ADR 0037 — classify a tool call as WIKI ACCESS so a run's interaction with the LLM-wiki is visible:
+// 'qmd' (the discovery layer) vs 'direct' (a raw Read/Grep/LS/Bash over wiki|docs bodies). This is
+// call-count visibility only — the session JSONL carries no per-tool token cost, so it shows HOW the
+// wiki was reached (qmd-mediated vs by hand), not its token price. It is the minimum instrumentation
+// needed before any "qmd is more token-efficient" claim can be checked (docs/plans/qmd-query-path-enforcement.md).
+function wikiAccessKind(name, input = {}) {
+  const n = String(name || '');
+  const cmd = String(input.command || '');
+  if (/^mcp__qmd__/i.test(n)) return 'qmd';
+  if (/^Bash$/i.test(n) && /\bqmd\s+(query|search|vsearch|get)\b/.test(cmd)) return 'qmd';
+  const hay = [input.file_path, input.path, input.glob, input.pattern, cmd].filter(Boolean).join(' ');
+  if (!/(\.tcgstackflow\/wiki|(^|[\s"'./])docs\/)/.test(hay)) return null;
+  if (/^(Read|Grep|Glob|LS|Bash)$/i.test(n)) return 'direct';
+  return null;
+}
+
 // Locate a session JSONL by id anywhere under <claudeHome>/projects (robust to cwd path encoding).
 function findSessionLog(sessionId, claudeHome) {
   if (!sessionId) return null;
@@ -58,6 +74,7 @@ function parseSessionLog(file) {
   const tools = {};
   const timeline = [];
   const models = new Set();
+  const wiki_access = { qmd: 0, direct: 0 }; // ADR 0037 — how this run reached the wiki
   let turns = 0, mcp_calls = 0, start = null, end = null;
   for (const l of lines) {
     let o; try { o = JSON.parse(l); } catch { continue; }
@@ -74,9 +91,10 @@ function parseSessionLog(file) {
     }
     if (Array.isArray(m.content)) for (const b of m.content) if (b && b.type === 'tool_use') {
       const n = b.name || '?'; tools[n] = (tools[n] || 0) + 1; if (n.startsWith('mcp__')) mcp_calls++;
+      const wk = wikiAccessKind(n, b.input || {}); if (wk) wiki_access[wk]++;
     }
   }
-  return { file, turns, records: lines.length, models: [...models], model: [...models][0] || '', tokens, tools, mcp_calls, timeline, start, end };
+  return { file, turns, records: lines.length, models: [...models], model: [...models][0] || '', tokens, tools, mcp_calls, wiki_access, timeline, start, end };
 }
 
 function costOf(tokens, model) {
@@ -120,6 +138,7 @@ function buildTaskReport(workspaceDir, taskId, opts = {}) {
   const sessions = [];
   const totalTokens = ZERO();
   const tools = {};
+  const wiki_access = { qmd: 0, direct: 0 }; // ADR 0037 — wiki access across all runs of the task
   let timeline = [];
   const models = new Set();
   let turns = 0, records = 0, mcp_calls = 0, start = null, end = null, found = 0;
@@ -134,6 +153,7 @@ function buildTaskReport(workspaceDir, taskId, opts = {}) {
       found++;
       for (const k of Object.keys(totalTokens)) totalTokens[k] += parsed.tokens[k];
       for (const [n, c] of Object.entries(parsed.tools)) tools[n] = (tools[n] || 0) + c;
+      if (parsed.wiki_access) { wiki_access.qmd += parsed.wiki_access.qmd || 0; wiki_access.direct += parsed.wiki_access.direct || 0; }
       timeline = timeline.concat(parsed.timeline.map((p) => ({ ...p, session: entry.run_id })));
       parsed.models.forEach((m) => models.add(m));
       turns += parsed.turns; records += parsed.records; mcp_calls += parsed.mcp_calls;
@@ -168,6 +188,7 @@ function buildTaskReport(workspaceDir, taskId, opts = {}) {
       tokens_processed: totalTokens.input + totalTokens.output + totalTokens.cache_read + totalTokens.cache_creation,
       cost: costOf(totalTokens, model),
       turns, records, tool_calls, mcp_calls,
+      wiki_access, // ADR 0037 — { qmd, direct }: how the run reached the wiki (call counts, not tokens)
       wall_clock_ms: start !== null && end !== null ? end - start : 0,
     },
     tools_by_type,
@@ -229,7 +250,7 @@ h1{font-size:34px;margin:8px 0 0;font-weight:700;letter-spacing:-.01em}h2{font-s
 <div class="hero"><div><div class="eyebrow">session report · ${esc(opts.project || '')}</div><h1>${esc(opts.task || report.task)}</h1>
 <div class="muted" style="margin-top:6px">model ${esc(report.model || '—')} · ${report.totals.turns} turns · ${report.sessions_found}/${report.sessions.length} session(s)</div></div>
 <div class="big"><div class="l">est. cost</div><div class="n">${fmtUsd(c.total)}</div><small>${fmtTok(report.totals.tokens_processed)} tokens · list pricing</small></div></div>
-<div class="metrics">${metric(wall, 'wall-clock')}${metric(report.sessions.length, 'runs')}${metric(report.totals.tool_calls, 'tool calls')}${metric(fmtTok(report.totals.tokens_processed), 'tokens')}${metric(report.totals.mcp_calls, 'MCP calls')}</div>
+<div class="metrics">${metric(wall, 'wall-clock')}${metric(report.sessions.length, 'runs')}${metric(report.totals.tool_calls, 'tool calls')}${metric(fmtTok(report.totals.tokens_processed), 'tokens')}${metric(report.totals.mcp_calls, 'MCP calls')}${metric(((report.totals.wiki_access || {}).qmd || 0) + ' / ' + ((report.totals.wiki_access || {}).direct || 0), 'wiki qmd / direct')}</div>
 <h2>Where the tokens went</h2><div class="tgrid">
 <div class="tcard hot"><div class="v">${fmtTok(t.cache_read)}</div><div class="n">Cache reads</div><div class="s">Context re-read each turn</div></div>
 <div class="tcard"><div class="v">${fmtTok(t.cache_creation)}</div><div class="n">Cache writes</div><div class="s">New context committed</div></div>
@@ -242,4 +263,4 @@ h1{font-size:34px;margin:8px 0 0;font-weight:700;letter-spacing:-.01em}h2{font-s
 </div></body></html>`;
 }
 
-module.exports = { buildTaskReport, renderReportHtml, parseSessionLog, findSessionLog, costOf, budgetFor, priceFor, toolCategory, PRICING };
+module.exports = { buildTaskReport, renderReportHtml, parseSessionLog, findSessionLog, costOf, budgetFor, priceFor, toolCategory, wikiAccessKind, PRICING };

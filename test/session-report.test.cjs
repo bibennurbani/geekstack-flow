@@ -144,3 +144,21 @@ test('budgetFor: no budget configured → never over', () => {
   assert.strictEqual(b.budget, null);
   assert.strictEqual(b.over, false);
 });
+
+// ADR 0037 — wikiAccessKind: how a tool call reached the wiki (visibility, not token attribution).
+test('wikiAccessKind: qmd CLI + qmd MCP → qmd', () => {
+  assert.strictEqual(sr.wikiAccessKind('Bash', { command: 'qmd query "auth" -c wiki --json' }), 'qmd');
+  assert.strictEqual(sr.wikiAccessKind('mcp__qmd__query', {}), 'qmd');
+});
+
+test('wikiAccessKind: raw Read/Grep/Bash over wiki|docs bodies → direct', () => {
+  assert.strictEqual(sr.wikiAccessKind('Read', { file_path: '.tcgstackflow/wiki/auth.md' }), 'direct');
+  assert.strictEqual(sr.wikiAccessKind('Grep', { pattern: 'x', path: '.tcgstackflow/wiki' }), 'direct');
+  assert.strictEqual(sr.wikiAccessKind('Bash', { command: 'cat docs/guide.md' }), 'direct');
+});
+
+test('wikiAccessKind: non-wiki access and qmd maintenance → null', () => {
+  assert.strictEqual(sr.wikiAccessKind('Read', { file_path: 'src/app.js' }), null);
+  assert.strictEqual(sr.wikiAccessKind('Bash', { command: 'npm test' }), null);
+  assert.strictEqual(sr.wikiAccessKind('Bash', { command: 'qmd embed' }), null); // maintenance, not access
+});

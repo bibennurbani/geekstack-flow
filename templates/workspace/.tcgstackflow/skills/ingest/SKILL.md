@@ -172,3 +172,43 @@ updated: {YYYY-MM-DD}
 - [[some-related-page]]
 - [[another-page]]
 ```
+
+### Filled example (a model page — illustrative, not to be copied verbatim)
+
+This shows the template *realized*: a specific title, a real lead-summary sentence that mirrors `summary`, focused `##` sections each well under ~900 tokens, synonyms surfaced in prose, and generous `[[wikilinks]]`. Aim for this shape and chunk size when you author.
+
+```markdown
+---
+title: Idempotency Key
+summary: A client-supplied key that makes a mutating API request safe to retry — the server returns the first result instead of re-running the operation.
+tags: [domain, api]
+aliases: [idempotency-key, dedup key, request key]
+priority: P1
+status: current
+created: 2026-01-10
+updated: 2026-01-10
+---
+
+# Idempotency Key
+
+An **idempotency key** (or *dedup key* / *request key*) is a unique value a client attaches to a mutating request so the server can recognise a retry and return the original outcome rather than performing the action twice. It is how we make "create payment"-style calls safe to retry over a flaky network.
+
+## What it guarantees
+
+Given the same key within the retention window, the server performs the operation **at most once** and replays the stored response for every repeat. Keys are scoped per endpoint + account, so two unrelated calls can never collide. See [[payments-flow]] for where this is enforced.
+
+## How we generate and store it
+
+The client mints a UUIDv4 per logical operation and reuses it across retries of that operation. The server stores `key → {status, response}` in the idempotency table with a 24-hour TTL; a second request with a stored key short-circuits to the saved response. Storage and TTL live in [[data-model]].
+
+## Edge cases
+
+- **Key reuse with a different body** → `422` (the key is bound to its first payload).
+- **Concurrent retries** → the second blocks on a row lock until the first commits.
+- **Expired key** → treated as new; the client must not reuse keys past the TTL.
+
+## Related pages
+
+- [[payments-flow]]
+- [[data-model]]
+```

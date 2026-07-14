@@ -40,10 +40,16 @@ The user typed `/tcgflow-init` or said something equivalent: *"set up geekstackf
      qmd collection add .tcgstackflow/wiki --name wiki --mask "*.md"
      qmd context add qmd://wiki "Project knowledge wiki — architecture, domain glossary, features, decisions (ADRs), operations"
      ```
-     Add the `docs` collection + context too when a `docs/` directory exists — per sub-project `docs/` in a multi-project workspace:
+     Add a `docs` collection + context for **each** `docs/` directory that exists. Collection names must be unique, so a multi-project workspace needs a derived per-sub-project name — a bare `--name docs` for each would collide:
      ```bash
+     # Single-project — a top-level docs/:
      qmd collection add docs --name docs --mask "*.md"
      qmd context add qmd://docs "In-repo developer docs (READMEs, guides, /docs)"
+
+     # Multi-project — iterate the sub-projects declared under `projects:` in config.yaml; for each
+     # <project> (name) at <path> that has a <path>/docs/ directory, register a NON-COLLIDING collection:
+     qmd collection add <path>/docs --name docs-<project> --mask "*.md"
+     qmd context add qmd://docs-<project> "<project> developer docs"
      ```
    - **Run the first embed and confirm.** `qmd embed` so the collections are indexed and the `wiki-search` skill works on first use, then `qmd status` to confirm the collections registered and embedded.
 

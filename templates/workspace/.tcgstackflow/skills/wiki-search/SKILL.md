@@ -49,7 +49,7 @@ qmd vsearch "<concept>"      -c wiki --json          # pure semantic — for fuz
 2. Follow their `[[wikilinks]]` **one hop** to catch directly-related pages.
 3. If results look thin, **refine before you retreat**: switch `query`↔`search`↔`vsearch` or sharpen the query (per the retrieval-budget rule below) — a mediocre first result set is not grounds to abandon qmd. Only if a refined search still comes up short (or the index is genuinely stale) do you fall back to `wiki/index.md` and navigate the Map of Content by hand — it is always current.
 
-**Retrieval budget (the token-efficiency contract).** Default to `-n 8` hits and **open only the pages you'll actually use** — a hit's score + `summary` tells you if it's relevant before you read the body. Traverse `[[wikilinks]]` **one hop**, not transitively. The entire point of qmd is to avoid loading the wiki into context, so **never read every page "to be safe."** If the top hits don't cover the question, *refine the query* (or switch `query`↔`search`↔`vsearch`) before widening `-n`.
+**Retrieval budget (the token-efficiency contract).** Default to `-n 8` hits and **open only the pages you'll actually use** — a hit's score + `summary` tells you if it's relevant before you read the body. Traverse `[[wikilinks]]` **one hop**, not transitively. qmd's *design goal* is to avoid loading the wiki into context — a goal the workflow does **not yet measure** (there is no token-savings metric; the session report only *counts* qmd vs direct wiki access), so treat this budget as discipline, not a proven saving: **never read every page "to be safe."** If the top hits don't cover the question, *refine the query* (or switch `query`↔`search`↔`vsearch`) before widening `-n`.
 
 ### Index anything (ad-hoc)
 
