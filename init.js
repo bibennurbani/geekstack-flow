@@ -20,6 +20,10 @@ Usage (all forms equivalent — pick what feels natural):
   geekstackflow drift [target]                Report which existing skills / tool adapters differ from the
                                               installed templates — the files upgrade won't auto-merge,
                                               so you know exactly what to review. Read-only; writes nothing.
+  geekstackflow doctor [target]               Health-check the qmd wiki-search layer across every registered project
+                                              (+ the cwd workspace): is each declared collection actually registered,
+                                              pointed at THIS project's path (names are global — projects collide on
+                                              'wiki'), and embedded? Read-only; exits non-zero if any project is broken.
   geekstackflow ui [--port N]                 Launch the Cockpit — the local Orchestrator UI over all your registered
                                               projects (run agents, approve actions, browse tasks) at http://127.0.0.1:4729.
   geekstackflow hooks [target]                Install the git post-merge/post-rewrite hook: every git pull writes a
@@ -79,7 +83,7 @@ const TOOL_VERSION = readToolVersion();
 const LATEST_SCHEMA = 6;
 
 function parseArgs(argv) {
-  const args = { force: false, help: false, upgrade: false, register: false, drift: false, ui: false, hooks: false, port: null, migrateFrom: null, target: process.cwd() };
+  const args = { force: false, help: false, upgrade: false, register: false, drift: false, doctor: false, ui: false, hooks: false, port: null, migrateFrom: null, target: process.cwd() };
   const positional = [];
   const raw = argv.slice(2);
 
@@ -98,6 +102,9 @@ function parseArgs(argv) {
   } else if (raw[0] === 'drift') {
     raw.shift();
     args.drift = true;
+  } else if (raw[0] === 'doctor') {
+    raw.shift();
+    args.doctor = true;
   } else if (raw[0] === 'ui') {
     raw.shift();
     args.ui = true;
@@ -1105,6 +1112,118 @@ async function askYesNo(prompt, defaultYes = false) {
   return answer.startsWith('y');
 }
 
+// --- doctor: verify the qmd wiki-search layer is actually REALIZED per project (ADR 0037 follow-up) ---
+// init.js DECLARES the wiki_search collections in config.yaml, but registration + embedding happen later
+// via the permission-gated /tcgflow-init qmd step — "declared != realized." doctor closes that gap: for
+// each workspace it checks, against LIVE qmd, that every declared collection is registered, points at
+// THIS project's path (qmd collection names are a GLOBAL namespace, so projects collide on `wiki`), and
+// the index has embeddings. Read-only — it never installs qmd (honors the dependency-free invariant).
+
+// Impure: run a read-only qmd command. Returns { ok, out }; ok:false on a missing binary or non-zero exit.
+function runQmd(argv) {
+  try {
+    const out = require('child_process').execFileSync('qmd', argv, { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] });
+    return { ok: true, out };
+  } catch (e) { return { ok: false, out: (e && e.stdout) ? String(e.stdout) : '' }; }
+}
+
+// Pure: `qmd collection show <name>` text -> { name, path } | null (null = not registered / unparseable).
+function parseQmdCollectionShow(text) {
+  const t = String(text || '');
+  const nameM = t.match(/^\s*Collection:\s*(.+?)\s*$/m);
+  const pathM = t.match(/^\s*Path:\s*(.+?)\s*$/m);
+  if (!nameM || !pathM) return null;
+  return { name: nameM[1].trim(), path: pathM[1].trim() };
+}
+
+// Pure: `qmd status` text -> coarse index-level embed signal { vectors, files }.
+function parseQmdStatus(text) {
+  const t = String(text || '');
+  const v = t.match(/Vectors:\s*(\d+)\s*embedded/i);
+  const f = t.match(/Total:\s*(\d+)\s*files indexed/i);
+  return { vectors: v ? parseInt(v[1], 10) : 0, files: f ? parseInt(f[1], 10) : 0 };
+}
+
+// Pure: the wiki_search.collections `- name:` entries from a config.yaml (skips commented-out lines).
+function parseDeclaredCollections(configText) {
+  const t = String(configText || '');
+  const start = t.search(/^wiki_search:/m);
+  if (start < 0) return [];
+  let block = t.slice(start).replace(/^wiki_search:[^\n]*\n/, '');
+  const nextTop = block.search(/^\S/m);            // the next top-level key ends the block
+  if (nextTop >= 0) block = block.slice(0, nextTop);
+  const names = [];
+  for (const m of block.matchAll(/^\s*-\s*name:\s*(.+?)\s*$/gm)) {
+    names.push(m[1].replace(/\s+#.*$/, '').replace(/["']/g, '').trim());
+  }
+  return names;
+}
+
+// Pure: expected filesystem path for a declared collection, or null when it can't be derived from the
+// name alone (e.g. docs-<subproject> — that would need the projects[] map; doctor reports it path-agnostically).
+function expectedCollectionPath(name, workspaceRoot) {
+  if (name === 'wiki') return path.join(workspaceRoot, '.tcgstackflow', 'wiki');
+  if (name === 'docs') return path.join(workspaceRoot, 'docs');
+  return null;
+}
+
+// Pure: diagnose one declared collection -> { level: 'ok'|'warn'|'fail', message }.
+function diagnoseCollection(name, expectedPath, shown, status) {
+  if (!shown) {
+    return { level: 'fail', message: `"${name}" is declared in config.yaml but NOT registered in qmd — run the /tcgflow-init qmd step (\`qmd collection add … --name ${name}\`)` };
+  }
+  if (expectedPath && path.resolve(shown.path) !== path.resolve(expectedPath)) {
+    return { level: 'fail', message: `"${name}" is registered but points at ${shown.path} — NOT this project. qmd collection names are a GLOBAL namespace, so another project claimed "${name}". Fix: give each project a unique collection name, or use a project-local index (\`qmd init\`).` };
+  }
+  if (status && status.vectors === 0) {
+    return { level: 'warn', message: `"${name}" is registered${expectedPath ? ' at the right path' : ''}, but the qmd index has 0 embeddings — run \`qmd embed\`` };
+  }
+  return { level: 'ok', message: `"${name}" registered${expectedPath ? ' at the right path' : ''}${status ? ` · index: ${status.vectors} vectors` : ''}` };
+}
+
+const DOCTOR_ICON = { ok: '✓', warn: '⚠', fail: '✗' };
+
+// Impure orchestrator: check every registered project (+ the cwd workspace if unregistered).
+function runDoctor(target) {
+  console.log('\nCreative GeekStack Flow — doctor (qmd wiki-search health)');
+  const reg = readProjectRegistry().map((p) => ({ name: p.name, path: path.resolve(p.path) }));
+  const cwd = path.resolve(target);
+  if (isWorkspace(cwd) && !reg.some((p) => p.path === cwd)) reg.unshift({ name: path.basename(cwd), path: cwd });
+  if (!reg.length) {
+    console.error('No workspaces to check — run inside an initialised project, or `geekstackflow register` one first.');
+    process.exit(1);
+  }
+  const qmdVer = runQmd(['--version']);
+  const status = qmdVer.ok ? parseQmdStatus(runQmd(['status']).out) : null;
+  if (!qmdVer.ok) console.log('⚠ qmd is not installed — every workspace degrades to the index.md Map-of-Content fallback (ADR 0030). Install: `npm i -g @tobilu/qmd` (a HIGH action).');
+  else console.log(`qmd present · global index: ${status.files} files, ${status.vectors} vectors embedded`);
+
+  let fails = 0, warns = 0;
+  for (const proj of reg) {
+    console.log(`\n● ${proj.name}  (${proj.path})`);
+    if (!isWorkspace(proj.path)) { console.log('  ⚠ not an initialised workspace (stale registry entry?) — skipping'); warns++; continue; }
+    const schema = readWorkspaceSchema(path.join(proj.path, '.tcgstackflow', 'config.yaml'));
+    if (schema < LATEST_SCHEMA) { console.log(`  ⚠ workspace_schema ${schema} < ${LATEST_SCHEMA} — run \`geekstackflow upgrade\``); warns++; }
+    if (!qmdVer.ok) { console.log('  – qmd unavailable → index.md fallback in effect'); continue; }
+    let cfg = '';
+    try { cfg = fs.readFileSync(path.join(proj.path, '.tcgstackflow', 'config.yaml'), 'utf8'); } catch { /* ignore */ }
+    const declared = parseDeclaredCollections(cfg);
+    if (!declared.length) { console.log('  ⚠ no wiki_search collections declared in config.yaml'); warns++; continue; }
+    for (const name of declared) {
+      const shown = runQmd(['collection', 'show', name]);
+      const parsed = shown.ok ? parseQmdCollectionShow(shown.out) : null;
+      const d = diagnoseCollection(name, expectedCollectionPath(name, proj.path), parsed, status);
+      console.log(`  ${DOCTOR_ICON[d.level]} ${d.message}`);
+      if (d.level === 'fail') fails++; else if (d.level === 'warn') warns++;
+    }
+  }
+  console.log(`\n${fails ? '✗' : warns ? '⚠' : '✓'} doctor: ${fails} problem(s), ${warns} warning(s) across ${reg.length} project(s).`);
+  if (fails) {
+    console.log('Fix the ✗ items so every project searches its OWN wiki (the global-collection collision is the usual cause on a multi-project machine).');
+    process.exit(1);
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   if (args.help) {
@@ -1153,6 +1272,11 @@ async function main() {
     console.log('\nCreative GeekStack Flow — drift report');
     console.log(`Target: ${args.target}   (installed tool v${TOOL_VERSION})`);
     reportWorkspaceDrift(args.target);
+    return;
+  }
+
+  if (args.doctor) {
+    runDoctor(args.target);
     return;
   }
 
@@ -1441,6 +1565,7 @@ module.exports = {
   readWorkspaceSchema, stampWorkspaceVersion, upgradeWorkspace, installHooks,
   readProjectRegistry, writeProjectRegistry, registerProject, isWorkspace, REGISTRY_PATH,
   reportDriftFromTemplate, adapterDrifted, reportWorkspaceDrift,
+  parseQmdCollectionShow, parseQmdStatus, parseDeclaredCollections, expectedCollectionPath, diagnoseCollection, runDoctor,
   TOOL_VERSION, LATEST_SCHEMA, MIGRATIONS,
 };
 
