@@ -93,12 +93,14 @@ function readConfig(workspaceDir) {
     if (v) roles[role] = v;
   }
   const bm = oscoped.match(/^\s+budget_usd:\s*([\d.]+)/m);
+  const iso = cf.blockScalar(text, 'orchestrator', 'isolation', 'in-place');            // ADR 0040 — per-run git isolation default
   cfg.orchestrator = {
     roles,
     budget_usd: bm ? parseFloat(bm[1]) : null,
     auto_advance: cf.blockHasTrue(text, 'orchestrator', 'auto_advance'),                // chain runs by default
     max_bounces: parseInt(firstMatch(oscoped, /^\s+max_bounces:\s*(\d+)/m) || '1', 10), // review/test bounces before a chain stops
     auto_ingest_on_pull: cf.blockHasTrue(text, 'orchestrator', 'auto_ingest_on_pull'),  // post-merge hook may launch an ingester run
+    isolation: ISOLATION_MODES.includes(iso) ? iso : 'in-place',                        // in-place | branch (worktree deferred, ADR 0040)
   };
   return cfg;
 }
@@ -458,6 +460,10 @@ function serializeRunRecord(rec = {}) {
     ...(rec.started_at ? [`started_at: ${rec.started_at}`] : []),
     ...(terminal ? [`ended_at: ${rec.ended_at || new Date().toISOString()}`] : []),
     ...(rec.git_base ? [`git_base: ${rec.git_base}`] : []),
+    // ADR 0040 — git isolation. Omitted for `in-place` so an in-place record stays byte-identical to
+    // pre-0040 records (the round-trip test and existing runs/ files are unchanged).
+    ...(rec.isolation && rec.isolation !== 'in-place' ? [`isolation: ${rec.isolation}`] : []),
+    ...(rec.branch ? [`branch: ${rec.branch}`] : []),
     ...(e ? ['embed:', `  ran: ${!!e.ran}`,
       ...(e.skipped ? ['  skipped: true'] : []),
       ...(e.exit !== undefined && e.exit !== null ? [`  exit: ${e.exit}`] : []),
@@ -488,6 +494,8 @@ function parseRunRecord(text) {
     started_at: fm.started_at || null,
     ended_at: fm.ended_at || null,
     git_base: fm.git_base || null,
+    isolation: str(fm.isolation),   // ADR 0040 — null (absent) means the run was in-place
+    branch: str(fm.branch),
     tokens,
     embed: (fm.embed && typeof fm.embed === 'object') ? fm.embed : null,
     wiki_discovery: (fm.wiki_discovery && typeof fm.wiki_discovery === 'object') ? fm.wiki_discovery : null,
@@ -505,7 +513,7 @@ function readRunsForTask(workspaceDir, id) {
     for (const k of RUN_TOKEN_KEYS) total[k] += rr.tokens[k];
     if (!by_role[role]) by_role[role] = ZERO_TOKENS();
     for (const k of RUN_TOKEN_KEYS) by_role[role][k] += rr.tokens[k];
-    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: rr.session_id, state: rr.state, tokens: rr.tokens, wiki_discovery: rr.wiki_discovery });
+    runs.push({ run_id: entry.name.replace(/\.md$/, ''), role, session_id: rr.session_id, state: rr.state, tokens: rr.tokens, isolation: rr.isolation, branch: rr.branch, wiki_discovery: rr.wiki_discovery });
   }
   return { total, by_role, runs };
 }
@@ -682,9 +690,21 @@ function setBudget(workspaceDir, usd) {
   } else { throw new Error('no-orchestrator-block'); }
   fs.writeFileSync(file, text);
 }
+// ADR 0040 — set the per-project git-isolation default. Surgical replace-or-insert inside the
+// orchestrator block (same idiom as setAutoAdvance). Throws unknown-isolation / no-orchestrator-block.
+function setIsolation(workspaceDir, mode) {
+  if (!ISOLATION_MODES.includes(String(mode))) throw new Error('unknown-isolation');
+  const file = path.join(workspaceDir, 'config.yaml');
+  const text = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, cf.editBlockLine(text, 'orchestrator', 'isolation', mode));
+}
 
 // --- Agents overview (cross-project, grouped by role) ---
 const AGENT_ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
+// ADR 0040 — supported git-isolation modes (the ONE canonical enum; run.cjs/index.cjs read it here).
+// `worktree` is documented in ADR 0040 but NOT yet supported (needs the workspace-root seam), so it is
+// deliberately absent — the server rejects a `worktree` request until that lands.
+const ISOLATION_MODES = ['in-place', 'branch'];
 
 // Parse an agents/{role}.md profile into { name, role (one-liner), description, skills[] }.
 // Extract the body of a `## {heading}` section (robust split — no fragile multiline regex).
@@ -774,7 +794,7 @@ module.exports = {
   // Orchestrator (schema 4): reads
   findTaskFolder, parseFrontmatter, serializeRunRecord, parseRunRecord, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
   // Orchestrator: the one canonical task-file writer + settings writes
-  appendLogEntry, writeTaskStatus, setRoleTool, setBudget, setAutoAdvance,
+  appendLogEntry, writeTaskStatus, setRoleTool, setBudget, setAutoAdvance, setIsolation,
   // Agents overview + run history
-  buildAgentsOverview, parseAgentProfile, AGENT_ROLES, buildRunsHistory,
+  buildAgentsOverview, parseAgentProfile, AGENT_ROLES, ISOLATION_MODES, buildRunsHistory,
 };

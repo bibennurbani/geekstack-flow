@@ -15,8 +15,6 @@ const sessionReport = require('./session-report.cjs'); // pricing for the launch
 const runners = require('./runners/index.cjs'); // RunnerAdapter registry/selector (ADR 0035)
 
 const ZERO = () => ({ input: 0, output: 0, cache_read: 0, cache_creation: 0 });
-// HEAD sha of the project's git repo at run start — lets the diff viewer show "changes since this run began".
-const gitHead = (cwd) => git.head(cwd);
 const ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
 // A run that advanced Status to (or past) IN_REVIEW means the agent self-handed-off (D1) → no safety-net.
 const ADVANCED = new Set(['IN_REVIEW', 'IN_TEST', 'VALIDATED', 'INGESTED', 'COMPLETED']);
@@ -40,6 +38,36 @@ function embedOnIngest(workspaceDir) {
   let text = '';
   try { text = fs.readFileSync(path.join(workspaceDir, 'config.yaml'), 'utf8'); } catch { return true; }
   return cf.blockScalar(text, 'wiki_search', 'embed_on_ingest', 'true') !== 'false';
+}
+
+// ADR 0040 — git isolation. The supported modes live once in read.cjs (`worktree` is deferred).
+const ISOLATION_MODES = read.ISOLATION_MODES;
+
+// The per-project isolation default from config.yaml `orchestrator.isolation` (mirrors readRoleTool).
+// Absent / unreadable / unknown → 'in-place' (byte-for-byte today's behaviour).
+function readIsolation(workspaceDir) {
+  let text = '';
+  try { text = fs.readFileSync(path.join(workspaceDir, 'config.yaml'), 'utf8'); } catch { return 'in-place'; }
+  const v = cf.blockScalar(text, 'orchestrator', 'isolation', 'in-place');
+  return ISOLATION_MODES.includes(v) ? v : 'in-place';
+}
+
+// The task branch name: `tcgflow/<git-ref-safe task_id>`. Keyed on task_id (stable across the
+// coder→reviewer→tester→ingester chain) so downstream roles detect-and-continue on the same branch.
+function branchFor(taskId) {
+  const safe = String(taskId || '').trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-') // collapse anything not git-ref-safe (also drops slashes)
+    .replace(/\.\.+/g, '.')            // git forbids '..' in refs
+    .replace(/^[-.]+|[-.]+$/g, '');    // no leading/trailing '-' or '.'
+  return 'tcgflow/' + (safe || 'task');
+}
+
+// Effective isolation for a run: an explicit per-run override wins, else the project default, else
+// in-place. RAW-* ingester runs are always in-place (single-shot, write under .tcgstackflow/).
+function resolveIsolation(run, workspaceDir) {
+  if (/^RAW(-|$)/i.test(String(run.task_id || ''))) return 'in-place';
+  if (run.isolation && ISOLATION_MODES.includes(run.isolation)) return run.isolation;
+  return readIsolation(workspaceDir);
 }
 
 // WK-1 — the default re-embed action (injectable for tests). NON-BLOCKING for the embed itself.
@@ -72,6 +100,7 @@ function writeRunRecord(workspaceDir, run, live, state) {
       session_id: live.latest_session_id || live.session_id,
       tokens: live.tokens || ZERO(), state,
       started_at: live.started_at, ended_at: live.ended_at, git_base: live.git_base,
+      isolation: live.isolation, branch: live.branch, // ADR 0040 — omitted from the record when in-place
       embed: live.embed, wiki_discovery: live.wiki_discovery, transcript: live.transcript,
     });
     fs.writeFileSync(path.join(dir, run.run_id + '.md'), body);
@@ -134,7 +163,7 @@ function reconcileOrphanedRuns(workspaceDir, scanOrphanedRuns) {
 // `onRunTerminal(run_id)` fires on every terminal path (done/failed/aborted) — index.cjs uses it to
 // cancel any approvals still pending for the run. `iterationTimeoutMs` is an INACTIVITY timeout per
 // iteration (no stdout for that long → kill), suspended while a governance approval is pending.
-function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6, onRunTerminal = () => {}, iterationTimeoutMs = 15 * 60 * 1000, adapter = runners.get('claude'), embed = defaultEmbed } = {}) {
+function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', governance = null, maxIters = 6, onRunTerminal = () => {}, iterationTimeoutMs = 15 * 60 * 1000, adapter = runners.get('claude'), embed = defaultEmbed, gitSeam = git } = {}) {
   const live = new Map(); // run_id -> { events:[], subs:Set<res>, transcript, tokens, session_id, token, paused, aborted }
 
   function ensure(run) {
@@ -264,7 +293,6 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
 
   async function runLoop(run, L) {
     const workspaceDir = path.join(run.project_path, '.tcgstackflow');
-    if (!L.git_base) L.git_base = gitHead(run.project_path); // for the per-run diff viewer
     L.started_at = new Date().toISOString();
     L.tool = adapter.id; L.gate = adapter.capabilities && adapter.capabilities.gate; // RA-6: stamp fidelity on the run record
     // Budget re-check at LAUNCH time (not just enqueue) — a run queued behind an active one would
@@ -276,6 +304,25 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       onRunTerminal(run.run_id);
       return;
     }
+    // ADR 0040 — git isolation setup, once per run, AFTER the budget gate (so no branch is created
+    // for a run that never launches) and BEFORE git_base capture (so the base reflects the task
+    // branch's HEAD). branch mode runs in the SAME working tree, so cwd is unchanged (ADR 0035 resume
+    // stays intact) and the sequential-within-project lock is untouched. Fail CLOSED: a checkout that
+    // can't proceed (e.g. a conflicting dirty tree) fails the run rather than running on the wrong branch.
+    L.isolation = resolveIsolation(run, workspaceDir);
+    if (L.isolation === 'branch') {
+      try {
+        const r = gitSeam.ensureBranch(run.project_path, branchFor(run.task_id));
+        L.branch = r.branch;
+        emit(run.run_id, 'isolation', { mode: 'branch', branch: r.branch, action: r.action });
+      } catch (e) {
+        emit(run.run_id, 'status', { state: 'error', error: 'isolation-failed', detail: String((e && e.message) || e).slice(0, 300) });
+        runManager.fail(run.run_id, 'isolation-failed');
+        onRunTerminal(run.run_id);
+        return;
+      }
+    }
+    if (!L.git_base) L.git_base = gitSeam.head(run.project_path); // for the per-run diff viewer (base = task branch HEAD)
     // Launch placeholder record (state: running, no ended_at) — THIS is what lets the boot-time
     // orphan scan detect a server death mid-run; the terminal write below overwrites it.
     writeRunRecord(workspaceDir, run, L, 'running');
@@ -423,4 +470,4 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   };
 }
 
-module.exports = { buildRunPrompt, readRoleTool, embedOnIngest, defaultEmbed, writeRunRecord, statusSafetyNet, reconcileOrphanedRuns, createExecutor, ROLES };
+module.exports = { buildRunPrompt, readRoleTool, embedOnIngest, readIsolation, branchFor, resolveIsolation, ISOLATION_MODES, defaultEmbed, writeRunRecord, statusSafetyNet, reconcileOrphanedRuns, createExecutor, ROLES };

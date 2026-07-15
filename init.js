@@ -79,12 +79,13 @@ const GLOBAL_TEMPLATE = path.join(SCRIPT_DIR, 'templates/global/.tcgstackflow');
 // schema 4 = runs/ area for the Orchestrator + orchestrator.roles tool map — ADR 0024/0025/0032/0033
 // schema 5 = hooks/ area (git pull-digest hook) + Trusted Commands governance section
 // schema 6 = run-record frontmatter gains tool/gate/embed (per-tool runner adapter + deterministic re-embed) — ADR 0035/0036
+// schema 7 = orchestrator.isolation (per-run git isolation: in-place | branch) — ADR 0040
 function readToolVersion() {
   try { return JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, 'package.json'), 'utf8')).version || '0.0.0'; }
   catch { return '0.0.0'; }
 }
 const TOOL_VERSION = readToolVersion();
-const LATEST_SCHEMA = 6;
+const LATEST_SCHEMA = 7;
 
 function parseArgs(argv) {
   const args = { force: false, help: false, upgrade: false, register: false, drift: false, doctor: false, wiki: false, ui: false, hooks: false, port: null, migrateFrom: null, target: process.cwd() };
@@ -489,6 +490,43 @@ const MIGRATIONS = [
           fs.mkdirSync(path.dirname(hookDst), { recursive: true });
           fs.writeFileSync(hookDst, want);
           console.log('    ✓ refreshed hooks/post-merge (pull digest now captures cross-project impact + a summary — re-run `geekstackflow hooks .` to wire it)');
+          n++;
+        }
+      }
+      return n;
+    },
+  },
+  {
+    from: 6, to: 7,
+    label: 'add orchestrator.isolation (per-run git isolation: in-place | branch) to config.yaml — ADR 0040',
+    apply(target, workspaceDir) {
+      const configPath = path.join(workspaceDir, 'config.yaml');
+      if (!fs.existsSync(configPath)) return 0;
+      let yaml = fs.readFileSync(configPath, 'utf8');
+      // Idempotent — skip if the orchestrator block already carries an `isolation:` key. Scope the check
+      // to that block so an `isolation:` elsewhere (none today, but future-proof) can't false-positive.
+      const orchBody = yaml.split(/^orchestrator:/m)[1] || '';
+      const orchScoped = orchBody.slice(0, (orchBody.search(/^\S/m) + 1) || orchBody.length);
+      if (/^\s+isolation:/m.test(orchScoped)) return 0;
+      if (!/^orchestrator:/m.test(yaml)) return 0; // no orchestrator block (pre-schema-4) — nothing to add
+      // Insert as the first key under `orchestrator:` (sibling of roles:), with a short doc comment.
+      yaml = yaml.replace(/^orchestrator:.*$/m, (l) => l
+        + '\n  # Per-run git isolation (ADR 0040): in-place (default) | branch. The Cockpit can override per run.'
+        + '\n  isolation: in-place               # in-place | branch');
+      fs.writeFileSync(configPath, yaml);
+      console.log('    ✓ added orchestrator.isolation: in-place to config.yaml (ADR 0040)');
+      let n = 1;
+      // The run-record contract gained isolation/branch fields — refresh the tool-owned contract doc
+      // from the template so existing workspaces learn them (same pattern as the 5→6 refresh). Idempotent.
+      const readme = path.join(workspaceDir, 'runs', 'README.md');
+      const tpl = path.join(WORKSPACE_TEMPLATE, 'runs', 'README.md');
+      if (fs.existsSync(tpl)) {
+        const want = fs.readFileSync(tpl, 'utf8');
+        let have = ''; try { have = fs.readFileSync(readme, 'utf8'); } catch { have = ''; }
+        if (have !== want) {
+          fs.mkdirSync(path.dirname(readme), { recursive: true });
+          fs.writeFileSync(readme, want);
+          console.log('    ✓ refreshed runs/README.md (run-record contract: + isolation/branch, ADR 0040)');
           n++;
         }
       }

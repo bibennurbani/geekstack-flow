@@ -39,8 +39,59 @@ function makeWorkspace() {
 
 const mig34 = gsf.MIGRATIONS.find((m) => m.from === 3 && m.to === 4);
 
-test('LATEST_SCHEMA is 6', () => {
-  assert.strictEqual(gsf.LATEST_SCHEMA, 6);
+test('LATEST_SCHEMA is 7', () => {
+  assert.strictEqual(gsf.LATEST_SCHEMA, 7);
+});
+
+const mig67 = gsf.MIGRATIONS.find((m) => m.from === 6 && m.to === 7);
+
+test('6→7 inserts orchestrator.isolation: in-place once; idempotent; refreshes runs/README (ADR 0040)', () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-mig7-'));
+  const ws = path.join(target, '.tcgstackflow');
+  fs.mkdirSync(path.join(ws, 'runs'), { recursive: true });
+  fs.writeFileSync(
+    path.join(ws, 'config.yaml'),
+    [
+      'tcgflow_version: "0.1.0"',
+      'workspace_schema: 6',
+      '',
+      'orchestrator:',
+      '  roles:',
+      '    coder: claude',
+      '',
+      'governance:',
+      '  mode: strict',
+      '',
+    ].join('\n')
+  );
+  fs.writeFileSync(path.join(ws, 'runs', 'README.md'), 'stale — no isolation/branch fields\n');
+  try {
+    assert.ok(mig67, 'a 6→7 migration entry exists');
+    const changed = mig67.apply(target, ws);
+    assert.ok(changed >= 1, 'made at least one change');
+    let yaml = fs.readFileSync(path.join(ws, 'config.yaml'), 'utf8');
+    assert.match(yaml, /^\s+isolation: in-place/m, 'inserted the isolation key');
+    // Inserted UNDER orchestrator: (before roles:), not as a stray top-level key.
+    const orchBody = yaml.split(/^orchestrator:/m)[1];
+    assert.match(orchBody.slice(0, orchBody.search(/^\S/m)), /isolation: in-place/, 'key is inside the orchestrator block');
+    assert.match(fs.readFileSync(path.join(ws, 'runs', 'README.md'), 'utf8'), /isolation:/, 'runs/README documents the new field');
+    // Idempotent: a re-run must not add a second isolation: line.
+    assert.strictEqual(mig67.apply(target, ws), 0, 're-run is a no-op');
+    yaml = fs.readFileSync(path.join(ws, 'config.yaml'), 'utf8');
+    assert.strictEqual((yaml.match(/^\s+isolation:/gm) || []).length, 1, 'exactly one isolation key after re-run');
+  } finally { fs.rmSync(target, { recursive: true, force: true }); }
+});
+
+test('6→7 leaves a workspace that already has isolation untouched', () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-mig7b-'));
+  const ws = path.join(target, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  const before = ['workspace_schema: 6', '', 'orchestrator:', '  isolation: branch', '  roles:', '    coder: claude', ''].join('\n');
+  fs.writeFileSync(path.join(ws, 'config.yaml'), before);
+  try {
+    assert.strictEqual(mig67.apply(target, ws), 0, 'no change when isolation already present');
+    assert.strictEqual(fs.readFileSync(path.join(ws, 'config.yaml'), 'utf8'), before, 'config.yaml is byte-identical (branch preserved)');
+  } finally { fs.rmSync(target, { recursive: true, force: true }); }
 });
 
 const mig56 = gsf.MIGRATIONS.find((m) => m.from === 5 && m.to === 6);

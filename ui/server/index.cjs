@@ -199,7 +199,7 @@ function handleRequest(req, res) {
     if (p === '/api/project/settings') {
       if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
       return readJsonBody(req).then((body) => {
-        const { path: proj, roles, budget_usd } = body || {};
+        const { path: proj, roles, budget_usd, isolation } = body || {};
         if (!proj) return sendJSON(res, 400, { error: 'missing path' });
         const ws = path.join(proj, '.tcgstackflow');
         if (!fs.existsSync(path.join(ws, 'config.yaml'))) return sendJSON(res, 400, { error: 'not-a-workspace' });
@@ -207,6 +207,7 @@ function handleRequest(req, res) {
           if (roles && typeof roles === 'object') for (const [role, tool] of Object.entries(roles)) read.setRoleTool(ws, role, tool);
           if (budget_usd !== undefined) read.setBudget(ws, budget_usd === null || budget_usd === '' ? NaN : budget_usd);
           if (body.auto_advance !== undefined) read.setAutoAdvance(ws, !!body.auto_advance);
+          if (isolation !== undefined) read.setIsolation(ws, isolation); // ADR 0040 — per-project default
           return sendJSON(res, 200, { ok: true });
         } catch (e) { return sendJSON(res, 400, { error: String((e && e.message) || e) }); }
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
@@ -260,9 +261,14 @@ function handleRequest(req, res) {
       }
       if (req.method === 'POST') { // start a run = enqueue + promote (D2: one launch door)
         return readJsonBody(req).then((body) => {
-          const { project_path, task_id, role, force, chain } = body || {};
+          const { project_path, task_id, role, force, chain, isolation } = body || {};
           if (!project_path || !task_id || !role) return sendJSON(res, 400, { error: 'missing project_path/task_id/role' });
           if (!runMod.ROLES.includes(role)) return sendJSON(res, 400, { error: 'unknown-role', role });
+          // ADR 0040 — optional per-run git-isolation override. `worktree` is a known-but-deferred value,
+          // so it is rejected here (not in ISOLATION_MODES) until the workspace-root seam lands.
+          if (isolation !== undefined && isolation !== null && !runMod.ISOLATION_MODES.includes(isolation)) {
+            return sendJSON(res, 400, { error: 'unknown-isolation', isolation, supported: runMod.ISOLATION_MODES });
+          }
           if (!isWorkspace(project_path)) return sendJSON(res, 400, { error: 'not-a-workspace' });
           const ws = path.join(project_path, '.tcgstackflow');
           // Pseudo-task ingest runs (RAW-*) have no task folder — they fold raw/ into the wiki.
@@ -282,7 +288,7 @@ function handleRequest(req, res) {
           if (!governanceGateReady) return sendJSON(res, 503, { error: 'governance-gate-not-ready' }); // API-8
           // chain: explicit per-launch flag, falling back to the workspace's auto_advance default.
           const doChain = chain !== undefined ? !!chain : !!(detail.config.orchestrator && detail.config.orchestrator.auto_advance);
-          const run = runManager.enqueue(project_path, task_id, role, { force: !!force, chain: doChain && !isRaw, bounces: 0 });
+          const run = runManager.enqueue(project_path, task_id, role, { force: !!force, chain: doChain && !isRaw, bounces: 0, isolation: isolation || undefined });
           return sendJSON(res, 200, { run_id: run.run_id, state: run.state, chain: !!run.chain });
         }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
       }

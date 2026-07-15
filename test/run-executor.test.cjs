@@ -719,3 +719,72 @@ test('RA-4: the continuation loop drives a non-Claude (fake) adapter end to end'
     assert.strictEqual(read.buildTaskDetail(proj, 'T-1').status, 'IN_REVIEW', 'hand-off detection is tool-independent');
   } finally { cleanup(proj); }
 });
+
+// --- ADR 0040 — per-run git isolation ---
+
+test('isolation helpers: branchFor sanitizes to a git-ref; resolveIsolation precedence + RAW exemption', () => {
+  assert.strictEqual(runMod.branchFor('ES-1234'), 'tcgflow/ES-1234');
+  assert.strictEqual(runMod.branchFor('feat/oddๆ id..x '), 'tcgflow/feat-odd-id.x', 'non-ref-safe chars collapse, no .., trimmed');
+  assert.strictEqual(runMod.branchFor(''), 'tcgflow/task', 'empty id → a safe fallback');
+  // override wins over project default; unknown/absent → project default → in-place; RAW always in-place.
+  const ws = '/does/not/matter'; // readIsolation returns in-place when config is unreadable
+  assert.strictEqual(runMod.resolveIsolation({ task_id: 'T-1', isolation: 'branch' }, ws), 'branch');
+  assert.strictEqual(runMod.resolveIsolation({ task_id: 'T-1', isolation: 'worktree' }, ws), 'in-place', 'unsupported override ignored → default');
+  assert.strictEqual(runMod.resolveIsolation({ task_id: 'T-1' }, ws), 'in-place');
+  assert.strictEqual(runMod.resolveIsolation({ task_id: 'RAW-2026', isolation: 'branch' }, ws), 'in-place', 'RAW runs are never isolated');
+});
+
+// A fake git seam: records ensureBranch calls, canned head sha. `fail` makes ensureBranch throw.
+function fakeGit({ fail = false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    head: () => 'basesha0',
+    ensureBranch: (cwd, branch) => { calls.push({ cwd, branch }); if (fail) throw new Error('local changes would be overwritten'); return { branch, action: 'created' }; },
+  };
+}
+
+test('isolation branch mode: ensures the task branch, records isolation/branch, still spawns in project_path', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const git = fakeGit();
+    const spawn = recordingSpawn(FIXTURE_LINES, 0);
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', maxIters: 1, gitSeam: git });
+    exec.launch({ run_id: 'r-iso', task_id: 'T-1', role: 'coder', project_path: proj, isolation: 'branch' });
+    await tick(60);
+    assert.deepStrictEqual(git.calls, [{ cwd: proj, branch: 'tcgflow/T-1' }], 'ensureBranch called once with the task branch');
+    assert.strictEqual(spawn.calls[0].cwd, proj, 'branch mode still runs in the project working tree (cwd unchanged, resume intact)');
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-iso.md'), 'utf8'));
+    assert.strictEqual(fm.isolation, 'branch');
+    assert.strictEqual(fm.branch, 'tcgflow/T-1');
+    assert.strictEqual(fm.git_base, 'basesha0', 'base captured from the seam after the checkout');
+  } finally { cleanup(proj); }
+});
+
+test('isolation in-place (default): NO git branch op — the seam is never asked to switch', async () => {
+  const { proj } = makeWs();
+  try {
+    const git = fakeGit({ fail: true }); // would throw if ensureBranch were ever called
+    const spawn = recordingSpawn(FIXTURE_LINES, 0);
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', maxIters: 1, gitSeam: git });
+    exec.launch({ run_id: 'r-inplace', task_id: 'T-1', role: 'coder', project_path: proj }); // no isolation override, config default in-place
+    await tick(60);
+    assert.strictEqual(git.calls.length, 0, 'in-place never touches branches');
+    assert.strictEqual(spawn.calls.length, 1, 'the run still spawns normally');
+  } finally { cleanup(proj); }
+});
+
+test('isolation branch mode: a checkout failure fails the run CLOSED (isolation-failed), never spawns', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const git = fakeGit({ fail: true });
+    const spawn = recordingSpawn(FIXTURE_LINES, 0);
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn, claudeBin: 'fake', maxIters: 1, gitSeam: git });
+    exec.launch({ run_id: 'r-isofail', task_id: 'T-1', role: 'coder', project_path: proj, isolation: 'branch' });
+    await tick(60);
+    assert.strictEqual(spawn.calls.length, 0, 'never spawns the agent when isolation setup failed');
+    assert.deepStrictEqual(rm.calls.fail, [['r-isofail', 'isolation-failed']], 'run failed with isolation-failed');
+    assert.ok(!fs.existsSync(path.join(ws, 'runs', 'T-1', 'r-isofail.md')), 'no placeholder record for a run that never launched (mirrors over-budget)');
+  } finally { cleanup(proj); }
+});

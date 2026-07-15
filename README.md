@@ -40,7 +40,7 @@ After `geekstackflow init`, your project has a `.tcgstackflow/` folder containin
 - **18 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
 - **Governance** (`governance.md`) — four risk levels (LOW/MEDIUM/HIGH/CRITICAL) + a permission-request recipe + your project-specific rules. Enforced live during orchestrated runs (approve/deny in the browser).
 - **Tool adapters** (`tools/`) — generated `CLAUDE.md`, `AGENTS.md` (Codex), and `.github/copilot-instructions.md` (Copilot), all pointing back at `.tcgstackflow/` as the single source of truth.
-- **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, session id, the runner `tool`/`gate`, and the qmd re-embed outcome (workspace schema 6).
+- **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, session id, the runner `tool`/`gate`, the qmd re-embed outcome, and (for branch-isolated runs) the `isolation`/`branch` it used (workspace schema 7).
 - **A local Cockpit / Orchestrator** — `geekstackflow ui` opens a browser dashboard over all your projects that also *runs* the workflow: launch any agent on a task, watch the live stream, approve HIGH/CRITICAL actions, browse run history and per-run reports/diffs, chat with a finished run, and track token spend against a budget — plus task board, wiki activity, Jira status, governance, timesheet.
 
 Plus a **global** home at `~/.tcgstackflow/` for cross-project memory (`memory/`) and a shared tech-skill library (`skills/`).
@@ -128,7 +128,7 @@ geekstackflow upgrade /path/to/project    # or: /tcgflow-upgrade in your AI tool
 geekstackflow hooks   /path/to/project    # (re)wire the git pull-digest hook into .git/hooks
 ```
 
-`upgrade` is **non-destructive**: it runs the schema migrations (now up to **schema 6**), refreshes the tool-owned commands + agent profiles (backing up any drift to `.bak`), additively adds new skills, and prints a **drift report**. It never overwrites your work — tasks, wiki, existing skills, and tool adapters are left untouched, and `config.yaml`/`governance.md` are only *additively extended* by migrations (new blocks/sections appended), never clobbered. Restart Claude Code afterward to pick up the refreshed slash commands. Full details: [Upgrading a workspace](#upgrading-a-workspace).
+`upgrade` is **non-destructive**: it runs the schema migrations (now up to **schema 7**), refreshes the tool-owned commands + agent profiles (backing up any drift to `.bak`), additively adds new skills, and prints a **drift report**. It never overwrites your work — tasks, wiki, existing skills, and tool adapters are left untouched, and `config.yaml`/`governance.md` are only *additively extended* by migrations (new blocks/sections appended), never clobbered. Restart Claude Code afterward to pick up the refreshed slash commands. Full details: [Upgrading a workspace](#upgrading-a-workspace).
 
 ---
 
@@ -252,6 +252,7 @@ Open a task and press **Run {agent}** (e.g. *Run coder* on a `PLANNED` task):
 3. **Governance is enforced live**: a HIGH/CRITICAL action (push, dependency install, a path your `governance.md` rules escalate) pauses the run and pops an **approval modal** — Action / Risk / Why / Approve / Deny. Deny is non-fatal ("deferred to human"); either decision is recorded in the task log.
 4. On completion the run is recorded at `runs/{task-id}/{run-id}.md` (transcript + tokens + session id), and the agent's own log entries land in the task files as usual.
 5. **⛓ Chain ("run to completion")** — tick the chain toggle (or set `orchestrator.auto_advance: true`): when a role hands off, the next one launches automatically — coder → reviewer → tester → **ingester** — until the task is `INGESTED`, `BLOCKED`, or it bounces backward more than `max_bounces` times. The **Approvals inbox** (🔔 in the nav, with browser notifications) catches any HIGH/CRITICAL pause from *any* run, so unattended chains never wait unnoticed. Reopening a task **reattaches** to its in-flight run; ▶ buttons on every queue row launch agents without opening the task.
+6. **git isolation (ADR 0040)** — a `git:` select next to the chain toggle picks how the run touches git: `in-place` (the current branch, default) or `branch` (create/continue `tcgflow/<TASK-ID>` in the same working tree). It is keyed on the task, so a chain's reviewer/tester/ingester **continue on the branch the coder created**. There's **no auto-merge** — you review the diff and integrate the branch yourself. Set the per-project default in **Settings**. (`worktree` mode is designed but deferred — see ADR 0040.)
 
 ### Keep the AI's knowledge fresh
 
@@ -265,7 +266,7 @@ The wiki is the AI's memory — it's only as good as its last ingest. Two mechan
 - **Session report** — per task (or per run): token classes, a $-cost waterfall (list-price estimate, ADR 0034), tool-calls-by-type, and a per-turn cache-read trace, parsed from the actual Claude session logs. **Open report ↗** exports it as standalone HTML; `/tcgflow-session-report` authors the AI editorial version (narrative + optimization recommendations).
 - **Per run** — read the **transcript** (it shows the run's **full session id** with **copy id** and **⌥ resume cmd** buttons), view the **diff** since the run started (`git_base` is captured at launch), or copy the resume command to continue that exact session in your own CLI (`cd "<project>" && claude --resume <session_id>`).
 - **Discuss** — a chat box on the task that resumes the latest run's session **read-only** and streams the agent's answer ("what did you do and why?").
-- **Settings** — per-role runner tool map (`orchestrator.roles`, ADR 0025 — all-`claude` today, `codex` deferred) and an optional **spend budget** that flags the project when estimated spend exceeds it. Persisted to `config.yaml`.
+- **Settings** — per-role runner tool map (`orchestrator.roles`, ADR 0025 — all-`claude` today, `codex` deferred), the default **git isolation** mode (`orchestrator.isolation`, ADR 0040 — `in-place` | `branch`), and an optional **spend budget** that flags the project when estimated spend exceeds it. Persisted to `config.yaml`.
 
 Before the SPA is built, the server serves a built-in fallback page (read-only browse + copy-prompt) — so `geekstackflow ui` works even without `npm run build`.
 
@@ -408,7 +409,7 @@ geekstack-flow/
 ├── init.js                 # the CLI (init / upgrade / register / drift / ui / hooks) — zero dependencies
 ├── package.json            # bin: { geekstackflow, tcgflow }, v0.3.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
-├── docs/adr/               # 36 Architecture Decision Records
+├── docs/adr/               # 40 Architecture Decision Records
 ├── test/                   # node --test suite (run with `npm test`)
 ├── ui/                     # the Cockpit/Orchestrator (Vue 3 + Vite SPA + zero-dep Node server)
 │   ├── server/             #   read.cjs (data) · index.cjs (http) · run.cjs (agent executor)
@@ -426,7 +427,7 @@ geekstack-flow/
     │   ├── hooks/         # post-merge pull-digest hook (wired by `geekstackflow hooks`)
     │   ├── wiki/          # starter pages + adr/
     │   ├── tasks/         # README + weekly/ + active/completed/archive/
-    │   ├── runs/          # orchestrated run records, {task-id}/{run-id}.md (schema 6)
+    │   ├── runs/          # orchestrated run records, {task-id}/{run-id}.md (schema 7)
     │   ├── raw/  prompts/
     │   └── tools/         # claude/ codex/ github/ adapters
     └── global/.tcgstackflow/      # copied to ~/.tcgstackflow/ (memory/ + skills/)
@@ -437,7 +438,7 @@ geekstack-flow/
 ## Design & decisions
 
 - **[CONTEXT.md](CONTEXT.md)** — the project's domain language (Wiki, Raw, Ingest/Query/Lint, Agent, Skill, Command, Cockpit, Orchestrator, Workspace vs Jira status, …).
-- **[docs/adr/](docs/adr/)** — 36 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036).
+- **[docs/adr/](docs/adr/)** — 40 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation — branch now, worktree deferred (0040).
 
 ## Inspirations
 

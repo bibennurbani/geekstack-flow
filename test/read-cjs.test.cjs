@@ -346,6 +346,46 @@ test('Card 3 run-record: serialize → parse round-trips every field', () => {
   assert.strictEqual(back.transcript, 'did the work\nacross lines');
 });
 
+test('ADR 0040 run-record: isolation/branch omitted when in-place; emitted + round-tripped for branch', () => {
+  const base = { task: 'ES-1', role: 'coder', state: 'done', tokens: {}, transcript: 'x' };
+  // in-place (or absent) → the record is byte-identical to a pre-0040 record.
+  const inplace = read.serializeRunRecord({ ...base, isolation: 'in-place' });
+  assert.ok(!/^isolation:/m.test(inplace), 'no isolation line for in-place');
+  assert.ok(!/^branch:/m.test(inplace), 'no branch line for in-place');
+  assert.strictEqual(inplace, read.serializeRunRecord(base), 'in-place record identical to one with no isolation field');
+  // branch → both fields present and readable.
+  const branched = read.serializeRunRecord({ ...base, isolation: 'branch', branch: 'tcgflow/ES-1' });
+  assert.match(branched, /^isolation: branch$/m);
+  assert.match(branched, /^branch: tcgflow\/ES-1$/m);
+  const back = read.parseRunRecord(branched);
+  assert.strictEqual(back.isolation, 'branch');
+  assert.strictEqual(back.branch, 'tcgflow/ES-1');
+  assert.strictEqual(read.parseRunRecord(inplace).isolation, null, 'absent isolation parses back as null (= in-place)');
+});
+
+test('ADR 0040 settings: readConfig defaults isolation to in-place; setIsolation writes it; enum guarded', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-iso-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'config.yaml'), [
+    'workspace_schema: 7', 'project:', '  name: "x"',
+    'orchestrator:', '  roles:', '    coder: claude',
+    'governance:', '  mode: strict', '',
+  ].join('\n'));
+  try {
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.isolation, 'in-place', 'absent key → in-place');
+    read.setIsolation(ws, 'branch');
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.isolation, 'branch');
+    // idempotent-ish: setting it again replaces the line, still one key, still inside orchestrator.
+    read.setIsolation(ws, 'in-place');
+    const yaml = fs.readFileSync(path.join(ws, 'config.yaml'), 'utf8');
+    assert.strictEqual((yaml.match(/^\s+isolation:/gm) || []).length, 1, 'exactly one isolation line');
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.isolation, 'in-place');
+    assert.throws(() => read.setIsolation(ws, 'worktree'), /unknown-isolation/, 'worktree is not yet a supported mode');
+    assert.throws(() => read.setIsolation(ws, 'bogus'), /unknown-isolation/);
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
 test('Card 3 run-record: parse defaults — tokens always 4 keys; absent session_id never poisons', () => {
   const running = read.serializeRunRecord({ task: 'T', role: 'coder', state: 'running', tokens: {} });
   assert.ok(!/^session_id:/m.test(running), 'no session_id line when absent (the truthy-{} trap)');

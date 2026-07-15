@@ -42,6 +42,19 @@ test('unknown task -> 404', async () => {
   assert.strictEqual(r.j.error, 'task-not-found');
 });
 
+// ADR 0040 — per-run isolation override is validated against the supported modes (worktree is deferred).
+test('POST /api/run rejects unknown isolation (incl. deferred worktree); accepts branch', async () => {
+  const bad = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder', isolation: 'worktree' });
+  assert.strictEqual(bad.s, 400);
+  assert.strictEqual(bad.j.error, 'unknown-isolation');
+  assert.deepStrictEqual(bad.j.supported, ['in-place', 'branch']);
+  const bogus = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder', isolation: 'nope' });
+  assert.strictEqual(bogus.s, 400);
+  const ok = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder', isolation: 'branch' });
+  assert.strictEqual(ok.s, 200, 'branch is a supported per-run override');
+  idx.runManager.abort(ok.j.run_id); // free the slot for later tests
+});
+
 // Card 2 — GET /api/pricing exposes the canonical server table so the SPA stops drifting (ADR 0034:21).
 test('GET /api/pricing -> the canonical list-price table', async () => {
   const r = await req('GET', '/api/pricing');

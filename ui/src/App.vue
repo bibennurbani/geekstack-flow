@@ -89,6 +89,8 @@ async function openTask(t) {
   const id = t.id || t.task_id;
   if (!id) return;
   selectedTask.value = id; taskDetail.value = null; statusError.value = ''; chainOn.value = false; resetRun(); closeReport(); resetChat();
+  // Seed the per-run isolation control from the project default (ADR 0040); the user can override per launch.
+  isolationMode.value = (detail.value && detail.value.config && detail.value.config.orchestrator && detail.value.config.orchestrator.isolation) || 'in-place';
   taskDetail.value = await api(taskUrl());
   // Reattach: the task already has an in-flight run — resume its live stream instead of 'idle'.
   const ar = taskDetail.value && taskDetail.value.active_run;
@@ -107,17 +109,21 @@ async function changeStatus(e) {
 }
 
 // --- live run ---
-function resetRun() { runState.value = 'idle'; runId.value = ''; streamText.value = ''; liveTokens.value = null; runError.value = ''; pendingApproval.value = null; criticalAck.value = false; }
+function resetRun() { runState.value = 'idle'; runId.value = ''; streamText.value = ''; liveTokens.value = null; runError.value = ''; pendingApproval.value = null; criticalAck.value = false; runBranch.value = ''; }
 function closeStream() { if (es) { es.close(); es = null; } }
 // Subscribe the live-run panel to a run's SSE stream. Used by fresh launches, REATTACH (opening a
 // task that already has an in-flight run), and chain-follow (auto-advance hops to the next role).
 const chainOn = ref(false); // user-selected "run to completion" for the next launch
+const isolationMode = ref('in-place'); // per-launch git isolation (ADR 0040): in-place | branch. Seeded from the project default on open; overridable per run.
+const runBranch = ref(''); // branch the live run created/continued (from the isolation SSE event)
 function subscribeRun(id) {
   closeStream();
   runId.value = id; runState.value = 'running'; liveTokens.value = null; runError.value = '';
   es = new EventSource('/api/run/stream?run_id=' + encodeURIComponent(id));
   es.addEventListener('delta', (ev) => { streamText.value += (JSON.parse(ev.data).text || ''); });
   es.addEventListener('tokens', (ev) => { liveTokens.value = JSON.parse(ev.data); });
+  es.addEventListener('isolation', (ev) => { const d = JSON.parse(ev.data); runBranch.value = d.branch || ''; }); // ADR 0040 — branch this run created/continued
+
   es.addEventListener('approval_request', (ev) => { pendingApproval.value = JSON.parse(ev.data); criticalAck.value = false; runState.value = 'paused'; });
   es.addEventListener('approval_resolved', (ev) => {
     const d = JSON.parse(ev.data);
@@ -154,7 +160,7 @@ async function startRun(force = false) {
   const role = (taskDetail.value && taskDetail.value.next_agent) || 'coder';
   if (role === 'human') return; // BLOCKED — nothing runnable
   resetRun(); runState.value = 'running';
-  const res = await postJSON('/api/run', { project_path: selected.value, task_id: selectedTask.value, role, force, chain: chainOn.value || undefined });
+  const res = await postJSON('/api/run', { project_path: selected.value, task_id: selectedTask.value, role, force, chain: chainOn.value || undefined, isolation: isolationMode.value });
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
     if (j.error === 'over-budget' && !force && window.confirm(`Est. spend $${j.spend} exceeds the $${j.budget} budget. Run anyway?`)) {
@@ -396,6 +402,7 @@ async function decideInbox(a, decision) {
 const settingsRoles = ref({});
 const settingsBudget = ref('');
 const settingsAutoAdvance = ref(false);
+const settingsIsolation = ref('in-place'); // ADR 0040 — per-project default git isolation
 const settingsBusy = ref(false);
 const PRICING_TABLE = computed(() => pricingRows(pricing.value)); // derived from the single source
 function initSettings() {
@@ -403,10 +410,11 @@ function initSettings() {
   settingsRoles.value = { ...(o.roles || {}) };
   settingsBudget.value = o.budget_usd == null ? '' : String(o.budget_usd);
   settingsAutoAdvance.value = !!o.auto_advance;
+  settingsIsolation.value = o.isolation || 'in-place';
 }
 async function saveSettings() {
   settingsBusy.value = true;
-  const res = await postJSON('/api/project/settings', { path: selected.value, roles: settingsRoles.value, budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value), auto_advance: settingsAutoAdvance.value });
+  const res = await postJSON('/api/project/settings', { path: selected.value, roles: settingsRoles.value, budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value), auto_advance: settingsAutoAdvance.value, isolation: settingsIsolation.value });
   settingsBusy.value = false;
   if (res.ok) { toast('Settings saved', 'ok'); const p = projects.value.find((x) => x.path === selected.value); await loadProject(p); projectTab.value = 'settings'; }
   else { const j = await res.json().catch(() => ({})); toast('Save failed: ' + (j.error || res.status), 'err'); }
@@ -733,6 +741,12 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                 <span v-if="taskDetail.next_agent" class="muted" style="font-size:12px">next: <span class="agent" :class="'agent-' + taskDetail.next_agent">{{ taskDetail.next_agent }}</span></span>
                 <button v-if="taskDetail.next_agent === 'human'" class="btn" disabled title="The task is BLOCKED — it needs a human decision, not an agent">Blocked — needs a human</button>
                 <template v-else>
+                  <label class="muted" style="font-size:12px" title="Git isolation (ADR 0040): in-place runs on the current branch; branch creates/continues tcgflow/&lt;TASK-ID&gt; in the same working tree (no auto-merge — integrate it yourself)">git:
+                    <select class="select" v-model="isolationMode">
+                      <option value="in-place">in-place</option>
+                      <option value="branch">branch</option>
+                    </select>
+                  </label>
                   <label class="chain-toggle" title="Run to completion: after this role hands off, automatically run the next one (reviewer → tester → ingester) until the task is INGESTED, blocked, or bounces too often">
                     <input type="checkbox" v-model="chainOn" /> ⛓ chain
                   </label>
@@ -746,6 +760,7 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
               <template v-if="runState !== 'idle'">
                 <div class="section" style="display:flex;align-items:center;gap:8px">Live run
                   <span class="badge" :class="{ 'st-IN_PROGRESS': runState==='running', 'st-BLOCKED': runState==='error'||runState==='paused', 'st-COMPLETED': runState==='done' }">{{ runState }}</span>
+                  <span v-if="runBranch" class="badge soft mono" :title="'Running on git branch ' + runBranch + ' (ADR 0040 — no auto-merge)'">⑂ {{ runBranch }}</span>
                   <button v-if="runState === 'running' || runState === 'paused'" class="btn" style="padding:3px 11px;font-size:12px" @click="stopRun" title="Stop this run">■ Stop</button>
                 </div>
                 <div v-if="runError" class="badge st-BLOCKED">{{ runError }}</div>
@@ -791,6 +806,8 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                 <span v-if="r.wiki_discovery && r.wiki_discovery.path" class="badge"
                   :class="r.wiki_discovery.path === 'qmd' ? 'st-COMPLETED' : 'soft'"
                   :title="wikiDiscoveryTitle(r.wiki_discovery)">🔍 {{ r.wiki_discovery.path === 'qmd' ? 'qmd' : 'index-fallback' }}<span v-if="r.wiki_discovery.redirects"> ⚠︎{{ r.wiki_discovery.redirects }}</span></span>
+                <!-- ADR 0040 — the git branch this run created/continued. Absent (in-place) → no badge. -->
+                <span v-if="r.branch" class="badge soft mono" :title="'Ran on branch ' + r.branch + ' (ADR 0040 — no auto-merge)'">⑂ {{ r.branch }}</span>
                 <span class="badge" :class="r.state === 'done' ? 'st-COMPLETED' : r.state === 'failed' ? 'st-BLOCKED' : 'soft'">{{ r.state || '?' }}</span>
               </div>
 
@@ -1054,6 +1071,15 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                   <input type="checkbox" v-model="settingsAutoAdvance" />
                   Chain runs by default: after each role hands off, launch the next one (coder → reviewer → tester → ingester) until INGESTED, BLOCKED, or the bounce limit.
                 </label>
+              </div>
+              <div class="section">Git isolation (default)</div>
+              <div class="card srow">
+                <span style="width:120px">isolation</span>
+                <select v-model="settingsIsolation" class="fsel">
+                  <option value="in-place">in-place</option>
+                  <option value="branch">branch</option>
+                </select>
+                <span class="muted" style="font-size:12px">Default for new runs (ADR 0040). <code>branch</code> creates/continues <code>tcgflow/&lt;TASK-ID&gt;</code> in the same working tree — no auto-merge, you integrate it. Overridable per run. (<code>worktree</code> is deferred.)</span>
               </div>
               <div class="section">Spend budget</div>
               <div class="card srow">

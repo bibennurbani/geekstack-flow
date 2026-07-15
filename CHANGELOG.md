@@ -4,6 +4,15 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — Per-run git isolation: `in-place | branch` (ADR 0040, schema 7)
+
+- **Configurable git isolation for orchestrated runs (ADR 0040).** A run can now create/continue a task branch instead of always mutating the current branch in place. New `orchestrator.isolation` (`in-place` default — byte-for-byte today's behaviour — or `branch`), settable as a per-project default (config.yaml / Settings tab) **and** overridable per run (a `git:` select next to the ⛓ chain toggle). `branch` mode ensures `tcgflow/<TASK-ID>` is checked out before the agent spawns; it is **keyed on the task**, so the coder→reviewer→tester→ingester chain **detects it is already on the branch and just continues** on it. Runs in the same working tree (cwd unchanged → Claude `--resume` intact; the sequential-within-project lock untouched).
+- **No auto-merge — you integrate the branch.** The branch is left for manual integration (PR / merge). Automatic merge-back, same-project **parallel** runs, and a conflict-resolution surface stay deferred to a future ADR (the line ADR 0026 drew). Setup **fails closed** (`isolation-failed`) if the checkout can't proceed (e.g. a conflicting dirty tree), so a run never lands on the wrong branch.
+- **`worktree` is designed but deferred.** Worktrees fragment the git-tracked `.tcgstackflow/` single source of truth (the loop reads task Status from the repo root while the agent writes it in the worktree; `.qmd/` is gitignored so the worktree has no wiki index). Making it correct needs a *workspace-root ≠ working-cwd* seam — documented in ADR 0040 + `docs/plans/run-git-isolation.md`; the server rejects a `worktree` request until it lands.
+- **Run record + git seam.** `runs/{run}.md` gains additive `isolation`/`branch` frontmatter (omitted when in-place, so existing records are unchanged); the Cockpit shows a branch badge on the live run and in the Runs list. New `currentBranch`/`branchExists`/`ensureBranch` live in the one `git.cjs` seam (injectable `exec`, unit-tested); the executor's `git` seam is now injectable too.
+- **Schema 7 migration** — `upgrade` inserts `orchestrator.isolation: in-place` into existing workspaces (idempotent) and refreshes `runs/README.md` with the new fields.
+- New ADR: **0040** (per-run git isolation; branch now, worktree deferred, no-merge boundary).
+
 ### Added — `geekstackflow doctor`, project-local qmd index, and deterministic wiki-structure checking (ADR 0037/0038/0039)
 
 - **`geekstackflow doctor`** — a new read-only CLI health-check across every registered project (+ the cwd workspace). It answers the two questions a file-based memory can't answer by itself: *is the qmd search layer actually realized?* and *does the wiki follow the Karpathy method?* Exits non-zero on any problem, so it works in CI. Pure parse/diagnose core (unit-tested), thin qmd-spawn/fs shell — the same seam pattern as the run-record serializer.
