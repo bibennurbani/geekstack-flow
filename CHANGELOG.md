@@ -4,6 +4,24 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — `geekstackflow doctor`, project-local qmd index, and deterministic wiki-structure checking (ADR 0037/0038/0039)
+
+- **`geekstackflow doctor`** — a new read-only CLI health-check across every registered project (+ the cwd workspace). It answers the two questions a file-based memory can't answer by itself: *is the qmd search layer actually realized?* and *does the wiki follow the Karpathy method?* Exits non-zero on any problem, so it works in CI. Pure parse/diagnose core (unit-tested), thin qmd-spawn/fs shell — the same seam pattern as the run-record serializer.
+- **Project-local qmd index (ADR 0038)** — qmd collection names are a machine-**global** namespace, so every project registering `--name wiki` collided: only the last one embedded owned the global `wiki`, and every other project's `qmd query -c wiki` silently searched the **wrong** project's wiki. `doctor` proved this live (3 of 5 projects on the author's machine). Fixed by giving each workspace its **own** `.qmd/` index (`qmd init`, gitignored) so collection names are scoped to the project and `-c wiki` is unambiguous — no skill or agent change (the fix is in setup, not usage). `/tcgflow-init` runs `qmd init` first; `/tcgflow-upgrade` re-creates the index for existing workspaces; `doctor` runs qmd per-project and flags a missing `.qmd/`.
+- **Query-path is observed + recorded (ADR 0037)** — qmd-first was mandatory only in prose. Now each run records its **discovery path** (`wiki_discovery: qmd | index-fallback`) into the run record, surfaced as a Cockpit badge, so the discipline is auditable. The governance MCP observes qmd invocations without changing any allow/deny outcome; the qmd MCP tool now classifies LOW (not fail-safe HIGH). A query-time *enforcement* gate is designed but **deferred** (preserved on `feat/qmd-query-path-enforcement-full`) until the record shows real hand-grepping — observe-first. Prose hardened (raw grep is never the fallback; the "thin results" escape hatch requires a refinement first); a `qmd-first discovery drift` detector added to `audit-workspace`; a post-merge freshness backstop re-embeds when a pull touches `wiki/` or `docs/`.
+- **Deterministic wiki-structure checker (ADR 0039)** — the *mechanical* half of `lint-wiki` (frontmatter + tag taxonomy, `summary`/lead presence, ~900-token chunking, the wikilink graph → broken/ambiguous links + orphans + Map-of-Content reachability) extracted into one pure, fence-aware, CRLF-safe module. `geekstackflow doctor` runs it per project; `geekstackflow doctor --wiki` is the structure-only mode. `lint-wiki` now delegates the mechanical detectors to it and reserves the LLM for the semantic ones (contradictions, concept-without-page, cross-refs, "is this actually informational?"); `ingest` gates on it at the re-embed step so poorly-retrievable pages are fixed at write-time. Only a missing root `index.md` fails; everything else is warn/nit; ADRs are lenient. Hardened against 11 markdown edge-cases found by an adversarial review (CRLF, code-fence, quote-strip, slug-collision, nested-index), each with a regression test.
+- **Session-report wiki-access visibility** — per-run counts of how a run reached the wiki (qmd-mediated vs direct `Read`/`Grep`), plus a "wiki qmd / direct" metric card — the first visibility of the retrieval discipline (call counts, not token attribution).
+- New ADRs: **0037** (record qmd discovery path; defer enforcement), **0038** (project-local qmd index), **0039** (mechanical wiki-structure check is deterministic; semantic stays AI-run).
+
+### Fixed
+
+- **Multi-project `docs` collection registration** — `/tcgflow-init` registered every sub-project's docs as `--name docs`, which collide; now one non-colliding `docs-<project>` collection per sub-project's real path.
+- **Scaffold self-consistency** — the shipped wiki carried an off-taxonomy tag (`decisions` vs the canonical `decision`) and a dangling `[[../../governance.md]]` wikilink (now a Markdown link); the scaffold dogfoods to zero `doctor --wiki` findings.
+
+### Docs
+
+- A presentation deck (`docs/geekstackflow-deck.html`, self-contained) + written overview (`docs/geekstackflow-overview.md`) covering the tool end-to-end, and a plan doc (`docs/plans/qmd-query-path-enforcement.md`) tracking the qmd/wiki-reliability work.
+
 ## [0.3.0] - 2026-06-25
 
 ### Added — Per-tool runner adapter, wiki-reliability, governance depth, internal deepenings (schema 6)

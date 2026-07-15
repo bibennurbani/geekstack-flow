@@ -33,7 +33,7 @@
 
 After `geekstackflow init`, your project has a `.tcgstackflow/` folder containing:
 
-- **LLM wiki** (`wiki/`) — flat, Obsidian-flavoured Markdown maintained by AI, following [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Searched via the mandatory **wiki-search (qmd)** layer — a local hybrid keyword + vector + re-rank index that complements the `index.md` Map of Content (ADR 0030). This is the project's memory.
+- **LLM wiki** (`wiki/`) — flat, Obsidian-flavoured Markdown maintained by AI, following [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Searched via the mandatory **wiki-search (qmd)** layer — a **project-local** hybrid keyword + vector + re-rank index (`qmd init` → `.qmd/`, so projects never collide on collection names — ADR 0038) that complements the `index.md` Map of Content (ADR 0030). `geekstackflow doctor` verifies the index is real per project *and* checks the wiki's Karpathy/qmd structure (ADR 0039). This is the project's memory.
 - **Tasks** (`tasks/`) — every task is exactly two files (`TASK {ID}.md` log + `TASK details {ID}.md` plan), moving through `active/ → completed/ → archive/`.
 - **6 agent roles** (`agents/`) — the linear `planner → coder → reviewer → tester → ingester`, plus the manually-invoked **`refactorer`** (a peer to the Coder, re-entering at Review), each a tool-agnostic Markdown profile.
 - **17 skills** (`skills/`) — atomic capabilities in Claude Code `SKILL.md` format (mattpocock-compatible).
@@ -282,6 +282,8 @@ The `geekstackflow` binary (alias **`tcgflow`**; `node init.js …` works the sa
 | `geekstackflow init [dir]` *(or just `geekstackflow [dir]`)* | Scaffold `.tcgstackflow/` in `dir` — the interactive setup (prompts, adapters, registry, optional git hook) |
 | `geekstackflow upgrade [dir]` | In-place upgrade: schema migrations, refresh tool-owned files, additive new skills, drift report |
 | `geekstackflow ui [--port N]` | Launch the Cockpit / Orchestrator over all registered projects at `http://127.0.0.1:4729` |
+| `geekstackflow doctor [dir]` | Health-check every registered project (+ cwd): the **qmd wiki-search layer** (each collection registered, pointed at *this* project's path, embedded — ADR 0038) **and** the wiki's **Karpathy/qmd structure** (frontmatter, chunking, orphans, Map-of-Content reachability — ADR 0039). Read-only; non-zero exit on any problem |
+| `geekstackflow doctor --wiki [dir]` | Just the deterministic **wiki-structure** check for the current workspace (what `/tcgflow-lint` and `/tcgflow-ingest` call). Read-only |
 | `geekstackflow hooks [dir]` | Install the git `post-merge`/`post-rewrite` **pull-digest hook** into `.git/hooks` (preserves any existing hook as `*.pre-gsf`) |
 | `geekstackflow register [dir]` | Add an already-initialised project to the Cockpit registry without re-running init (e.g. after cloning to a new machine) |
 | `geekstackflow drift [dir]` | Read-only report of which existing skills / tool adapters differ from the current templates (the files `upgrade` won't auto-merge) |
@@ -289,7 +291,7 @@ The `geekstackflow` binary (alias **`tcgflow`**; `node init.js …` works the sa
 | `geekstackflow --force [dir]` | Overwrite an existing `.tcgstackflow/` (and root adapters) during init |
 | `geekstackflow --help` *(`-h`)* | Show usage |
 
-Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `register`, `drift`, `ui`, and `hooks` are subcommands only.
+Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `register`, `drift`, `doctor`, `ui`, and `hooks` are subcommands only.
 
 ---
 
