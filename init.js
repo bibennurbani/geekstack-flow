@@ -20,10 +20,14 @@ Usage (all forms equivalent — pick what feels natural):
   geekstackflow drift [target]                Report which existing skills / tool adapters differ from the
                                               installed templates — the files upgrade won't auto-merge,
                                               so you know exactly what to review. Read-only; writes nothing.
-  geekstackflow doctor [target]               Health-check the qmd wiki-search layer across every registered project
-                                              (+ the cwd workspace): is each declared collection actually registered,
-                                              pointed at THIS project's path (names are global — projects collide on
-                                              'wiki'), and embedded? Read-only; exits non-zero if any project is broken.
+  geekstackflow doctor [target]               Health-check across every registered project (+ the cwd workspace): the
+                                              qmd wiki-search layer (each declared collection registered, pointed at
+                                              THIS project's path, embedded — names are global so projects collide on
+                                              'wiki') AND the wiki's Karpathy/qmd structure (frontmatter, chunking,
+                                              orphans, Map-of-Content reachability). Read-only; non-zero on any problem.
+  geekstackflow doctor --wiki [target]        Just the deterministic wiki-structure check for the current workspace
+                                              (frontmatter + taxonomy, ~900-token chunking, wikilink graph, MoC reach) —
+                                              what /tcgflow-lint and /tcgflow-ingest call. Read-only.
   geekstackflow ui [--port N]                 Launch the Cockpit — the local Orchestrator UI over all your registered
                                               projects (run agents, approve actions, browse tasks) at http://127.0.0.1:4729.
   geekstackflow hooks [target]                Install the git post-merge/post-rewrite hook: every git pull writes a
@@ -83,7 +87,7 @@ const TOOL_VERSION = readToolVersion();
 const LATEST_SCHEMA = 6;
 
 function parseArgs(argv) {
-  const args = { force: false, help: false, upgrade: false, register: false, drift: false, doctor: false, ui: false, hooks: false, port: null, migrateFrom: null, target: process.cwd() };
+  const args = { force: false, help: false, upgrade: false, register: false, drift: false, doctor: false, wiki: false, ui: false, hooks: false, port: null, migrateFrom: null, target: process.cwd() };
   const positional = [];
   const raw = argv.slice(2);
 
@@ -118,6 +122,7 @@ function parseArgs(argv) {
     if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--force') args.force = true;
     else if (a === '--upgrade') args.upgrade = true;
+    else if (a === '--wiki') args.wiki = true;
     else if (a === '--port') { i++; args.port = parseInt(raw[i], 10); }
     else if (a === '--migrate-from') {
       i++;
@@ -1185,21 +1190,230 @@ function diagnoseCollection(name, expectedPath, shown, status) {
   return { level: 'ok', message: `"${name}" registered${expectedPath ? ' at the right path' : ''}${status ? ` · index: ${status.vectors} vectors` : ''}` };
 }
 
-const DOCTOR_ICON = { ok: '✓', warn: '⚠', fail: '✗' };
+const DOCTOR_ICON = { ok: '✓', warn: '⚠', fail: '✗', nit: '·' };
+
+// --- wiki structure check: deterministic Karpathy + qmd-optimized conformance (ADR 0039) ---
+// The MECHANICAL half of lint-wiki (frontmatter, chunking, wikilink graph) as one pure, tested module —
+// so `doctor` can verify it, `lint-wiki` can DELEGATE it (keeping the LLM for the semantic detectors),
+// and `ingest` can GATE on it at write-time. Zero deps; no tokenizer (chunk size is a chars/4 ESTIMATE).
+// The taxonomy + frontmatter schema come from the ingest authoring spec (ADR 0003/0006/0030).
+
+const WIKI_KIND_TAGS = ['overview', 'architecture', 'domain', 'feature', 'integration', 'operations', 'decision', 'testing', 'meta'];
+const CHUNK_TOKEN_LIMIT = 900;                     // qmd chunk target (ADR 0030); tokens estimated as chars/4
+const estTokens = (s) => Math.ceil(String(s || '').length / 4);
+const wikiSlug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+const stripQuotes = (s) => String(s).trim().replace(/^(["'])([\s\S]*)\1$/, '$2');
+const normalizeEol = (s) => String(s || '').replace(/\r\n?/g, '\n'); // fix CRLF/CR before any regex
+
+// Pure: minimal leading-`---` frontmatter parser (init.js can't import ui/server/read.cjs — ADR 0022).
+// Strips only SURROUNDING quotes (an apostrophe inside a title must survive — it feeds link resolution).
+function parseWikiFrontmatter(text) {
+  const m = normalizeEol(text).match(/^---\s*\n([\s\S]*?)\n---/);
+  const fm = {};
+  if (!m) return fm;
+  for (const line of m[1].split('\n')) {
+    const kv = line.match(/^([A-Za-z_]+):\s*(.*)$/);
+    if (!kv) continue;
+    const v = kv[2].trim();
+    const arr = v.match(/^\[(.*)\]$/);
+    fm[kv[1]] = arr ? arr[1].split(',').map((x) => stripQuotes(x)).filter(Boolean) : stripQuotes(v);
+  }
+  return fm;
+}
+
+// Pure: parse a wiki page's raw text → structured facts. `name` is the wiki-relative path (e.g. adr/README.md).
+// Fence-aware: a `#`/`##` line or a `[[link]]` INSIDE a ``` or ~~~ fenced block (any fence length) or inline
+// code is illustrative, not structural — so headings, sections, lead detection, and link harvesting all
+// ignore fenced content. Section token counts still include the code (code costs retrieval tokens too).
+function parseWikiPage(name, text) {
+  const t = normalizeEol(text);
+  const fm = parseWikiFrontmatter(t);
+  const body = t.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
+  const lines = body.split('\n');
+  // fence mask — track ``` / ~~~ fences of any length ≥3; close on the same char with length ≥ opener.
+  const inCode = new Array(lines.length).fill(false);
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const f = lines[i].match(/^\s*(`{3,}|~{3,})/);
+    if (fence) { inCode[i] = true; if (f && f[1][0] === fence.c && f[1].length >= fence.n) fence = null; }
+    else if (f) { fence = { c: f[1][0], n: f[1].length }; inCode[i] = true; }
+  }
+  let hasH1 = false, h1Line = -1;
+  const headings = []; // { line, level, text } for ## / ### outside fences
+  for (let i = 0; i < lines.length; i++) {
+    if (inCode[i]) continue;
+    if (/^#\s+\S/.test(lines[i])) { hasH1 = true; if (h1Line < 0) h1Line = i; }
+    const h = lines[i].match(/^(#{2,3})\s+(.+)$/);
+    if (h) headings.push({ line: i, level: h[1].length, text: h[2].trim() });
+  }
+  // sections: the pre-first-## region (heading null) + one per ## / ###. tokens include code; hasSub = a
+  // deeper heading inside. Boundaries come from non-fenced headings, so a fenced `## x` never splits.
+  const starts = [0, ...headings.map((h) => h.line)];
+  const sections = starts.map((start, idx) => {
+    const end = idx + 1 < starts.length ? starts[idx + 1] : lines.length;
+    const h = headings.find((x) => x.line === start);
+    return { heading: h ? h.text : null, tokens: estTokens(lines.slice(start, end).join('\n')), hasSub: headings.some((x) => x.line > start && x.line < end) };
+  });
+  // lead paragraph: the first PROSE block after the H1 and before the first ## — an image/list/quote/table
+  // lead is NOT a summary paragraph (det 7's intent is a prose lead-chunk), so it counts as missing.
+  const firstH = headings.length ? headings[0].line : lines.length;
+  const buf = [];
+  for (let i = h1Line + 1; i < firstH; i++) {
+    if (inCode[i]) { if (buf.length) break; else continue; }
+    if (!lines[i].trim()) { if (buf.length) break; else continue; }
+    buf.push(lines[i]);
+  }
+  const firstBlock = buf.join(' ').trim();
+  const leadPara = /^(!\[|[-*+]\s|>\s|\||\d+\.\s|#)/.test(firstBlock) ? '' : firstBlock;
+  // wikilinks: non-fenced lines with inline code stripped.
+  const linkText = lines.map((l, i) => (inCode[i] ? '' : l.replace(/`[^`\n]*`/g, ''))).join('\n');
+  const wikilinks = [...linkText.matchAll(/\[\[([^\]|#\n]+)(?:[#|][^\]\n]*)?\]\]/g)].map((x) => x[1].trim());
+  return { name, fm, body, hasH1, leadPara, sections, wikilinks, isAdr: name.startsWith('adr/') };
+}
+
+const isWikiEntryPage = (name) => name === 'index.md' || name === 'log.md'; // ROOT MoC + log only (not nested)
+
+function wikiPageKeys(page) {
+  const keys = new Set();
+  const base = page.name.replace(/^.*\//, '').replace(/\.md$/, '');
+  keys.add(base.toLowerCase()); keys.add(wikiSlug(base));
+  if (page.fm.title) { keys.add(String(page.fm.title).toLowerCase()); keys.add(wikiSlug(page.fm.title)); }
+  const aliases = Array.isArray(page.fm.aliases) ? page.fm.aliases : (page.fm.aliases ? [page.fm.aliases] : []);
+  for (const a of aliases) { keys.add(String(a).toLowerCase()); keys.add(wikiSlug(a)); }
+  // adr/README is linked as [[adr/README]] — index by the relative path too
+  keys.add(page.name.replace(/\.md$/, '').toLowerCase());
+  return keys;
+}
+
+// Pure: diagnose parsed wiki pages → findings[] { level: ok|warn|fail|nit, detector, page, message }.
+function diagnoseWiki(pages) {
+  const findings = [];
+  const add = (level, detector, page, message) => findings.push({ level, detector, page, message });
+  // resolution map is collision-aware: a key can map to MANY pages (e.g. two subdirs share a basename, or a
+  // page's alias equals another's title). resolve() returns all candidates so a real link is never falsely
+  // orphaned, and an ambiguous link is surfaced rather than silently misresolved (first-wins).
+  const keyToPages = new Map();
+  for (const p of pages) for (const k of wikiPageKeys(p)) {
+    if (!keyToPages.has(k)) keyToPages.set(k, []);
+    const list = keyToPages.get(k); if (!list.includes(p)) list.push(p);
+  }
+  const resolve = (target) => keyToPages.get(String(target).toLowerCase().trim()) || keyToPages.get(wikiSlug(target)) || [];
+
+  for (const p of pages) {
+    const base = p.name.replace(/^.*\//, '');
+    const isEntry = isWikiEntryPage(p.name);
+    // det 9 — chunk size (estimate). Applies to ALL pages incl. ADRs; and to the pre-first-heading region
+    // (heading null) so an oversized lead before the first `##` is caught, not skipped.
+    for (const s of p.sections) {
+      if (s.tokens > CHUNK_TOKEN_LIMIT && !s.hasSub) {
+        const where = s.heading ? `section "${s.heading}"` : 'the region before the first heading';
+        add('warn', 'chunking', p.name, `${where} ≈${s.tokens} tokens (> ~${CHUNK_TOKEN_LIMIT}) without a sub-heading — split it so qmd chunks it (estimate)`);
+      }
+    }
+    // ADRs are prose, sequentially-numbered decision records reached via the adr/ dir + README, not
+    // wikilinks — lenient on frontmatter/taxonomy/lead (mirrors lint's adr/ exemptions, ADR 0006).
+    if (p.isAdr) continue;
+    // det 8 — frontmatter completeness + taxonomy. Only a MISSING Map-of-Content (index.md) is a `fail`
+    // (structural breakage); page-quality gaps are `warn` so doctor informs without hard-failing every wiki.
+    if (!p.fm.title && !p.hasH1) add('warn', 'frontmatter', p.name, 'no `title` frontmatter and no `# H1` (qmd surfaces the title in results)');
+    if (!p.fm.summary) add('warn', 'summary', p.name, 'missing `summary` — the lead-chunk signal qmd embeds; retrieval degrades without it');
+    if (!p.fm.status) add('warn', 'frontmatter', p.name, 'missing `status` (current|stub|archived)');
+    if (!p.fm.updated) add('warn', 'frontmatter', p.name, 'missing `updated` (freshness signal)');
+    const tags = Array.isArray(p.fm.tags) ? p.fm.tags : (p.fm.tags ? [p.fm.tags] : []);
+    if (!tags.length) { if (!isEntry) add('warn', 'taxonomy', p.name, 'no tags'); }
+    else {
+      if (!tags.some((t) => WIKI_KIND_TAGS.includes(String(t).toLowerCase()))) add('warn', 'taxonomy', p.name, `no kind tag (one of: ${WIKI_KIND_TAGS.join(', ')})`);
+      if (tags.length > 4) add('nit', 'taxonomy', p.name, `${tags.length} tags — keep to 2–4 (tag sprawl hurts retrieval consistency)`);
+    }
+    // det 7 — lead summary paragraph under the H1
+    if (!isEntry && !p.leadPara) add('warn', 'lead', p.name, 'no lead summary paragraph under the H1 (weakens the strongest-embedding first chunk)');
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*\.md$/.test(base)) add('nit', 'filename', p.name, 'filename is not kebab-case (it is the qmd docid)');
+  }
+
+  // wikilink graph — det 6 broken/ambiguous links, det 3 orphans, det 13 MoC reachability from index.md
+  const inbound = new Map(pages.map((p) => [p.name, 0]));
+  for (const p of pages) for (const link of p.wikilinks) {
+    const targets = resolve(link);
+    if (!targets.length) { add('warn', 'broken-link', p.name, `broken [[${link}]] — no page resolves it (a dead end for qmd-first → one-hop reading)`); continue; }
+    if (targets.length > 1) add('warn', 'ambiguous-link', p.name, `[[${link}]] is ambiguous — ${targets.length} pages share that name/alias; disambiguate the link or rename`);
+    for (const target of targets) if (target.name !== p.name) inbound.set(target.name, (inbound.get(target.name) || 0) + 1);
+  }
+  const index = pages.find((p) => p.name === 'index.md'); // the ROOT Map of Content, not a nested index.md
+  if (!index) {
+    add('fail', 'moc', 'index.md', 'no root index.md — the Karpathy Map-of-Content entry point is missing');
+  } else {
+    const reachable = new Set([index.name]);
+    const stack = [index];
+    while (stack.length) {
+      for (const link of stack.pop().wikilinks) {
+        for (const t of resolve(link)) if (!reachable.has(t.name)) { reachable.add(t.name); stack.push(t); }
+      }
+    }
+    for (const p of pages) {
+      if (isWikiEntryPage(p.name) || p.isAdr) continue;
+      if ((inbound.get(p.name) || 0) === 0) add('warn', 'orphan', p.name, 'orphan — no inbound [[wikilinks]] (unreachable except via qmd)');
+      else if (!reachable.has(p.name)) add('warn', 'moc-reach', p.name, 'not reachable from index.md — add it to the Map of Content (Karpathy: index.md is the single entry point)');
+    }
+  }
+  return findings;
+}
+
+// Impure thin shell: read a project's wiki/ dir (recursively) and diagnose it. [] when no wiki/no pages.
+function checkWikiStructure(wikiDir) {
+  const pages = [];
+  const walk = (dir, rel) => {
+    let list = [];
+    try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of list) {
+      const full = path.join(dir, e.name);
+      const r = rel ? rel + '/' + e.name : e.name;
+      if (e.isDirectory()) walk(full, r);
+      else if (e.name.endsWith('.md')) { try { pages.push(parseWikiPage(r, fs.readFileSync(full, 'utf8'))); } catch { /* skip unreadable */ } }
+    }
+  };
+  walk(wikiDir, '');
+  return pages.length ? diagnoseWiki(pages) : [];
+}
+
+// Print a project's wiki-structure findings; returns { fails, warns } for the doctor tally.
+function reportWikiFindings(findings, { limit = 8 } = {}) {
+  const fails = findings.filter((f) => f.level === 'fail').length;
+  const warns = findings.filter((f) => f.level === 'warn').length;
+  const nits = findings.filter((f) => f.level === 'nit').length;
+  if (!findings.length) { console.log('  ✓ wiki structure: clean (or no wiki pages)'); return { fails: 0, warns: 0 }; }
+  console.log(`  wiki structure (Karpathy/qmd): ${fails} fail · ${warns} warn · ${nits} nit`);
+  const shown = findings.filter((f) => f.level !== 'nit').slice(0, limit);
+  for (const f of shown) console.log(`    ${DOCTOR_ICON[f.level] || '·'} [${f.detector}] ${f.page}: ${f.message}`);
+  const hidden = findings.length - shown.length;
+  if (hidden > 0) console.log(`    … ${hidden} more (run \`geekstackflow doctor --wiki\` here for the full list)`);
+  return { fails, warns };
+}
 
 // Impure orchestrator: check every registered project (+ the cwd workspace if unregistered).
-function runDoctor(target) {
-  console.log('\nCreative GeekStack Flow — doctor (qmd wiki-search health)');
-  const reg = readProjectRegistry().map((p) => ({ name: p.name, path: path.resolve(p.path) }));
+function runDoctor(target, opts = {}) {
+  const wikiOnly = !!opts.wikiOnly;
   const cwd = path.resolve(target);
-  if (isWorkspace(cwd) && !reg.some((p) => p.path === cwd)) reg.unshift({ name: path.basename(cwd), path: cwd });
-  if (!reg.length) {
-    console.error('No workspaces to check — run inside an initialised project, or `geekstackflow register` one first.');
-    process.exit(1);
+  let reg;
+  if (wikiOnly) {
+    // Structure-only mode for one workspace (what lint-wiki / ingest invoke on the current project).
+    if (!isWorkspace(cwd)) { console.error('`doctor --wiki` must run inside an initialised workspace.'); process.exit(1); }
+    reg = [{ name: path.basename(cwd), path: cwd }];
+    console.log('\nCreative GeekStack Flow — doctor --wiki (Karpathy/qmd structure only, ADR 0039)');
+  } else {
+    reg = readProjectRegistry().map((p) => ({ name: p.name, path: path.resolve(p.path) }));
+    if (isWorkspace(cwd) && !reg.some((p) => p.path === cwd)) reg.unshift({ name: path.basename(cwd), path: cwd });
+    if (!reg.length) {
+      console.error('No workspaces to check — run inside an initialised project, or `geekstackflow register` one first.');
+      process.exit(1);
+    }
+    console.log('\nCreative GeekStack Flow — doctor (qmd wiki-search health + wiki structure)');
   }
-  const qmdVer = runQmd(['--version']);
-  if (!qmdVer.ok) console.log('⚠ qmd is not installed — every workspace degrades to the index.md Map-of-Content fallback (ADR 0030). Install: `npm i -g @tobilu/qmd` (a HIGH action).');
-  else console.log('qmd present · each project should carry its own project-local index (.qmd, ADR 0038)');
+  const qmdVer = wikiOnly ? { ok: false } : runQmd(['--version']);
+  if (!wikiOnly) {
+    if (!qmdVer.ok) console.log('⚠ qmd is not installed — every workspace degrades to the index.md Map-of-Content fallback (ADR 0030). Install: `npm i -g @tobilu/qmd` (a HIGH action).');
+    else console.log('qmd present · each project should carry its own project-local index (.qmd, ADR 0038)');
+  }
 
   let fails = 0, warns = 0;
   for (const proj of reg) {
@@ -1207,6 +1421,10 @@ function runDoctor(target) {
     if (!isWorkspace(proj.path)) { console.log('  ⚠ not an initialised workspace (stale registry entry?) — skipping'); warns++; continue; }
     const schema = readWorkspaceSchema(path.join(proj.path, '.tcgstackflow', 'config.yaml'));
     if (schema < LATEST_SCHEMA) { console.log(`  ⚠ workspace_schema ${schema} < ${LATEST_SCHEMA} — run \`geekstackflow upgrade\``); warns++; }
+    // ADR 0039 — deterministic wiki-structure check. Runs ALWAYS (pure fs; independent of qmd).
+    const w = reportWikiFindings(checkWikiStructure(path.join(proj.path, '.tcgstackflow', 'wiki')), { limit: wikiOnly ? 100 : 8 });
+    fails += w.fails; warns += w.warns;
+    if (wikiOnly) continue; // structure-only — skip the qmd realization checks
     if (!qmdVer.ok) { console.log('  – qmd unavailable → index.md fallback in effect'); continue; }
     // ADR 0038 — each project must have its OWN local index, else it shares (and collides on) the global one.
     const hasLocal = fs.existsSync(path.join(proj.path, '.qmd'));
@@ -1284,7 +1502,7 @@ async function main() {
   }
 
   if (args.doctor) {
-    runDoctor(args.target);
+    runDoctor(args.target, { wikiOnly: args.wiki });
     return;
   }
 
@@ -1574,6 +1792,7 @@ module.exports = {
   readProjectRegistry, writeProjectRegistry, registerProject, isWorkspace, REGISTRY_PATH,
   reportDriftFromTemplate, adapterDrifted, reportWorkspaceDrift,
   parseQmdCollectionShow, parseQmdStatus, parseDeclaredCollections, expectedCollectionPath, diagnoseCollection, runDoctor,
+  parseWikiFrontmatter, parseWikiPage, diagnoseWiki, checkWikiStructure,
   TOOL_VERSION, LATEST_SCHEMA, MIGRATIONS,
 };
 

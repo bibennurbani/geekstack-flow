@@ -21,6 +21,8 @@ You are surveying the entire wiki and producing a report. Lint never edits pages
 
 ### Procedure
 
+**Run the deterministic checks first (ADR 0039).** Before the semantic pass, run `geekstackflow doctor --wiki` in the workspace. It computes the **mechanical** detectors from the files — 3 (orphans), 6 (broken/ambiguous wikilinks), 7 (missing summary/lead), 8 (required frontmatter fields + kind-tag taxonomy + tag-sprawl), 9 (~900-token chunking), 13 (Map-of-Content reachability). Fold its findings into the report **verbatim — do not re-derive them by eye** (eyeballing is how chunk-size drifted). Then run the **judgment** detectors it does *not* compute: 1 (contradictions), 4 (concept-without-page), 5 (missing cross-references — a prose mention of another page's title without a `[[link]]`), 10 (synonyms), 11 (near-duplicate pages), 12 (resolved-but-unapplied), and 8's *near-duplicate-tags* half — plus the one call no checker can make: *is this page actually informational for a future AI session, or structurally-valid but empty?*
+
 1. **Build the wikilink graph.** Walk every `.md` file under `wiki/` **including `adr/`** — ADRs are walked for the broken-wikilink check (detector 6), since qmd uses paths as IDs and a rotted link inside an ADR breaks retrieval. ADRs are **exempt from the contradiction (1), orphan (3), and missing-cross-reference (5) detectors**: a superseded ADR legitimately disagrees with a later one, and ADRs are point-in-time, sequentially-numbered records reached via the `adr/` directory + the README — not via inbound wikilinks. For each page, record:
    - Outbound `[[wikilinks]]`
    - `aliases` and `title` from frontmatter

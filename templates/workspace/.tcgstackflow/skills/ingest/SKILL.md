@@ -55,7 +55,7 @@ You are folding a Raw source into the wiki. The procedure is **log-first** — t
    - Never delete. Re-ingest with new context must remain possible.
 8. **Finalise the `log.md` entry.** Replace the proposed file lists with the actual file lists after changes are applied. Bump the touched pages' frontmatter and `wiki/index.md` if pages were added/removed/renamed.
 9. **Schema doc co-evolution.** If this ingest introduced a new convention (a renamed page, a new agent role, a new skill, a new project-specific governance rule), update `tools/claude/CLAUDE.md` and `tools/codex/AGENTS.md` *in the same ingest*. Don't leave the schema docs out of sync.
-10. **Re-embed the wiki search index.** Run an incremental `qmd embed` so qmd reflects the new/changed pages (the Ingester is the only wiki writer; readers rely on a fresh index). Refreshes the `docs/` collection too. If qmd is unavailable, note it — `index.md` stays the fallback.
+10. **Gate on structure, then re-embed (ADR 0039).** Before embedding, run `geekstackflow doctor --wiki` in the workspace and **fix any structural finding on the pages you just wrote** — missing `summary`, a section over ~900 tokens with no sub-heading, an off-taxonomy/absent kind tag, a broken `[[wikilink]]`. A page that fails the structure check retrieves poorly, so catch it at write-time rather than leaving it for a future Lint. Then run an incremental `qmd embed` so qmd reflects the new/changed pages (the Ingester is the only wiki writer; readers rely on a fresh index). Refreshes the `docs/` collection too. If qmd is unavailable, note it — `index.md` stays the fallback.
 
 ### Pull-digest ingest (git pull → wiki)
 

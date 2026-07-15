@@ -42,4 +42,4 @@ If any of the three is missing, skip the ADR.
 ## Linked from
 
 - [[../index]]
-- [[../../governance.md]] for risk-level taxonomy
+- [governance.md](../../governance.md) for risk-level taxonomy
