@@ -563,15 +563,24 @@ function parseYamlBlock(block) {
   }
   return out;
 }
+// Roles append their own headers — the Coder's `### ENTRY START`, plus `### REVIEW START`
+// (reviewer), `### TEST START` (tester) and `### WEBTEST START` (web-test, ADR 0041). Splitting on
+// ENTRY alone did NOT merely hide the others: `parseYamlBlock` skips the `### ` line and keeps
+// reading top-level keys, so a trailing REVIEW/TEST/WEBTEST block was folded into the *preceding*
+// ENTRY and overwrote its `timestamp`/`author` — the Cockpit showed one entry attributed to the
+// wrong author at the wrong time. Split on any `### {KIND} START` header and tag non-ENTRY
+// entries with `kind` (ENTRY objects keep their exact previous shape).
 function parseTaskLogTimeline(text) {
   if (!text) return [];
   const logIdx = text.search(/^##\s+Implementation Log/m);
   const scope = logIdx >= 0 ? text.slice(logIdx) : text;
-  const parts = scope.split(/^###\s+ENTRY START\s*$/m);
+  const parts = scope.split(/^###\s+([A-Z][A-Z0-9_]*)\s+START\s*$/m); // capture ⇒ [pre, kind, body, …]
   const entries = [];
-  for (let k = 1; k < parts.length; k++) {
-    const obj = parseYamlBlock(parts[k]);
-    if (Object.keys(obj).length) entries.push(obj);
+  for (let k = 1; k + 1 < parts.length; k += 2) {
+    const kind = parts[k];
+    const obj = parseYamlBlock(parts[k + 1]);
+    if (!Object.keys(obj).length) continue;
+    entries.push(kind === 'ENTRY' ? obj : { ...obj, kind: kind.toLowerCase() });
   }
   return entries;
 }

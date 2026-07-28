@@ -12,7 +12,7 @@ How the user likes to work, regardless of project.
 ## Task discipline
 
 - **No code before `PLANNED`.** A task without acceptance criteria is not ready to be implemented.
-- **Two-file rule is strict.** `TASK {ID}.md` + `TASK details {ID}.md`. Never split per subtask.
+- **Two-file rule is strict.** `TASK {ID}.md` + `TASK details {ID}.md`. Never split per subtask. Sole exception: `{ID} web-test-summary.md` when a browser web test ran (ADR 0041).
 - **Grill before plan.** When acceptance criteria are unclear, interview first — never invent.
 - **One subtask at a time** during implementation. Finish, log, then move on.
 

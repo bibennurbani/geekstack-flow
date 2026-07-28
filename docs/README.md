@@ -15,7 +15,7 @@ Start here.
 - **[../README.md](../README.md)** — project overview, command & skill tables.
 - **[../CONTEXT.md](../CONTEXT.md)** — the project's domain glossary (Wiki, Raw, Ingest, Agent, Skill, Command, Cockpit, Orchestrator, …).
 - **[../CHANGELOG.md](../CHANGELOG.md)** — what changed, by version.
-- **[adr/](adr/)** — 34 Architecture Decision Records (the *why* behind every design choice).
+- **[adr/](adr/)** — 42 Architecture Decision Records (the *why* behind every design choice).
 
 ## One-paragraph mental model
 

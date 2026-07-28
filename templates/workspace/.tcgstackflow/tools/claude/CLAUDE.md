@@ -19,7 +19,7 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 | `planner` | "plan ES-1234", "let's design …", "we need a task for …" | [agents/planner.md](../../agents/planner.md) |
 | `coder` | "implement ES-1234", "work on the planned task", "start coding" | [agents/coder.md](../../agents/coder.md) |
 | `reviewer` | "review the diff", "is this ready?", "check ES-1234" | [agents/reviewer.md](../../agents/reviewer.md) |
-| `tester` | "test ES-1234", "verify this works", "run the E2E", "write a test plan" | [agents/tester.md](../../agents/tester.md) |
+| `tester` | "test ES-1234", "verify this works", "run the E2E", "write a test plan", "web test ES-1234", "check this in the browser" | [agents/tester.md](../../agents/tester.md) |
 | `ingester` | "ingest ES-1234", "fold this into the wiki", "ingest raw/" | [agents/ingester.md](../../agents/ingester.md) |
 | `refactorer` | "refactor X", "best-practice refactor of …", "/tcgflow-refactor" | [agents/refactorer.md](../../agents/refactorer.md) |
 
@@ -29,7 +29,7 @@ Each profile lists which files it reads, which it writes, which skills it uses, 
 
 ## Skills available
 
-Under `.tcgstackflow/skills/`. Seventeen starter skills ship with V1:
+Under `.tcgstackflow/skills/`. Eighteen starter skills ship with V1:
 
 | Skill | Role | Purpose |
 |---|---|---|
@@ -40,6 +40,7 @@ Under `.tcgstackflow/skills/`. Seventeen starter skills ship with V1:
 | [`update-task-log`](../../skills/update-task-log/SKILL.md) | coder | Append YAML entry to `TASK {ID}.md` |
 | [`review-diff`](../../skills/review-diff/SKILL.md) | reviewer | Walk diff against acceptance + governance |
 | [`verify`](../../skills/verify/SKILL.md) | tester | Build a test plan, run tests/E2E/app, record a pass/fail verdict |
+| [`web-test`](../../skills/web-test/SKILL.md) | tester / standalone | Drive a real browser (Claude in Chrome) for UI criteria the suites can't settle — interactive sessions only |
 | [`ingest`](../../skills/ingest/SKILL.md) | ingester | Fold a Raw source into the wiki, log-first |
 | [`lint-wiki`](../../skills/lint-wiki/SKILL.md) | ingester | Periodic health-check of the wiki |
 | [`audit-workspace`](../../skills/audit-workspace/SKILL.md) | ingester / standalone | Cross-check agents ↔ skills ↔ codebase drift |
@@ -69,10 +70,11 @@ You may be launched headlessly by the **Cockpit Orchestrator** (`geekstackflow u
 - **You own the task-file writes (D1).** Self-log via `update-task-log` and advance `Status:` to `IN_REVIEW` when done — that ends the Orchestrator's continuation loop. Otherwise the server re-nudges your session (`--resume`, up to 6 iterations), then a safety-net advances Status with `author: orchestrator`.
 - **HIGH/CRITICAL approvals are machine-routed** through the `mcp__tcgflow_governance__approve` permission-prompt tool and the Cockpit's approval cards (ADR 0027) — not the inline-chat recipe used in manual sessions. Same recipe content, different transport.
 - Each orchestrated run leaves an immutable record at `.tcgstackflow/runs/{task-id}/{run-id}.md` (tokens + `session_id` in frontmatter); the Cockpit's Session Report and `/tcgflow-session-report` build $-cost post-mortems from those records (ADR 0034).
+- **No browser.** Don't drive Claude in Chrome from an orchestrated run — browser tools are outside the run's `--allowedTools` list and classify HIGH fail-safe, so every click raises an approval card and blocks the run. Never claim a UI pass from an orchestrated run: record the criterion as *unverified — browser verification required* and name `/tcgflow-web-test {ID}` as the follow-up (ADR 0041).
 
 ## Strict invariants
 
-- **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`. Append to the existing two files.
+- **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`. Append to the existing two files. The **one exception** is the Tester's `{ID} web-test-summary.md` (ADR 0041) — a single fixed-name browser-evidence report per task, appended to across runs and referenced from the log. It is not a second log and is never split further.
 - **Log-first ingestion.** No wiki page edit happens before the `wiki/log.md` entry is drafted. Locked entry prefix: `## [YYYY-MM-DD] {operation} | {title}`.
 - **New pages and deletions are gated.** Existing-page updates flow; structural wiki changes always ask for explicit approval.
 - **Raw is immutable.** Codebase, completed task files, MCP outputs — read-only. Never edit Raw.

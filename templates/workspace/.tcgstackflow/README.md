@@ -13,12 +13,12 @@ This folder is the project's AI workflow workspace. Any AI coding tool (Claude C
 | Folder | What lives here | Who writes it |
 |---|---|---|
 | `wiki/` | The LLM-wiki — distilled project knowledge in flat Obsidian-style Markdown. The AI's primary context source. | AI maintains; user reviews. |
-| `tasks/` | Task tracking. Each task is exactly two files: `TASK {ID}.md` (log) + `TASK details {ID}.md` (plan). Lifecycle is `active/ → completed/ → archive/`. | AI maintains during work; user starts tasks. |
+| `tasks/` | Task tracking. Each task is exactly two files: `TASK {ID}.md` (log) + `TASK details {ID}.md` (plan) — plus, only if a web test ran, `{ID} web-test-summary.md` (ADR 0041). Lifecycle is `active/ → completed/ → archive/`. | AI maintains during work; user starts tasks. |
 | `raw/` | Staging for external files dropped in for ingestion (PDFs, exported docs, screenshots). Files move to `raw/archived/` after ingest. | User drops in; AI moves to archive. |
 | `prompts/{task-id}/` | Cross-tool handoff prompts. Claude writes a prompt; user pastes it into another AI tool. | AI writes; user moves to other tools. |
 | `agents/` | Six role profiles: `planner`, `coder`, `reviewer`, `tester`, `ingester`, `refactorer`. Tool-agnostic Markdown. | Co-evolved with the project. |
 | `skills/` | Atomic capabilities in Claude Code `SKILL.md` format. Drop-in compatible with mattpocock-style skills. | Templates updated; project may add custom. |
-| `commands/` | Eighteen tool-portable `tcgflow-*` workflow commands (thin dispatchers onto skills/agents). | Generated/refreshed by init; do not hand-edit. |
+| `commands/` | Nineteen tool-portable `tcgflow-*` workflow commands (thin dispatchers onto skills/agents). | Generated/refreshed by init; do not hand-edit. |
 | `runs/` | Immutable Orchestrator run records — one `runs/{task-id}/{run-id}.md` per orchestrated run, with token/session frontmatter (schema 4). | The Cockpit Orchestrator writes; never edited. |
 | `tools/` | **Generated** per-tool adapters. Do not edit. | The init/sync script generates. |
 | `governance.md` | Risk levels, permission-request recipe, and project-specific rules. | User edits the project-specific section. |

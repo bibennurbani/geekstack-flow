@@ -16,9 +16,9 @@ This document is the written companion to the slide deck. It's pitched for a **m
 | **Version** | v0.3.0 — the "Orchestrator" release |
 | **Runtime** | Pure Node ≥ 22, **0 runtime CLI dependencies** (qmd search adds ~2 GB of local models) |
 | **Works with** | Claude Code, Codex, GitHub Copilot — one workflow, any tool |
-| **The workspace** | `6` agent roles · `17` skills · `18` `tcgflow-*` commands · `4` risk levels · workspace schema `6` |
+| **The workspace** | `6` agent roles · `18` skills · `19` `tcgflow-*` commands · `4` risk levels · workspace schema `7` |
 | **The Cockpit** | Local browser dashboard at `127.0.0.1:4729` — zero-dependency Node `http` server (~2,590 lines) + a single Vue 3 SPA (`App.vue`, 1,331 lines) |
-| **Maturity** | 3 releases in under a month (0.1.0 → 0.3.0), **36 ADRs**, **167** passing tests |
+| **Maturity** | 3 releases in under a month (0.1.0 → 0.3.0), **42 ADRs**, **236** passing tests |
 | **Architecture** | No database — plain files are the single source of truth; nothing leaves your machine |
 
 ---
@@ -78,13 +78,13 @@ A subtle but important point: the rule was never "read-only," it was "no second 
 your-project/
 ├─ .tcgstackflow/            ← per-project workspace (an Obsidian vault)
 │  ├─ agents/                6 role profiles (Markdown)
-│  ├─ skills/                17 atomic capabilities (SKILL.md)
-│  ├─ commands/              18 tcgflow-* workflow dispatchers
+│  ├─ skills/                18 atomic capabilities (SKILL.md)
+│  ├─ commands/              19 tcgflow-* workflow dispatchers
 │  ├─ tasks/                 active/ → completed/ → archive/
 │  ├─ wiki/                  the LLM-wiki (memory) + log.md + index.md
 │  ├─ runs/                  runs/{task-id}/{run-id}.md  (per-run audit)
 │  ├─ governance.md          4 risk levels + project rules
-│  └─ config.yaml            workspace_schema: 6
+│  └─ config.yaml            workspace_schema: 7
 └─ tools/ → CLAUDE.md · AGENTS.md · .github/copilot-instructions.md
                               (generated adapters, all → .tcgstackflow/)
 
@@ -106,7 +106,7 @@ your-project/
 
 ### The two-file task system
 
-Every task is **exactly two files** — non-negotiable, never per-subtask files:
+Every task is **exactly two files** — non-negotiable, never per-subtask files (the sole exception is `{ID} web-test-summary.md`, written only when a browser web test ran — ADR 0041):
 
 - **`TASK details {ID}.md`** — the plan: subtasks + sizes + acceptance criteria.
 - **`TASK {ID}.md`** — an append-only YAML implementation log: `timestamp`, `author`, `summary`, `files`, `why`, `validation`, `tags`.
@@ -198,14 +198,14 @@ Governance went from an informally-followed doc (ADR 0008) to **machine-enforced
 ### Maturity — three releases, disciplined decisions
 
 - **3 releases in under a month:** 0.1.0 (2026-05-31) → 0.2.0 (2026-06-01) → 0.3.0 (2026-06-25, the Orchestrator pivot) — with active development since.
-- **36 ADRs** — every substantive call recorded; a living log that openly amends and reverses itself.
+- **42 ADRs** — every substantive call recorded; a living log that openly amends and reverses itself.
 - **Evidence-first:** the wiki structure, task layout, and three-bucket model were reverse-engineered from real working AI workspaces, not theory.
 - **Complexity deferred until earned:** manual handoff before automated, sequential before parallel, read-only before Orchestrator.
 - **Non-destructive upgrades:** `.bak` backups, a drift report, and a CRITICAL gate before deleting old scaffolding.
 
 ### Test rigor — the safety story is tested
 
-- **167** `node --test` tests (167 pass, 0 fail) across the server/CLI · **18** test files · **2,902** test lines.
+- **236** `node --test` tests (236 pass, 0 fail) across the server/CLI · **23** test files · **3,722** test lines.
 - Two runners: `node --test` (server/CLI) + **vitest** (the Vue SPA).
 - **Governance is the most-tested area** — 4 dedicated files (approvals, classify, integration, MCP).
 - The largest test file exercises the highest-risk path: `run-executor.test.cjs` (~42 KB — the continuation loop).
@@ -237,7 +237,7 @@ geekstackflow ui        # open the Cockpit at 127.0.0.1:4729, then press ▶ Run
 | **`.tcgstackflow/`** | The per-project workspace folder `init` scaffolds (agents, skills, commands, tasks, wiki, runs, governance.md, config.yaml) — doubling as an Obsidian vault. |
 | **LLM-wiki** | The AI-maintained, token-efficient project memory: flat Obsidian-flavoured Markdown with `[[wikilinks]]` and a Map-of-Content `index.md`, following Karpathy's pattern. Only the Ingester writes to it. |
 | **qmd** | The mandatory hybrid wiki-search layer (keyword + vector + LLM re-rank, ~2 GB local models) every agent uses to find pages; complements `index.md`. |
-| **Two-file task system** | Every task is exactly two files — a plan (`TASK details {ID}.md`) and an append-only YAML log (`TASK {ID}.md`); never split per-subtask. |
+| **Two-file task system** | Every task is exactly two files — a plan (`TASK details {ID}.md`) and an append-only YAML log (`TASK {ID}.md`); never split per-subtask. One exception: `{ID} web-test-summary.md` when a browser web test ran (ADR 0041). |
 | **Six agent roles** | planner → coder → reviewer → tester → ingester (linear) plus an on-demand Refactorer peer to the Coder that re-enters at Review. |
 | **Reviewer vs Tester** | Two distinct gates: the Reviewer is static ("is the code right?"); the Tester is dynamic ("does it work?"). |
 | **Task lifecycle** | DRAFT → PLANNED → IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED, with BLOCKED as a side state; status drives which agent acts next. |
@@ -251,7 +251,7 @@ geekstackflow ui        # open the Cockpit at 127.0.0.1:4729, then press ▶ Run
 | **Session report** | A per-task post-mortem parsing the real Claude Code session JSONL into a token trace and a dollar-cost waterfall — the one place $ cost is shown; never fabricated. |
 | **Workspace status vs Jira status** | Two statuses per task — our lifecycle vs the client's Jira business state — with the Cockpit flagging drift; Jira arrives via a credential-free local cache. |
 | **Pull digest** | A Raw file the git hook writes after every `git pull` so the Ingester keeps the wiki current automatically. |
-| **ADR** | Architecture Decision Record — 36 of them trace the tool's evidence-first evolution; later ADRs openly amend earlier ones. |
+| **ADR** | Architecture Decision Record — 42 of them trace the tool's evidence-first evolution; later ADRs openly amend earlier ones. |
 
 ---
 
@@ -264,12 +264,12 @@ All figures verified against the working tree on 2026-07-14:
 | Version | 0.3.0 | `package.json` |
 | Runtime | Node ≥ 22.0.0 | `package.json` engines |
 | Agent roles | 6 | `templates/workspace/.tcgstackflow/agents/` |
-| Skills | 17 | `templates/workspace/.tcgstackflow/skills/` |
-| Commands | 18 | `templates/workspace/.tcgstackflow/commands/` |
-| Workspace schema | 6 | `init.js` `LATEST_SCHEMA = 6` |
-| ADRs | 36 | `docs/adr/*.md` (up to 0036) |
-| Tests | 167 pass, 0 fail | `node --test` (the CHANGELOG's "62" is **stale**) |
-| Test files / lines | 18 files / 2,902 lines | `test/` |
+| Skills | 18 | `templates/workspace/.tcgstackflow/skills/` |
+| Commands | 19 | `templates/workspace/.tcgstackflow/commands/` |
+| Workspace schema | 7 | `init.js` `LATEST_SCHEMA = 7` |
+| ADRs | 42 | `docs/adr/*.md` (up to 0042) |
+| Tests | 236 pass, 0 fail | `node --test` |
+| Test files / lines | 23 files / 3,722 lines | `test/` |
 | Cockpit server | zero-dependency built-in Node `http`, ~2,590 lines, 12 `.cjs` files | `ui/server/` (**not** Hono, despite ADR 0022) |
 | Cockpit SPA | Vue 3 + Vite, `App.vue` = 1,331 lines | `ui/src/App.vue`, `ui/package.json` |
 | Cockpit port | `127.0.0.1:4729` | `ui/server/index.cjs` `DEFAULT_PORT`; binds localhost only |

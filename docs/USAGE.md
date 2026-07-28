@@ -32,8 +32,8 @@ your-project/
     ├── config.yaml      # project config: stack, sub-projects, Tempo, tools, version stamp
     ├── governance.md    # risk levels + permission recipe + your project rules
     ├── agents/          # planner, coder, reviewer, tester, ingester, refactorer (role profiles)
-    ├── skills/          # 17 workflow skills (SKILL.md each)
-    ├── commands/        # 18 tcgflow-* command dispatchers
+    ├── skills/          # 18 workflow skills (SKILL.md each)
+    ├── commands/        # 19 tcgflow-* command dispatchers
     ├── wiki/            # the LLM wiki (index.md, log.md, project-overview.md, …) + adr/
     ├── tasks/           # README + active/ completed/ archive/ weekly/  (+ jira-cache.json)
     ├── runs/            # per-task run transcripts written by the Cockpit Orchestrator ({task-id}/{run-id}.md)
@@ -59,7 +59,7 @@ Each task is **exactly two files** in `tasks/active/{ID}/`:
 - `TASK {ID}.md` — the implementation **log** (append-only YAML entries: what changed, by whom, why, validation).
 - `TASK details {ID}.md` — the **plan** (overview, subtasks, acceptance criteria, status).
 
-> **The two-file rule is strict.** Never split into `TASK {ID}-FE-1.md` etc. Append to the two files. This keeps task history machine-readable.
+> **The two-file rule is strict.** Never split into `TASK {ID}-FE-1.md` etc. Append to the two files. This keeps task history machine-readable. (One exception: `{ID} web-test-summary.md`, written only when a browser web test ran — ADR 0041.)
 
 ### Plan — `/tcgflow-plan ES-1234`
 
@@ -94,6 +94,34 @@ The **Tester** confirms it *works*:
 - Pass → status `VALIDATED`. Fail → `IN_PROGRESS` (back to Coder).
 
 Reviewer checks the code is *right*; Tester checks it *works*. The Coder still writes unit tests inline; the Tester owns end-to-end verification.
+
+### Web test — `/tcgflow-web-test ES-1234 [environment / URL / notes]`
+
+For the acceptance criteria a green suite can't settle — the visual and interaction-level ones — drive a **real browser** (Claude in Chrome). Everything after the command is free-form context:
+
+```
+/tcgflow-web-test ES-1234
+/tcgflow-web-test ES-1234 on uat https://app.example-uat.internal/ — I'm already signed in via Microsoft
+/tcgflow-web-test                     # no ID → scope is your uncommitted diff
+```
+
+It reads the task's two files, the Jira ticket (if the ID is Jira-keyed), and the wiki (`wiki-search`), then intersects the **acceptance criteria** with the **diff** to get a short list of surfaces to visit — and clicks through them, reading the **console and network** on each.
+
+**Edge cases are required, not optional.** Every criterion gets at least one edge check off a fixed checklist — the negative of the criterion (deselect what you just selected), empty state, boundaries, invalid input, cancel/Esc, double-submit, reload, deep-link, browser-back, error path, idempotency, narrow viewport, other roles. Whatever it skips is listed as *not verified* rather than quietly dropped, because happy-path-only is how a browser test reports green on a broken feature.
+
+It leaves two artifacts:
+
+- **`{ID} web-test-summary.md`, in the task folder** — the complete executed test plan (every check, edges included, with results) and one section per bug: numbered **steps to reproduce from a clean state**, expected vs actual, console/network evidence, how often it reproduced, and whether it's in-scope or pre-existing. One fixed-name file per task, appended across runs. This is the sanctioned exception to the two-file rule (ADR 0041) — evidence, not a second log.
+- **A `### WEBTEST START` entry in `TASK {ID}.md`** — counts, verdict, a line per bug, what's unverified, and `summary_file:` pointing at the above. The log stays canonical.
+
+Two modes, and the difference matters:
+
+- **Gate** — the task is `IN_TEST` *and* the pass covered every outstanding criterion → it *is* the Tester's dynamic gate: pass → `VALIDATED`, fail → `IN_PROGRESS`.
+- **Exploratory** — anything else (WIP, partial coverage, a diff-only scope) → findings only, **task status unchanged**.
+
+Guardrails worth knowing before you point it at a real system: browsing a shared environment you named in the invocation is fine, **mutating one is HIGH** (approval first, cleanup logged), production writes are never allowed. It never types credentials — you sign in, it continues from your session — and it never puts real personal data into a form or copies customer data out of a page into your files.
+
+**Interactive sessions only.** Not because a headless run *can't* reach a browser — because it would crawl: browser tools sit outside an orchestrated run's `--allowedTools` list and classify HIGH fail-safe, so every click raises an approval card. An orchestrated Tester run therefore marks browser-only criteria *unverified — browser verification required* instead of guessing. Optional: put your environment URLs under `web_test.environments` in `config.yaml` so `on uat` resolves without re-typing. (ADR 0041.)
 
 ### Ingest — `/tcgflow-ingest ES-1234`
 
@@ -310,7 +338,7 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 ```
 
 - runs **layout migrations** keyed off `workspace_schema` (schema **4** adds the `runs/` area and the `config.yaml` `orchestrator:` block the Cockpit Orchestrator uses),
-- **refreshes tool-owned files** — `tcgflow-*` commands (workspace + `~/.claude/skills/`) and agent profiles are updated to the latest templates; any drifted file is backed up to `{name}.bak` first,
+- **refreshes tool-owned files** — `tcgflow-*` commands (workspace + `~/.claude/skills/`), agent profiles, the workspace README, and the tool-owned **head** of each adapter, including the copy at your project root that your AI reads (ADR 0042); your below-marker overrides survive, and any drifted file is backed up to `{name}.bak` first,
 - **additively adds new skills** (absent → added; existing → never overwritten),
 - **prints a drift report** — the existing skills + tool adapters that differ from the new templates (the files it won't auto-merge),
 - re-registers the project and stamps the version.
@@ -359,13 +387,13 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 | VALIDATED | ingester |
 | INGESTED / COMPLETED | — |
 
-### Commands (18)
+### Commands (19)
 
-`init` · `upgrade` · `migrate` · `plan` · `code` · `review` · `test` · `ingest` · `refactor` · `sync-jira` · `lint` · `audit` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `timesheet-generate` · `timesheet-submit` · `session-report` — all prefixed `/tcgflow-`. Full table in [../README.md](../README.md#commands-reference).
+`init` · `upgrade` · `migrate` · `plan` · `code` · `review` · `test` · `web-test` · `ingest` · `refactor` · `sync-jira` · `lint` · `audit` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `timesheet-generate` · `timesheet-submit` · `session-report` — all prefixed `/tcgflow-`. Full table in [../README.md](../README.md#commands-reference).
 
-### Skills (17)
+### Skills (18)
 
-`grill-task` · `plan-task` · `update-task-log` · `review-diff` · `verify` · `ingest` · `lint-wiki` · `audit-workspace` · `migrate-to-gsf` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `sync-jira` · `generate-timesheet` · `submit-timesheet` · `wiki-search` · `best-practice-refactor`. Full table in [../README.md](../README.md#skills-reference).
+`grill-task` · `plan-task` · `update-task-log` · `review-diff` · `verify` · `web-test` · `ingest` · `lint-wiki` · `audit-workspace` · `migrate-to-gsf` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `sync-jira` · `generate-timesheet` · `submit-timesheet` · `wiki-search` · `best-practice-refactor`. Full table in [../README.md](../README.md#skills-reference).
 
 ### CLI flags
 
@@ -382,4 +410,4 @@ geekstackflow --help
 
 ### Design rationale
 
-Every decision is recorded in [adr/](adr/) (34 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).
+Every decision is recorded in [adr/](adr/) (42 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).

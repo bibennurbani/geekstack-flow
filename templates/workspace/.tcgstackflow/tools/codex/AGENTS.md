@@ -19,7 +19,7 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 | `planner` | "plan ES-1234", "design …", "task for …" | [agents/planner.md](.tcgstackflow/agents/planner.md) |
 | `coder` | "implement ES-1234", "start coding" | [agents/coder.md](.tcgstackflow/agents/coder.md) |
 | `reviewer` | "review the diff", "is this ready?" | [agents/reviewer.md](.tcgstackflow/agents/reviewer.md) |
-| `tester` | "test ES-1234", "verify this works", "run the E2E" | [agents/tester.md](.tcgstackflow/agents/tester.md) |
+| `tester` | "test ES-1234", "verify this works", "run the E2E", "web test ES-1234", "check it in the browser" | [agents/tester.md](.tcgstackflow/agents/tester.md) |
 | `ingester` | "ingest ES-1234", "fold into wiki" | [agents/ingester.md](.tcgstackflow/agents/ingester.md) |
 | `refactorer` | "refactor X", "/tcgflow-refactor" | [agents/refactorer.md](.tcgstackflow/agents/refactorer.md) |
 
@@ -37,7 +37,7 @@ You may be invoked because **Claude wrote the plan** and **you are executing it*
 
 ## Skills
 
-Under `.tcgstackflow/skills/`. Same seventeen starter skills as Claude — the format is portable (`SKILL.md` with frontmatter `name` and `description`). Read them as if they were specifications written for you.
+Under `.tcgstackflow/skills/`. Same eighteen starter skills as Claude — the format is portable (`SKILL.md` with frontmatter `name` and `description`). Read them as if they were specifications written for you.
 
 | Skill | Used by | One-line purpose |
 |---|---|---|
@@ -48,6 +48,7 @@ Under `.tcgstackflow/skills/`. Same seventeen starter skills as Claude — the f
 | `review-diff` | reviewer | Walk diff against acceptance + governance |
 | `best-practice-refactor` | coder / refactorer | Cleanup pass (Coder, diff-scoped) + broad behavior-preserving refactor (Refactorer) |
 | `verify` | tester | Build a test plan, run tests/E2E/app, record pass/fail verdict |
+| `web-test` | tester / standalone | Drive a real browser for UI criteria the suites can't settle — needs an interactive session with a browser-automation MCP |
 | `sync-jira` | any | Fetch Jira status of tasks via Atlassian MCP → `tasks/jira-cache.json` |
 | `ingest` | ingester | Fold a Raw source into the wiki |
 | `lint-wiki` | ingester | Periodic health-check of the wiki |
@@ -61,12 +62,13 @@ Under `.tcgstackflow/skills/`. Same seventeen starter skills as Claude — the f
 
 ## Commands (invocation in this tool)
 
-The workspace ships eighteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
+The workspace ships nineteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
 
 - *"plan ES-1234"*, *"design the new payment flow"* → invoke the `tcgflow-plan` workflow → adopt planner role + use `grill-task` and `plan-task` skills
 - *"implement ES-1234"*, *"start coding"* → `tcgflow-code` workflow → coder role + `update-task-log`
 - *"review the diff"*, *"is ES-1234 ready?"* → `tcgflow-review` workflow → reviewer role + `review-diff`
 - *"test ES-1234"*, *"verify this works"*, *"run the E2E"* → `tcgflow-test` workflow → tester role + `verify`
+- *"web test ES-1234"*, *"check this in the browser"*, *"click through it on UAT"* → `tcgflow-web-test` workflow → tester role + `web-test` (needs a browser-automation MCP in an interactive session)
 - *"refactor X"*, *"do a best-practice refactor of …"* → `tcgflow-refactor` workflow → adopt refactorer role + `best-practice-refactor` skill
 - *"sync Jira"*, *"refresh Jira status"* → `tcgflow-sync-jira` workflow → `sync-jira` skill (writes `tasks/jira-cache.json`)
 - *"ingest ES-1234"*, *"fold this into the wiki"* → `tcgflow-ingest` workflow → ingester role + `ingest`
@@ -86,7 +88,7 @@ When you (Codex) receive any of these phrases, read the relevant `.tcgstackflow/
 
 ## Strict invariants
 
-- **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never split.
+- **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never split. The **one exception** is the Tester's `{ID} web-test-summary.md` (ADR 0041) — a single fixed-name browser-evidence report per task, appended to across runs and referenced from the log. It is not a second log and is never split further.
 - **Log-first ingestion.** No wiki page edit happens before the `wiki/log.md` entry is drafted.
 - **New pages and deletions are gated.** Existing-page updates flow; structural wiki changes always ask.
 - **Raw is immutable.** Codebase, completed task files, MCP outputs — read-only.

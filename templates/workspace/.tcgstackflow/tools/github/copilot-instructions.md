@@ -52,7 +52,7 @@ Same six as Claude / Codex — defined in `.tcgstackflow/agents/`:
 | `planner` | "plan ES-1234", "design …", "task for …" | `.tcgstackflow/agents/planner.md` |
 | `coder` | "implement ES-1234", "start coding" | `.tcgstackflow/agents/coder.md` |
 | `reviewer` | "review the diff", "is this ready?" | `.tcgstackflow/agents/reviewer.md` |
-| `tester` | "test ES-1234", "verify this works", "run the E2E" | `.tcgstackflow/agents/tester.md` |
+| `tester` | "test ES-1234", "verify this works", "run the E2E", "web test ES-1234" | `.tcgstackflow/agents/tester.md` |
 | `ingester` | "ingest ES-1234", "fold into wiki" | `.tcgstackflow/agents/ingester.md` |
 | `refactorer` | "refactor X", "/tcgflow-refactor" | `.tcgstackflow/agents/refactorer.md` |
 
@@ -75,7 +75,7 @@ These complement — they do not duplicate — the agent profiles in `.tcgstackf
 
 Two locations:
 
-- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Seventeen ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `verify`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `task-from-snyk`, `task-from-cypress`, `task-from-datadog`, `sync-jira`, `generate-timesheet`, `submit-timesheet`, `wiki-search`, `best-practice-refactor`).
+- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Eighteen ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `verify`, `web-test`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `task-from-snyk`, `task-from-cypress`, `task-from-datadog`, `sync-jira`, `generate-timesheet`, `submit-timesheet`, `wiki-search`, `best-practice-refactor`).
 - **Tech skills** live at `~/.tcgstackflow/skills/` — global library, cross-project. Vue, Vuetify, Pinia, Cypress, .NET, Pulumi, Auth0, etc. Install with `cd ~/.tcgstackflow/skills && npx skills add <owner/repo@skill>`.
 
 Both locations are readable to Copilot. Tech-skill content is referenced from project guidance but not duplicated into the project.
@@ -92,7 +92,7 @@ Both locations are readable to Copilot. Tech-skill content is referenced from pr
 
 ## Commands (invocation in Copilot)
 
-The workspace ships eighteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
+The workspace ships nineteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
 
 | Workflow | Trigger phrases |
 |---|---|
@@ -100,6 +100,7 @@ The workspace ships eighteen workflow commands at `.tcgstackflow/commands/{name}
 | `tcgflow-code` | "implement ES-1234", "start coding the planned task" |
 | `tcgflow-review` | "review the diff", "is ES-1234 ready?" |
 | `tcgflow-test` | "test ES-1234", "verify this works", "run the E2E", "write a test plan" |
+| `tcgflow-web-test` | "web test ES-1234", "check this in the browser", "click through it on UAT" |
 | `tcgflow-refactor` | "refactor X", "do a best-practice refactor of …" |
 | `tcgflow-sync-jira` | "sync Jira", "refresh Jira status", "check the Jira status of our tasks" |
 | `tcgflow-ingest` | "ingest ES-1234", "fold this into the wiki" |
@@ -123,7 +124,7 @@ Agents may be launched headlessly by the **Cockpit Orchestrator** (ADR 0032) ins
 
 ## Strict Invariants
 
-- **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`.
+- **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`. The **one exception** is the Tester's `{ID} web-test-summary.md` (ADR 0041) — a single fixed-name browser-evidence report per task, appended to across runs and referenced from the log. It is not a second log and is never split further.
 - **Log-first ingestion.** No wiki page edit happens before the `wiki/log.md` entry is drafted. Locked prefix: `## [YYYY-MM-DD] {operation} | {title}`.
 - **New pages and deletions are gated.** Existing-page updates flow; structural wiki changes always ask.
 - **Raw is immutable.** Codebase, completed task files, MCP outputs — read-only.

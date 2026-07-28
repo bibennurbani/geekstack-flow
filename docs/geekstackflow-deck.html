@@ -403,13 +403,13 @@ pre.tree .c4{color:var(--violet)} pre.tree .cm{color:var(--dim)}
           <pre class="tree"><span class="cm">your-project/</span>
 ├─ <span class="c1">.tcgstackflow/</span>      <span class="cm">per-project (an Obsidian vault)</span>
 │  ├─ <span class="c1">agents/</span>        <span class="cm">6 role profiles</span>
-│  ├─ <span class="c1">skills/</span>        <span class="cm">17 capabilities</span>
-│  ├─ <span class="c1">commands/</span>      <span class="cm">18 tcgflow-*</span>
+│  ├─ <span class="c1">skills/</span>        <span class="cm">18 capabilities</span>
+│  ├─ <span class="c1">commands/</span>      <span class="cm">19 tcgflow-*</span>
 │  ├─ <span class="c1">tasks/</span>         <span class="cm">active→completed→archive</span>
 │  ├─ <span class="c1">wiki/</span>          <span class="cm">the LLM-wiki (memory)</span>
 │  ├─ <span class="c1">runs/</span>          <span class="cm">per-run audit records</span>
 │  ├─ <span class="c1">governance.md</span>  <span class="cm">4 risk levels</span>
-│  └─ <span class="c1">config.yaml</span>    <span class="cm">workspace_schema: 6</span>
+│  └─ <span class="c1">config.yaml</span>    <span class="cm">workspace_schema: 7</span>
 └─ <span class="c4">CLAUDE.md · AGENTS.md · copilot-instructions.md</span>
        <span class="cm">generated adapters → .tcgstackflow/</span>
 
@@ -418,8 +418,8 @@ pre.tree .c4{color:var(--violet)} pre.tree .cm{color:var(--dim)}
           <div>
             <div class="metrics" style="grid-template-columns:repeat(2,1fr)">
               <div><div class="v">6</div><div class="k">agent roles</div></div>
-              <div><div class="v">17</div><div class="k">skills</div></div>
-              <div><div class="v">18</div><div class="k">tcgflow-* commands</div></div>
+              <div><div class="v">18</div><div class="k">skills</div></div>
+              <div><div class="v">19</div><div class="k">tcgflow-* commands</div></div>
               <div><div class="v">4</div><div class="k">risk levels</div></div>
             </div>
             <p class="lead" style="margin-top:16px;font-size:14.5px"><b style="color:var(--text)">Multi-project is automatic:</b> init scans for signal files across <b style="color:var(--sig-2)">9 stacks</b> (JS/TS, .NET, Python, Go, Rust, Ruby, Java, PHP, Pulumi). Find 2+ codebases → per-sub-project test/lint wired, zero config.</p>
@@ -653,13 +653,13 @@ pre.tree .c4{color:var(--violet)} pre.tree .cm{color:var(--dim)}
           <div class="tl now"><div class="ver">0.3.0</div><div class="dt">2026-06-25</div><div class="ds">The Orchestrator pivot — the Cockpit runs agents. Active development since.</div></div>
         </div>
         <ul class="bl tight" style="margin-top:20px">
-          <li><b>36 ADRs</b> — every substantive call recorded; a living log that openly amends and reverses itself.</li>
+          <li><b>42 ADRs</b> — every substantive call recorded; a living log that openly amends and reverses itself.</li>
           <li><b>Evidence-first:</b> wiki structure, task layout, three-bucket model reverse-engineered from real workspaces, not theory.</li>
           <li><b>Complexity deferred until earned:</b> manual before automated, sequential before parallel, read-only before Orchestrator.</li>
           <li>Non-destructive upgrades: <code>.bak</code> backups, a drift report, a CRITICAL gate before deleting old scaffolding.</li>
         </ul>
       </div>
-      <div class="notes-src" hidden>For stakeholders assessing risk, the credibility slide. In under a month it went from a scaffolding tool to a live orchestrator, and the ADR count nearly doubled to 36 — every design call written down. The most credible thing: it's evidence-first — the wiki structure, task layout, three-bucket model were all reverse-engineered from real workspaces. And the ADRs are self-correcting — later ones amend and even reverse earlier ones. That's a living decision log, not aspirational docs.</div>
+      <div class="notes-src" hidden>For stakeholders assessing risk, the credibility slide. In under a month it went from a scaffolding tool to a live orchestrator, and the ADR count more than doubled to 42 — every design call written down. The most credible thing: it's evidence-first — the wiki structure, task layout, three-bucket model were all reverse-engineered from real workspaces. And the ADRs are self-correcting — later ones amend and even reverse earlier ones. That's a living decision log, not aspirational docs.</div>
     </section>
 
     <!-- 19 -->
@@ -669,11 +669,11 @@ pre.tree .c4{color:var(--violet)} pre.tree .cm{color:var(--dim)}
         <h2 class="title">The safety story is tested</h2>
         <div class="two" style="align-items:center">
           <div style="text-align:center">
-            <div class="bignum" style="font-size:clamp(90px,15vw,180px)">167</div>
-            <div class="m-eye" style="font-family:var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ok);font-size:13px">tests · 167 pass · 0 fail</div>
+            <div class="bignum" style="font-size:clamp(90px,15vw,180px)">236</div>
+            <div class="m-eye" style="font-family:var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ok);font-size:13px">tests · 236 pass · 0 fail</div>
           </div>
           <ul class="bl tight">
-            <li><b>18</b> test files · <b>2,902</b> test lines across the server/CLI.</li>
+            <li><b>23</b> test files · <b>3,722</b> test lines across the server/CLI.</li>
             <li>Two runners: <code>node --test</code> (server/CLI) + <b>vitest</b> (the Vue SPA).</li>
             <li><b>Governance is the most-tested area</b> — 4 dedicated files.</li>
             <li>The largest file exercises the highest-risk path: <code>run-executor.test.cjs</code> (~42 KB — the continuation loop).</li>

@@ -32,7 +32,7 @@ You verify behavior dynamically and produce a documented test plan. Acceptance c
 4. **Run the verification.**
    - Unit/integration: the project's (per-sub-project) `test` command.
    - E2E: Cypress (`cypress run --spec …`), reading results from the Cypress MCP if available.
-   - Manual/behavior: launch the app and check what the suite can't (the `run` discipline — start it, exercise the path, observe).
+   - Manual/behavior: launch the app and check what the suite can't. For **UI behavior** (visual or interaction-level criteria) use the `web-test` skill — it drives a real browser, captures console/network/visual evidence, and records a `### WEBTEST START` entry. It needs an **interactive session** — in a headless orchestrated run every browser call raises a HIGH approval card, so mark those criteria *unverified — browser verification required* and name `/tcgflow-web-test {ID}` as the follow-up rather than inferring a pass (ADR 0041).
    - Treat a flaky spec (passes on retry) as flaky, not failing — note it, propose quarantine/repair.
 
 5. **Record results** in a `### TEST START` entry (shape in `agents/tester.md`): each criterion → pass/fail + evidence (command output, screenshot path, Cypress run id), plus the suites run.
@@ -52,6 +52,7 @@ For a **Refactor** task (from `/tcgflow-refactor`, executed by the Refactorer) t
 ### Anti-patterns
 
 - **"Green suite" ≠ verified.** If the tests don't touch the acceptance criterion, the criterion is unverified — add coverage (and log it) or mark fail.
+- **Inferring a UI pass.** A visual/interaction criterion is verified by watching it (`web-test`), not by reasoning from the code or the suite.
 - **Editing production code to pass.** Propose the fix; the Coder owns it.
 - **Silent Jira writes.** Pushing a test plan to Jira is HIGH — never without a recorded approval.
 - **Blanket commands in multi-project workspaces.** Use the sub-project's own `test` command.

@@ -22,7 +22,7 @@ You are folding a Raw source into the wiki. The procedure is **log-first** — t
 ### Procedure
 
 1. **Inventory the Raw source.**
-   - **Task ingest** — read `tasks/active/{ID}/TASK details {ID}.md` and `TASK {ID}.md`. Summarise the diff (use `git log` / `git diff` against the merge-base, or the file lists from log entries).
+   - **Task ingest** — read `tasks/active/{ID}/TASK details {ID}.md` and `TASK {ID}.md`. Summarise the diff (use `git log` / `git diff` against the merge-base, or the file lists from log entries). If `{ID} web-test-summary.md` is present (ADR 0041), read it too — its executed test plan and bug repros are the Raw for a `wiki/testing/{ID}.md` page, and its unverified list is a knowledge gap worth recording.
    - **`raw/` ingest** — list files in `.tcgstackflow/raw/`, summarise each in one line. If the user gave a topic phrase, use it. **Pull digests** (`pull-*.md`, written by the git post-merge hook) are the common case and have a stricter contract — see [Pull-digest ingest](#pull-digest-ingest-git-pull--wiki) below.
    - **MCP ingest** — capture the MCP output as the source-of-record.
 2. **Plan.** Use the `wiki-search` skill (qmd) to surface the pages the Raw touches, and walk `wiki/index.md` to place them in the Map of Content. Identify:

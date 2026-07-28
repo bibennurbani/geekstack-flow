@@ -34,10 +34,10 @@
 After `geekstackflow init`, your project has a `.tcgstackflow/` folder containing:
 
 - **LLM wiki** (`wiki/`) — flat, Obsidian-flavoured Markdown maintained by AI, following [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Searched via the mandatory **wiki-search (qmd)** layer — a **project-local** hybrid keyword + vector + re-rank index (`qmd init` → `.qmd/`, so projects never collide on collection names — ADR 0038) that complements the `index.md` Map of Content (ADR 0030). `geekstackflow doctor` verifies the index is real per project *and* checks the wiki's Karpathy/qmd structure (ADR 0039). This is the project's memory.
-- **Tasks** (`tasks/`) — every task is exactly two files (`TASK {ID}.md` log + `TASK details {ID}.md` plan), moving through `active/ → completed/ → archive/`.
+- **Tasks** (`tasks/`) — every task is exactly two files (`TASK {ID}.md` log + `TASK details {ID}.md` plan), moving through `active/ → completed/ → archive/`. (One exception: `{ID} web-test-summary.md`, written only when a browser web test ran — ADR 0041.)
 - **6 agent roles** (`agents/`) — the linear `planner → coder → reviewer → tester → ingester`, plus the manually-invoked **`refactorer`** (a peer to the Coder, re-entering at Review), each a tool-agnostic Markdown profile.
-- **17 skills** (`skills/`) — atomic capabilities in Claude Code `SKILL.md` format (mattpocock-compatible).
-- **18 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
+- **18 skills** (`skills/`) — atomic capabilities in Claude Code `SKILL.md` format (mattpocock-compatible).
+- **19 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
 - **Governance** (`governance.md`) — four risk levels (LOW/MEDIUM/HIGH/CRITICAL) + a permission-request recipe + your project-specific rules. Enforced live during orchestrated runs (approve/deny in the browser).
 - **Tool adapters** (`tools/`) — generated `CLAUDE.md`, `AGENTS.md` (Codex), and `.github/copilot-instructions.md` (Copilot), all pointing back at `.tcgstackflow/` as the single source of truth.
 - **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, session id, the runner `tool`/`gate`, the qmd re-embed outcome, and (for branch-isolated runs) the `isolation`/`branch` it used (workspace schema 7).
@@ -298,7 +298,7 @@ Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `reg
 
 ## Commands reference
 
-18 commands. In Claude Code, type `/tcgflow-<name>`. In other tools, use the trigger phrase.
+19 commands. In Claude Code, type `/tcgflow-<name>`. In other tools, use the trigger phrase.
 
 | Command | Does |
 |---|---|
@@ -309,6 +309,7 @@ Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `reg
 | `/tcgflow-code [ID]` | Coder: implement the planned task |
 | `/tcgflow-review [ID]` | Reviewer: static review of the diff |
 | `/tcgflow-test [ID]` | Tester: build test plan, run verification |
+| `/tcgflow-web-test [ID] [env/URL]` | Browser verification of a task or your uncommitted change (Claude in Chrome) — happy path + required edge cases, writes `{ID} web-test-summary.md` with repro steps per bug. Interactive only |
 | `/tcgflow-ingest [scope]` | Ingester: fold a task / `raw/` / MCP output into the wiki |
 | `/tcgflow-session-report [ID]` | Author a session post-mortem from a task's orchestrated runs (token/$ narrative + optimization recommendations) |
 | `/tcgflow-refactor [target]` | Refactorer: broad, behaviour-preserving refactor of a target area (re-enters at Review) |
@@ -325,7 +326,7 @@ Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `reg
 
 ## Skills reference
 
-17 atomic skills under `.tcgstackflow/skills/`. Commands dispatch these; agents compose them.
+18 atomic skills under `.tcgstackflow/skills/`. Commands dispatch these; agents compose them.
 
 | Skill | Role | Purpose |
 |---|---|---|
@@ -334,6 +335,7 @@ Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `reg
 | `update-task-log` | coder | Append a YAML entry to the task log |
 | `review-diff` | reviewer | Walk the diff vs acceptance + governance |
 | `verify` | tester | Build a test plan, run tests/E2E/app, record a verdict |
+| `web-test` | tester / standalone | Drive a real browser for UI criteria the suites can't settle — edges required, summary file with bug repros |
 | `wiki-search` | any | Find wiki/`docs/` content via qmd before reading — the mandatory discovery layer |
 | `best-practice-refactor` | coder / refactorer | Diff-scoped cleanup pass (Coder) + broad behaviour-preserving refactor (Refactorer) |
 | `ingest` | ingester | Fold a Raw source into the wiki (log-first, gated) |
@@ -391,14 +393,14 @@ geekstackflow hooks   /path/to/project     # (re)wire the enriched git pull-dige
 
 This:
 - runs any **layout migrations** keyed off `workspace_schema` (e.g. the pre-v0.2 dotfile rename; the 5→6 step refreshes the tool-owned `runs/README.md` contract doc **and** the workspace's `hooks/post-merge` so the enriched pull digest — cross-project impact + summary — is picked up),
-- **refreshes tool-owned files** — `tcgflow-*` commands (in the workspace *and* `~/.claude/skills/`) and agent profiles are updated to the latest templates, backing up any drifted file to `{name}.bak`,
+- **refreshes tool-owned files** — `tcgflow-*` commands (in the workspace *and* `~/.claude/skills/`), agent profiles, the workspace README, and the **tool-owned head of each tool adapter** — in `tools/` *and* the copy at your project root, which is the file your AI actually reads (ADR 0042). Your below-marker overrides are kept verbatim; any drifted file is backed up to `{name}.bak` first,
 - **additively adds new skills** (absent → added; existing → never overwritten),
 - **prints a drift report** — exactly which existing skills and tool adapters differ from the new templates (the files it won't auto-merge), so you know precisely what to review,
 - registers the project in the Cockpit and stamps the version.
 
 `upgrade` does **not** itself touch `.git/hooks` — run `geekstackflow hooks .` to (re)wire the pull-digest hook (it prefers the workspace's freshly-refreshed `hooks/post-merge`).
 
-**Your customizations are never clobbered** — `governance.md`, `config.yaml`, existing skills, and tool-adapter content are left for manual merge. The drift report (re-runnable anytime with `geekstackflow drift /path/to/project`) tells you which of those drifted from the new templates, so the merge is targeted, not guesswork. Restart Claude Code afterward to pick up refreshed slash commands. (ADR 0021.)
+**Your customizations are never clobbered** — `governance.md`, `config.yaml`, existing skills, and everything below each adapter's "Edit below this line" marker are left for manual merge (and an edited adapter head is backed up before it is rebuilt). The drift report (re-runnable anytime with `geekstackflow drift /path/to/project`) tells you which of those drifted from the new templates, so the merge is targeted, not guesswork. Restart Claude Code afterward to pick up refreshed slash commands. (ADR 0021.)
 
 ---
 
@@ -409,7 +411,7 @@ geekstack-flow/
 ├── init.js                 # the CLI (init / upgrade / register / drift / ui / hooks) — zero dependencies
 ├── package.json            # bin: { geekstackflow, tcgflow }, v0.3.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
-├── docs/adr/               # 40 Architecture Decision Records
+├── docs/adr/               # 42 Architecture Decision Records
 ├── test/                   # node --test suite (run with `npm test`)
 ├── ui/                     # the Cockpit/Orchestrator (Vue 3 + Vite SPA + zero-dep Node server)
 │   ├── server/             #   read.cjs (data) · index.cjs (http) · run.cjs (agent executor)
@@ -422,8 +424,8 @@ geekstack-flow/
     ├── workspace/.tcgstackflow/   # copied into each project
     │   ├── config.yaml  governance.md  README.md
     │   ├── agents/        # 6 role profiles
-    │   ├── skills/        # 17 skills
-    │   ├── commands/      # 18 tcgflow-* commands
+    │   ├── skills/        # 18 skills
+    │   ├── commands/      # 19 tcgflow-* commands
     │   ├── hooks/         # post-merge pull-digest hook (wired by `geekstackflow hooks`)
     │   ├── wiki/          # starter pages + adr/
     │   ├── tasks/         # README + weekly/ + active/completed/archive/
@@ -438,7 +440,7 @@ geekstack-flow/
 ## Design & decisions
 
 - **[CONTEXT.md](CONTEXT.md)** — the project's domain language (Wiki, Raw, Ingest/Query/Lint, Agent, Skill, Command, Cockpit, Orchestrator, Workspace vs Jira status, …).
-- **[docs/adr/](docs/adr/)** — 40 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation — branch now, worktree deferred (0040).
+- **[docs/adr/](docs/adr/)** — 42 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation — branch now, worktree deferred (0040), browser web-test as a Tester skill, interactive-only (0041), `upgrade` owns the adapter head + root copies (0042).
 
 ## Inspirations
 

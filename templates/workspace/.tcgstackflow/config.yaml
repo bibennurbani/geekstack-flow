@@ -87,6 +87,19 @@ orchestrator:
     ingester: claude
     refactorer: claude
 
+# Browser web-test (ADR 0041) — OPTIONAL. Lets `/tcgflow-web-test ES-1234 on uat` resolve an
+# environment keyword to a URL instead of you re-typing it. Entirely inert until you fill it in;
+# with no entry the skill asks for the URL (it never guesses a hostname). Never put credentials
+# here — the user signs in themselves and the browser run continues from that session.
+#
+# web_test:
+#   environments:
+#     local:   "http://localhost:5173/"
+#     uat:     "https://app.example-uat.internal/"
+#     staging: "https://app.example-staging.internal/"
+#   # production is deliberately absent — writes are never allowed and read-only needs an
+#   # explicit CRITICAL approval, so the URL is supplied by hand on the rare occasion it's needed.
+
 governance:
   mode: strict                      # strict | relaxed
   permissions_file: .tcgstackflow/governance.md

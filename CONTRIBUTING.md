@@ -26,7 +26,7 @@ geekstackflow init .         # or: tcgflow init .
 | `init.js` | The installer — pure Node built-ins, single file. |
 | `templates/workspace/.tcgstackflow/` | The workspace template copied into target projects. |
 | `templates/global/.tcgstackflow/` | The global template copied to `~/.tcgstackflow/` on first run. |
-| `templates/claude-commands/` | Claude Code slash-command skills (`/tcgflow-*`) installed to `~/.claude/skills/`. |
+| `templates/workspace/.tcgstackflow/commands/` | The `tcgflow-*` workflow commands — canonical for every tool; `init.js` also installs them to `~/.claude/skills/` as Claude Code slash commands. |
 | `docs/adr/` | Architecture Decision Records — one per substantive design call. |
 | `CONTEXT.md` | The project's domain glossary. |
 
@@ -39,16 +39,17 @@ See [docs/adr/0013-tool-repo-stays-clean.md](docs/adr/0013-tool-repo-stays-clean
 ## Adding a skill
 
 1. Create `templates/workspace/.tcgstackflow/skills/{name}/SKILL.md` (Claude Code skill format).
-2. Add a row to the skill tables in `tools/claude/CLAUDE.md`, `tools/codex/AGENTS.md`, and `tools/github/copilot-instructions.md`.
+2. Add a row to the skill tables in `tools/claude/CLAUDE.md`, `tools/codex/AGENTS.md`, and `tools/github/copilot-instructions.md` (and bump the "N starter skills" counts there).
 3. Reference the skill from any agent profile in `agents/{role}.md` that should use it.
 4. Add a CHANGELOG entry.
 
-## Adding a slash command
+## Adding a command (`/tcgflow-*`)
 
-1. Create `templates/claude-commands/tcgflow-{name}/SKILL.md`.
-2. The skill's `name:` frontmatter MUST start with `tcgflow-`.
-3. The skill's `description:` should explain when the user would type `/tcgflow-{name}`.
-4. The body is the instruction Claude follows when invoked.
+1. Create `templates/workspace/.tcgstackflow/commands/tcgflow-{name}/SKILL.md` — the one canonical location. `init`/`upgrade` copy the whole folder into each project *and* into `~/.claude/skills/`, so no `init.js` change is needed to register it.
+2. The `name:` frontmatter MUST equal the directory name and start with `tcgflow-`. `test/templates-structure.test.cjs` enforces this.
+3. The `description:` carries both invocations: when the user would type `/tcgflow-{name}` **and** the natural-language trigger phrases other tools dispatch on (ADR 0019).
+4. Keep the body a **thin dispatcher** — which role to adopt and which skill holds the procedure. Behaviour belongs in `skills/`, not in the command.
+5. Update the command tables in the three tool adapters (above the "Edit below this line" marker — that region is tool-owned and `upgrade` propagates it to existing projects, ADR 0042), the counts in `README.md` / `docs/USAGE.md` / `CONTEXT.md` / `templates/workspace/.tcgstackflow/README.md`, and the CHANGELOG.
 
 ## Adding a tool adapter
 

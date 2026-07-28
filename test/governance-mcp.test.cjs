@@ -59,7 +59,14 @@ test('stdio framing: script answers initialize + a LOW tools/call over a pipe', 
   });
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }) + '\n');
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'approve', arguments: { tool_name: 'Read', input: {} } } }) + '\n');
-  await new Promise((r) => setTimeout(r, 250));
+  // Wait for both replies rather than sleeping a fixed 250ms and killing the child: on a loaded
+  // machine (this suite spawns real CLI subprocesses) node startup alone can exceed that, and the
+  // test would fail having proven nothing about framing. Returns as soon as both arrive.
+  const deadline = Date.now() + 10_000;
+  while (!(responses.some((r) => r.id === 1) && responses.some((r) => r.id === 2))) {
+    if (Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
   child.kill();
   assert.ok(responses.find((r) => r.id === 1 && r.result && r.result.serverInfo), 'got initialize result');
   const call = responses.find((r) => r.id === 2);

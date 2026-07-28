@@ -3,6 +3,8 @@
 Task tracking hub. Each task is **exactly two files** kept inside its own folder.
 
 > **The two-file rule is strict.** Never create per-subtask files like `TASK {ID}-FE-1.md`, `FIXES.md`, etc. Append to the existing two files instead. See [agents/coder.md](../agents/coder.md) for why.
+>
+> **One exception, added by ADR 0041:** `{ID} web-test-summary.md`, written by the Tester only when a browser web test ran. It holds the executed test plan and reproducible bug reports — evidence, not narrative. One fixed name per task, appended across runs (never `-2`, never per-bug), and the `### WEBTEST START` entry in the log stays the canonical record.
 
 ## Lifecycle
 
@@ -17,6 +19,7 @@ Planner creates                Ingester moves          User periodically
 
 - `TASK {ID}.md` — implementation log. Append-only YAML entries from the Coder + review entries from the Reviewer.
 - `TASK details {ID}.md` — the plan. Overview, subtasks (flat list), acceptance criteria.
+- `{ID} web-test-summary.md` — *(only if a browser web test ran)* the executed browser test plan + reproducible bug reports, written by the Tester via the `web-test` skill. See ADR 0041.
 
 ## Active Tasks
 

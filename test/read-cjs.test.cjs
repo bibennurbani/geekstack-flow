@@ -121,6 +121,41 @@ test('parseTaskLogTimeline parses a normal entry + a cockpit-override entry', ()
   assert.strictEqual(t[1].via, 'cockpit');
   assert.strictEqual(t[1].status_from, 'IN_PROGRESS');
   assert.strictEqual(t[1].status_to, 'BLOCKED');
+  assert.ok(!('kind' in t[0]) && !('kind' in t[1]), 'ENTRY objects keep their previous shape');
+});
+
+test('regression: a REVIEW/TEST/WEBTEST block is its own entry, not folded into the preceding ENTRY', () => {
+  // Before the fix, parseTaskLogTimeline split on `### ENTRY START` only and parseYamlBlock
+  // skipped the `### ` line — so these role blocks were absorbed by the ENTRY above them and
+  // silently overwrote its timestamp/author. The Coder's entry showed the Tester's name.
+  const log = TASK_FILE + [
+    '### ENTRY START',
+    "timestamp: '2026-06-01T09:00:00Z'",
+    "author: 'claude'",
+    "summary: 'built the form'",
+    '',
+    '### REVIEW START',
+    "timestamp: '2026-06-02T09:00:00Z'",
+    "author: 'claude'",
+    "verdict: 'approved'",
+    '',
+    '### WEBTEST START',
+    "timestamp: '2026-06-02T10:15:00Z'",
+    "author: 'human'",
+    "verdict: 'fail'",
+    'gate: false',
+    '',
+  ].join('\n');
+  const t = read.parseTaskLogTimeline(log);
+  assert.strictEqual(t.length, 3, 'three blocks => three entries');
+  assert.strictEqual(t[0].author, 'claude');
+  assert.strictEqual(t[0].timestamp, '2026-06-01T09:00:00Z', "the Coder's entry keeps its own timestamp");
+  assert.strictEqual(t[0].summary, 'built the form');
+  assert.strictEqual(t[0].verdict, undefined, "the Coder's entry gains no verdict from later blocks");
+  assert.strictEqual(t[1].kind, 'review');
+  assert.strictEqual(t[2].kind, 'webtest');
+  assert.strictEqual(t[2].author, 'human');
+  assert.strictEqual(t[2].gate, 'false');
 });
 
 // ---- SRV-4: buildTaskDetail ----
@@ -347,7 +382,10 @@ test('Card 3 run-record: serialize → parse round-trips every field', () => {
 });
 
 test('ADR 0040 run-record: isolation/branch omitted when in-place; emitted + round-tripped for branch', () => {
-  const base = { task: 'ES-1', role: 'coder', state: 'done', tokens: {}, transcript: 'x' };
+  // `ended_at` is pinned: serializeRunRecord defaults it to `new Date().toISOString()` for a
+  // terminal state, so the byte-identity assertion below would flake whenever two calls straddle
+  // a millisecond boundary. The clock is not what this test is about.
+  const base = { task: 'ES-1', role: 'coder', state: 'done', tokens: {}, transcript: 'x', ended_at: '2026-06-02T10:15:00.000Z' };
   // in-place (or absent) → the record is byte-identical to a pre-0040 record.
   const inplace = read.serializeRunRecord({ ...base, isolation: 'in-place' });
   assert.ok(!/^isolation:/m.test(inplace), 'no isolation line for in-place');

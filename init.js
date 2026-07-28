@@ -664,14 +664,34 @@ async function upgradeWorkspace(target) {
     { additiveOnly: true, backup: false, label: 'skills' }));
   mergeRefresh(refreshed, skillsAdded);
 
-  // 2. Installed slash commands at ~/.claude/skills/ — only if the user is a Claude-commands
-  //    user (at least one tcgflow-* command already present); never create the dir from scratch.
+  // 1c. The workspace README is tool documentation (layout, conventions, Obsidian notes) with no
+  //     project content in it — tool-owned, same as commands and agents.
+  mergeRefresh(refreshed, refreshFileFromTemplate(
+    path.join(WORKSPACE_TEMPLATE, 'README.md'), path.join(workspaceDir, 'README.md'),
+    { backup: true, label: 'README.md' }));
+
+  // 1d. Tool adapters — the region ABOVE the overrides marker, in the workspace copy AND at the
+  //     project root, where the AI tools actually read it (ADR 0042). Your below-marker notes are
+  //     preserved verbatim; a hand-edited head is backed up to {name}.bak before it's rebuilt.
+  mergeRefresh(refreshed, refreshAdapters(target, projName));
+
+  // 1e. Mixed-ownership files (task README, global memory) — one-line, byte-exact nudges only.
+  mergeRefresh(refreshed, applyLineNudges(target, SHIPPED_LINE_NUDGES));
+  mergeRefresh(refreshed, applyLineNudges(path.join(os.homedir(), '.tcgstackflow'), GLOBAL_LINE_NUDGES));
+
+  // 2. Installed slash commands at ~/.claude/skills/ — for anyone whose project has Claude enabled
+  //    (or who already has tcgflow-* commands installed). Without this the newly shipped command
+  //    exists in the workspace but never becomes a usable /slash command (ADR 0042).
   const claudeSkillsDir = path.join(os.homedir(), '.claude/skills');
   const cmdTplDir = path.join(WORKSPACE_TEMPLATE, 'commands');
-  const usesClaudeCommands = fs.existsSync(claudeSkillsDir) &&
+  const hasTcgflowCommands = fs.existsSync(claudeSkillsDir) &&
     fs.readdirSync(claudeSkillsDir, { withFileTypes: true })
       .some(e => e.isDirectory() && e.name.startsWith('tcgflow-'));
+  // `tools: claude: true` in config.yaml + Claude Code present on the machine is enough.
+  const usesClaudeCommands = hasTcgflowCommands ||
+    (configDeclaresClaude(configPath) && fs.existsSync(path.join(os.homedir(), '.claude')));
   if (usesClaudeCommands) {
+    fs.mkdirSync(claudeSkillsDir, { recursive: true });
     for (const entry of fs.readdirSync(cmdTplDir, { withFileTypes: true })) {
       if (!entry.isDirectory() || !entry.name.startsWith('tcgflow-')) continue;
       mergeRefresh(refreshed, refreshDirFromTemplate(
@@ -690,15 +710,22 @@ async function upgradeWorkspace(target) {
       for (const b of refreshed.backedUp) console.log(`    ${b}`);
     }
   } else {
-    console.log('\n  ~ tool-owned files (commands + agents + skills) already current — nothing to refresh');
+    console.log('\n  ~ tool-owned files (commands + agents + skills + adapters) already current — nothing to refresh');
   }
 
-  console.log('\nNot refreshed by upgrade (intentional — your customizations): governance.md and config.yaml (beyond the migration above).');
+  console.log('\nNot refreshed by upgrade (intentional — your customizations): governance.md, config.yaml (beyond the migration above), your existing skills, and everything below the "Edit below this line" marker in each tool adapter.');
 
   // Tell the user EXACTLY which non-auto-merged files (existing skills + tool adapters) carry
   // upstream changes, so the manual merge is targeted rather than guesswork. `geekstackflow drift`
   // re-runs just this check anytime.
   reportWorkspaceDrift(target);
+
+  console.log('\nNext steps:');
+  console.log('  1. Restart your AI tool session — Claude Code loads /tcgflow-* slash commands at startup, so a running session won\'t see new or refreshed ones.');
+  console.log('  2. If the Cockpit is running, restart `geekstackflow ui` to pick up any server-side changes in this release.');
+  if (refreshed.backedUp.length) {
+    console.log('  3. Review the .bak files above — they hold the tool-owned content you had edited, which was rebuilt from the current templates.');
+  }
 }
 
 // OS/editor cruft we never copy into a user's workspace.
@@ -771,6 +798,37 @@ function mergeRefresh(acc, r) {
   return acc;
 }
 
+// Single-file variant of refreshDirFromTemplate, for tool-owned files that aren't in a
+// wholesale-refreshed directory (e.g. the workspace README).
+function refreshFileFromTemplate(src, dest, { backup = true, label = '' } = {}) {
+  const out = { added: [], updated: [], backedUp: [] };
+  if (!fs.existsSync(src)) return out;
+  const name = label || path.basename(dest);
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
+    out.added.push(name);
+  } else if (!filesEqual(src, dest)) {
+    if (backup) { fs.copyFileSync(dest, dest + '.bak'); out.backedUp.push(dest + '.bak'); }
+    fs.copyFileSync(src, dest);
+    out.updated.push(name);
+  }
+  return out;
+}
+
+// Does config.yaml's `tools:` block enable Claude? Used to decide whether the /tcgflow-* slash
+// commands belong in ~/.claude/skills for this project.
+function configDeclaresClaude(configPath) {
+  if (!fs.existsSync(configPath)) return false;
+  const text = fs.readFileSync(configPath, 'utf8');
+  const m = text.match(/^tools:[^\n]*\n/m);
+  if (!m) return false;
+  // Body of the block = everything after the `tools:` line up to the next unindented line. The
+  // header itself must be dropped first, or the split on /^\S/m fires on `tools:` and yields ''.
+  const body = text.slice(m.index + m[0].length).split(/^\S/m)[0];
+  return /^\s+claude:\s*true\s*$/m.test(body);
+}
+
 // --- Drift report: which non-auto-merged files differ from the installed templates ---
 // `upgrade` refreshes tool-owned files (commands + agents) and additively adds new skills, but it
 // never overwrites EXISTING skills or the tool adapters (customization surfaces, ADR 0021). This
@@ -812,6 +870,108 @@ function adapterDrifted(templatePath, projectPath, projectName) {
   const tpl = fs.readFileSync(templatePath, 'utf8').split('{{project-name}}').join(projectName);
   const proj = fs.readFileSync(projectPath, 'utf8');
   return aboveMarker(tpl) === aboveMarker(proj) ? 'current' : 'drifted';
+}
+
+// --- Adapter head refresh (ADR 0042) -----------------------------------------------------------
+// An adapter is two regions, and the file says so itself: "Edit below this line. The init script
+// does not touch content beyond this point on subsequent runs." Above the marker is tool product
+// surface (roles table, skills table, strict invariants, orchestrated-run rules) — the part that
+// has to change when a role, skill, or invariant ships. Below it is the project's own notes.
+// `upgrade` rebuilds the head from the template and keeps the tail verbatim.
+
+// Split an adapter at the overrides marker, cutting after the `---` rule that closes it so the
+// boundary lands between whole blocks. Returns null when the marker is absent (never guess).
+function splitAdapter(text) {
+  const i = text.indexOf(ADAPTER_OVERRIDE_MARKER);
+  if (i === -1) return null;
+  const sep = text.indexOf('\n---', i);
+  const cut = sep === -1 ? text.length : sep + '\n---'.length;
+  return { head: text.slice(0, cut), tail: text.slice(cut) };
+}
+
+// Rebuild one adapter: template head (project name substituted) + the project's own tail. A file
+// whose head was hand-edited is copied to {name}.bak first, so no customization is ever lost.
+// No-ops when the destination doesn't exist (that adapter isn't enabled for this project) or when
+// either side lacks the marker.
+function refreshAdapterFile(templatePath, destPath, projectName, { label } = {}) {
+  const out = { added: [], updated: [], backedUp: [] };
+  if (!fs.existsSync(templatePath) || !fs.existsSync(destPath)) return out;
+  const tpl = splitAdapter(fs.readFileSync(templatePath, 'utf8').split('{{project-name}}').join(projectName));
+  const before = fs.readFileSync(destPath, 'utf8');
+  const cur = splitAdapter(before);
+  if (!tpl || !cur) return out; // unrecognisable shape — leave it; the drift report still names it
+  const next = tpl.head + cur.tail;
+  if (next === before) return out;
+  if (tpl.head.trim() !== cur.head.trim()) {
+    fs.copyFileSync(destPath, destPath + '.bak');
+    out.backedUp.push(destPath + '.bak');
+  }
+  fs.writeFileSync(destPath, next);
+  out.updated.push(label || path.basename(destPath));
+  return out;
+}
+
+// The canonical adapter in the workspace AND the copy at the project root that the tool actually
+// reads. init.js copies (not symlinks) to the root, so refreshing only the workspace copy would
+// leave every AI tool reading a stale file forever — the bug ADR 0042 exists to close.
+const ADAPTER_TARGETS = [
+  { rel: 'tools/claude/CLAUDE.md', root: 'CLAUDE.md' },
+  { rel: 'tools/codex/AGENTS.md', root: 'AGENTS.md' },
+  { rel: 'tools/github/copilot-instructions.md', root: '.github/copilot-instructions.md' },
+];
+
+function refreshAdapters(target, projectName) {
+  const workspaceDir = path.join(target, '.tcgstackflow');
+  const out = { added: [], updated: [], backedUp: [] };
+  for (const a of ADAPTER_TARGETS) {
+    const tpl = path.join(WORKSPACE_TEMPLATE, a.rel);
+    mergeRefresh(out, refreshAdapterFile(tpl, path.join(workspaceDir, a.rel), projectName, { label: a.rel }));
+    mergeRefresh(out, refreshAdapterFile(tpl, path.join(target, a.root), projectName, { label: a.root }));
+  }
+  return out;
+}
+
+// --- Shipped-line nudges (ADR 0042) ------------------------------------------------------------
+// Some files are neither tool-owned nor purely the user's: `tasks/README.md` carries our prose AND
+// the project's task tables; global memory carries our conventions AND the user's preferences.
+// Refreshing them wholesale would destroy real content. So we update a single line, and ONLY when
+// it is byte-identical to the line we shipped — an edited line is left alone by construction.
+// Idempotent: a file already carrying the new text is skipped. Add an entry when a release changes
+// a line in one of these mixed files; entries are safe to leave in place forever.
+const SHIPPED_LINE_NUDGES = [
+  { // ADR 0041 — the two-file rule gained its one exception.
+    file: ['.tcgstackflow', 'tasks', 'README.md'],
+    from: '> **The two-file rule is strict.** Never create per-subtask files like `TASK {ID}-FE-1.md`, `FIXES.md`, etc. Append to the existing two files instead. See [agents/coder.md](../agents/coder.md) for why.',
+    to: '> **The two-file rule is strict.** Never create per-subtask files like `TASK {ID}-FE-1.md`, `FIXES.md`, etc. Append to the existing two files instead. See [agents/coder.md](../agents/coder.md) for why.\n>\n> **One exception, added by ADR 0041:** `{ID} web-test-summary.md`, written by the Tester only when a browser web test ran. It holds the executed test plan and reproducible bug reports — evidence, not narrative. One fixed name per task, appended across runs (never `-2`, never per-bug), and the `### WEBTEST START` entry in the log stays the canonical record.',
+  },
+  {
+    file: ['.tcgstackflow', 'tasks', 'README.md'],
+    from: '- `TASK details {ID}.md` — the plan. Overview, subtasks (flat list), acceptance criteria.',
+    to: '- `TASK details {ID}.md` — the plan. Overview, subtasks (flat list), acceptance criteria.\n- `{ID} web-test-summary.md` — *(only if a browser web test ran)* the executed browser test plan + reproducible bug reports, written by the Tester via the `web-test` skill. See ADR 0041.',
+  },
+];
+
+const GLOBAL_LINE_NUDGES = [
+  { // ADR 0041 — global memory states the same invariant.
+    file: ['memory', 'workflow-conventions.md'],
+    from: '- **Two-file rule is strict.** `TASK {ID}.md` + `TASK details {ID}.md`. Never split per subtask.',
+    to: '- **Two-file rule is strict.** `TASK {ID}.md` + `TASK details {ID}.md`. Never split per subtask. Sole exception: `{ID} web-test-summary.md` when a browser web test ran (ADR 0041).',
+  },
+];
+
+function applyLineNudges(rootDir, nudges) {
+  const out = { added: [], updated: [], backedUp: [] };
+  for (const n of nudges) {
+    const p = path.join(rootDir, ...n.file);
+    if (!fs.existsSync(p)) continue;
+    const cur = fs.readFileSync(p, 'utf8');
+    if (cur.includes(n.to)) continue;      // already current
+    if (!cur.includes(n.from)) continue;   // edited by the user, or absent — never guess
+    fs.writeFileSync(p, cur.split(n.from).join(n.to));
+    const label = n.file.join('/');
+    if (!out.updated.includes(label)) out.updated.push(label);
+  }
+  return out;
 }
 
 // Print the drift report for the two surfaces upgrade does NOT auto-merge: existing skills and the
