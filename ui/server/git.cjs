@@ -7,6 +7,7 @@
 // are the right tool there, and it has its own integration test).
 
 const cp = require('child_process');
+const path = require('path');
 
 // HEAD sha of the repo at `cwd`, or null if git fails / it isn't a repo. Used to capture a run's
 // git_base at launch so the diff viewer can show "changes since this run began". Never throws.
@@ -26,8 +27,7 @@ function diffSince(cwd, base, exec = cp.execFileSync) {
   return (stat ? stat + '\n' : '') + full;
 }
 
-// --- Per-run git isolation (ADR 0040) — branch mode. `worktree` is deferred (needs the
-// workspace-root seam), so no worktree primitives ship here yet. ---
+// --- Per-run git isolation (ADR 0040 branch mode + ADR 0043 worktree mode). ---
 
 // The currently checked-out branch of the repo at `cwd`, or null (git failure, or a detached HEAD —
 // `rev-parse --abbrev-ref HEAD` prints the literal 'HEAD' there, which we normalize to null). Never throws.
@@ -66,4 +66,47 @@ function ensureBranch(cwd, branch, exec = cp.execFileSync) {
   return { branch, action: exists ? 'switched' : 'created' };
 }
 
-module.exports = { head, diffSince, currentBranch, branchExists, ensureBranch };
+// --- Worktree isolation (ADR 0043). A per-task git worktree lets tasks run in parallel, each on its
+// own branch in its own working directory, without touching the main working tree. ---
+
+// Whether a registered worktree already lives at `wtPath` (so ensureWorktree can reuse it across the
+// planner→coder→reviewer chain instead of re-creating it). Parses `git worktree list --porcelain` —
+// exec-only (no fs) so it stays testable with a fake exec. Never throws.
+function worktreeExists(repoRoot, wtPath, exec = cp.execFileSync) {
+  try {
+    const out = String(exec('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+    const target = path.resolve(wtPath);
+    for (const line of out.split('\n')) {
+      if (line.startsWith('worktree ') && path.resolve(line.slice('worktree '.length).trim()) === target) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// Ensure a worktree for `branch` exists at `wtPath` (the worktree analogue of ensureBranch):
+//   - a worktree already at wtPath → reuse it     (chain detect-and-continue: reviewer reuses the coder's)
+//   - branch exists                → `git worktree add <wtPath> <branch>`   (attach)
+//   - otherwise                    → `git worktree add -b <branch> <wtPath>` (create branch + worktree)
+// git failure PROPAGATES so the executor fails the run cleanly. Returns { branch, wtPath, action }.
+function ensureWorktree(repoRoot, branch, wtPath, exec = cp.execFileSync) {
+  if (worktreeExists(repoRoot, wtPath, exec)) return { branch, wtPath, action: 'reused' };
+  const exists = branchExists(repoRoot, branch, exec);
+  const args = exists
+    ? ['-C', repoRoot, 'worktree', 'add', wtPath, branch]
+    : ['-C', repoRoot, 'worktree', 'add', '-b', branch, wtPath];
+  exec('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return { branch, wtPath, action: exists ? 'attached' : 'created' };
+}
+
+// Remove a worktree (manual prune only — deletion is HIGH; never called automatically). `force`
+// discards uncommitted changes in the worktree. git failure PROPAGATES.
+function removeWorktree(repoRoot, wtPath, { force = false } = {}, exec = cp.execFileSync) {
+  const args = ['-C', repoRoot, 'worktree', 'remove'];
+  if (force) args.push('--force');
+  args.push(wtPath);
+  exec('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+module.exports = { head, diffSince, currentBranch, branchExists, ensureBranch, worktreeExists, ensureWorktree, removeWorktree };

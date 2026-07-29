@@ -111,6 +111,37 @@ test('chain: backward bounce beyond max_bounces stops the chain', async () => {
   } finally { cleanup(proj); }
 });
 
+// ADR 0043 — autopilot stops after a clean reviewer pass (planner→coder→reviewer) with a
+// ready-for-pr signal, and does NOT enqueue tester/ingester.
+test('autopilot: a clean reviewer run emits ready-for-pr and does not chain to tester', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    const rm = chainCapturingRM();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: statusSettingSpawn(taskFile, 'IN_TEST'), claudeBin: 'fake', maxIters: 1 });
+    exec.launch({ run_id: 'r-ap', task_id: 'T-1', role: 'reviewer', project_path: proj, chain: true, bounces: 0, autopilot: true });
+    await tick();
+    assert.strictEqual(rm.calls.enqueued.length, 0, 'autopilot does not auto-run tester/ingester');
+    const ev = exec.getLive('r-ap').events.find((e) => e.type === 'chain');
+    assert.strictEqual(ev.data.state, 'ready-for-pr');
+    assert.strictEqual(ev.data.branch, 'tcgflow/T-1');
+  } finally { cleanup(proj); }
+});
+
+test('autopilot: the flag carries through the chain (coder → reviewer stays autopilot)', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const taskFile = path.join(ws, 'tasks', 'active', 'T-1', 'TASK T-1.md');
+    const rm = chainCapturingRM();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: statusSettingSpawn(taskFile, 'IN_REVIEW'), claudeBin: 'fake', maxIters: 1 });
+    exec.launch({ run_id: 'r-apc', task_id: 'T-1', role: 'coder', project_path: proj, chain: true, bounces: 0, autopilot: true });
+    await tick();
+    assert.strictEqual(rm.calls.enqueued.length, 1, 'coder chains to reviewer');
+    assert.strictEqual(rm.calls.enqueued[0].role, 'reviewer');
+    assert.strictEqual(rm.calls.enqueued[0].extra.autopilot, true, 'reviewer inherits the autopilot flag');
+  } finally { cleanup(proj); }
+});
+
 test('chain: BLOCKED stops the chain', async () => {
   const { proj, ws } = makeWs();
   try {

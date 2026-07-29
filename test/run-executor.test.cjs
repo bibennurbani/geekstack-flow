@@ -726,10 +726,13 @@ test('isolation helpers: branchFor sanitizes to a git-ref; resolveIsolation prec
   assert.strictEqual(runMod.branchFor('ES-1234'), 'tcgflow/ES-1234');
   assert.strictEqual(runMod.branchFor('feat/oddๆ id..x '), 'tcgflow/feat-odd-id.x', 'non-ref-safe chars collapse, no .., trimmed');
   assert.strictEqual(runMod.branchFor(''), 'tcgflow/task', 'empty id → a safe fallback');
+  // ADR 0043 — worktree path is a sibling `<repo>.worktrees/<TASK-ID>` dir
+  assert.strictEqual(runMod.worktreePathFor('/a/b/repo', 'ES-1'), path.join('/a/b', 'repo.worktrees', 'ES-1'));
+  assert.strictEqual(runMod.resolveIsolation({ task_id: 'T-1', isolation: 'worktree' }, '/x'), 'worktree');
   // override wins over project default; unknown/absent → project default → in-place; RAW always in-place.
   const ws = '/does/not/matter'; // readIsolation returns in-place when config is unreadable
   assert.strictEqual(runMod.resolveIsolation({ task_id: 'T-1', isolation: 'branch' }, ws), 'branch');
-  assert.strictEqual(runMod.resolveIsolation({ task_id: 'T-1', isolation: 'worktree' }, ws), 'in-place', 'unsupported override ignored → default');
+  assert.strictEqual(runMod.resolveIsolation({ task_id: 'T-1', isolation: 'bogus' }, ws), 'in-place', 'unsupported override ignored → default');
   assert.strictEqual(runMod.resolveIsolation({ task_id: 'T-1' }, ws), 'in-place');
   assert.strictEqual(runMod.resolveIsolation({ task_id: 'RAW-2026', isolation: 'branch' }, ws), 'in-place', 'RAW runs are never isolated');
 });
@@ -786,5 +789,36 @@ test('isolation branch mode: a checkout failure fails the run CLOSED (isolation-
     assert.strictEqual(spawn.calls.length, 0, 'never spawns the agent when isolation setup failed');
     assert.deepStrictEqual(rm.calls.fail, [['r-isofail', 'isolation-failed']], 'run failed with isolation-failed');
     assert.ok(!fs.existsSync(path.join(ws, 'runs', 'T-1', 'r-isofail.md')), 'no placeholder record for a run that never launched (mirrors over-budget)');
+  } finally { cleanup(proj); }
+});
+
+// ADR 0043 — a worktree-seam git double: echoes the passed worktree path, records the call.
+function fakeGitWt() {
+  const calls = [];
+  return {
+    calls,
+    head: () => 'basesha0',
+    ensureBranch: () => { throw new Error('worktree run must not call ensureBranch'); },
+    ensureWorktree: (repo, branch, wt) => { calls.push({ repo, branch, wt }); return { branch, wtPath: wt, action: 'created' }; },
+  };
+}
+
+test('isolation worktree mode: creates the worktree, spawns IN it, records worktree_path; record stays at repo root', async () => {
+  const { proj, ws } = makeWs();
+  const wt = runMod.worktreePathFor(proj, 'T-1');
+  try {
+    const git = fakeGitWt();
+    const spawn = recordingSpawn(FIXTURE_LINES, 0);
+    const exec = runMod.createExecutor({ runManager: fakeRunManager(), spawn, claudeBin: 'fake', maxIters: 1, gitSeam: git });
+    exec.launch({ run_id: 'r-wt', task_id: 'T-1', role: 'coder', project_path: proj, isolation: 'worktree' });
+    await tick(60);
+    assert.deepStrictEqual(git.calls, [{ repo: proj, branch: 'tcgflow/T-1', wt }], 'ensureWorktree called once with the sibling path');
+    assert.strictEqual(spawn.calls[0].cwd, wt, 'the agent spawns inside the worktree (ADR 0043)');
+    // the run RECORD is written to the repo-root workspace (so Cockpit token/budget see it), not the worktree
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-wt.md'), 'utf8'));
+    assert.strictEqual(fm.isolation, 'worktree');
+    assert.strictEqual(fm.branch, 'tcgflow/T-1');
+    assert.strictEqual(fm.worktree_path, wt);
+    assert.strictEqual(fm.git_base, 'basesha0', 'base captured from the worktree HEAD');
   } finally { cleanup(proj); }
 });

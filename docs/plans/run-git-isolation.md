@@ -49,6 +49,16 @@ Let an orchestrated run (Cockpit → subprocess) run on a **task branch** instea
 - `init-migrations.test.cjs` — 6→7 inserts the key once; idempotent on re-run; a workspace already carrying `isolation:` is untouched.
 - `router-handlers.test.cjs` — `POST /api/run` rejects `unknown-isolation`; accepts `branch`; settings write round-trips.
 
-## Worktree follow-up (deferred — its own PR/ADR extension)
+## Worktree follow-up — DELIVERED (ADR 0043, see docs/plans/… superseded by the ADR)
 
-Introduce an explicit **`workspaceRoot`** (always the repo root) distinct from the run's **`cwd`** (the worktree), threaded through: `run.cjs` `workspaceDir`/`buildTaskDetail`/`git_base`; the diff endpoint (point `diffSince` at the persisted worktree path); the agent prompt (absolute workspace path so relative `.tcgstackflow/...` resolves to the repo root); and qmd (index lives at the repo root). Keep the run lock keyed on the repo, prune orphaned worktrees in `reconcileOrphanedRuns`. Only then flip `worktree` from "rejected at the door" to supported. Still no auto-merge.
+Shipped as **worktree autopilot** (ADR 0043). The final realization differs from the sketch below: rather
+than threading an explicit `workspaceRoot` everywhere, the agent works **entirely inside the worktree**
+(cwd = `run.exec_root`) with **`.qmd` symlinked** in (gitignored → no git noise), and the rule
+"server writes to the repo root, agent writes to its worktree" keeps token/budget accounting intact
+while hand-off detection reads Status from the worktree. Parallel is a bounded run-manager lane
+(`max_parallel`); the chain stops at reviewer; the PR is a human-invoked command (⑂ PR / `geekstackflow
+pr`). Still no auto-merge (that + a conflict surface remain the only deferred pieces).
+
+Original sketch (kept for context): introduce an explicit `workspaceRoot` distinct from the run `cwd`,
+threaded through `run.cjs`/the diff endpoint/the agent prompt/qmd; keep the lock repo-keyed; prune
+orphaned worktrees. Superseded by the simpler symlink model above.

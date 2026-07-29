@@ -39,6 +39,45 @@ test('sequential within a project; second run waits then promotes on completion'
   assert.ok(!m.isProjectBusy('/proj/x'), 'lock released when no runs remain');
 });
 
+// ADR 0043 — worktree runs take a PARALLEL lane, capped at max_parallel
+test('worktree runs run in parallel up to the cap; the overflow queues then promotes', () => {
+  const launched = [];
+  const m = createRunManager({ launch: (r) => launched.push(r.run_id) });
+  const a = m.enqueue('/proj/x', 'T-1', 'coder', { isolation: 'worktree', maxParallel: 2 });
+  const b = m.enqueue('/proj/x', 'T-2', 'coder', { isolation: 'worktree', maxParallel: 2 });
+  const c = m.enqueue('/proj/x', 'T-3', 'coder', { isolation: 'worktree', maxParallel: 2 });
+  assert.strictEqual(a.state, 'running');
+  assert.strictEqual(b.state, 'running', 'two worktree runs run at once (cap 2)');
+  assert.strictEqual(c.state, 'queued', 'the third waits at the cap');
+  assert.deepStrictEqual(launched, [a.run_id, b.run_id]);
+  m.complete(a.run_id);
+  assert.strictEqual(c.state, 'running', 'a freed slot promotes the queued worktree run');
+  assert.deepStrictEqual(launched, [a.run_id, b.run_id, c.run_id]);
+});
+
+// The two lanes are independent: worktree runs don't take the main (in-place/branch) slot, and
+// the main slot still serializes (ADR 0026 preserved for the shared working tree).
+test('worktree lane and the main lane are independent; the main lane still serializes', () => {
+  const m = createRunManager();
+  const w = m.enqueue('/proj/x', 'T-1', 'coder', { isolation: 'worktree', maxParallel: 3 });
+  const x = m.enqueue('/proj/x', 'T-2', 'coder', { isolation: 'branch' }); // main lane
+  const y = m.enqueue('/proj/x', 'T-3', 'coder');                          // main lane (in-place)
+  assert.strictEqual(w.state, 'running', 'worktree run runs regardless of the main slot');
+  assert.strictEqual(x.state, 'running', 'main-lane run runs alongside a worktree run');
+  assert.strictEqual(y.state, 'queued', 'a second main-lane run still waits (ADR 0026)');
+  m.complete(x.run_id);
+  assert.strictEqual(y.state, 'running', 'the main slot frees and promotes');
+});
+
+test('overlayFor + the duplicate guard see worktree-lane runs too', () => {
+  const m = createRunManager();
+  m.enqueue('/proj/x', 'T-1', 'coder', { isolation: 'worktree', maxParallel: 1 });
+  m.enqueue('/proj/x', 'T-2', 'coder', { isolation: 'worktree', maxParallel: 1 }); // queued at cap 1
+  const ov = m.overlayFor('/proj/x');
+  assert.strictEqual(ov['T-1'].run_state, 'running');
+  assert.strictEqual(ov['T-2'].run_state, 'queued', 'a queued worktree run is visible (blocks a duplicate launch)');
+});
+
 // RUN-2 — concurrent across projects
 test('concurrent across different projects', () => {
   const m = createRunManager();

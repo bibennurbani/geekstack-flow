@@ -100,7 +100,14 @@ function readConfig(workspaceDir) {
     auto_advance: cf.blockHasTrue(text, 'orchestrator', 'auto_advance'),                // chain runs by default
     max_bounces: parseInt(firstMatch(oscoped, /^\s+max_bounces:\s*(\d+)/m) || '1', 10), // review/test bounces before a chain stops
     auto_ingest_on_pull: cf.blockHasTrue(text, 'orchestrator', 'auto_ingest_on_pull'),  // post-merge hook may launch an ingester run
-    isolation: ISOLATION_MODES.includes(iso) ? iso : 'in-place',                        // in-place | branch (worktree deferred, ADR 0040)
+    isolation: ISOLATION_MODES.includes(iso) ? iso : 'in-place',                        // in-place | branch | worktree (ADR 0040/0043)
+    autopilot: cf.blockHasTrue(text, 'orchestrator', 'autopilot'),                      // ADR 0043 — worktree + chain-to-reviewer + parallel
+    max_parallel: parseInt(firstMatch(oscoped, /^\s+max_parallel:\s*(\d+)/m) || '3', 10), // ADR 0043 — concurrent worktree runs cap
+    pr: {                                                                                // ADR 0043 — the PR command's defaults (orchestrator.pr.*)
+      remote: cf.blockScalar(text, 'orchestrator', 'remote', 'origin'),
+      base: String(cf.blockScalar(text, 'orchestrator', 'base', '') || '').replace(/^["']|["']$/g, ''), // "" → the remote default branch
+      draft: cf.blockScalar(text, 'orchestrator', 'draft', 'true') !== 'false',
+    },
   };
   return cfg;
 }
@@ -464,6 +471,7 @@ function serializeRunRecord(rec = {}) {
     // pre-0040 records (the round-trip test and existing runs/ files are unchanged).
     ...(rec.isolation && rec.isolation !== 'in-place' ? [`isolation: ${rec.isolation}`] : []),
     ...(rec.branch ? [`branch: ${rec.branch}`] : []),
+    ...(rec.worktree_path ? [`worktree_path: ${rec.worktree_path}`] : []), // ADR 0043 — the run's git worktree dir
     ...(e ? ['embed:', `  ran: ${!!e.ran}`,
       ...(e.skipped ? ['  skipped: true'] : []),
       ...(e.exit !== undefined && e.exit !== null ? [`  exit: ${e.exit}`] : []),
@@ -496,6 +504,7 @@ function parseRunRecord(text) {
     git_base: fm.git_base || null,
     isolation: str(fm.isolation),   // ADR 0040 — null (absent) means the run was in-place
     branch: str(fm.branch),
+    worktree_path: str(fm.worktree_path), // ADR 0043 — the worktree dir a worktree run used
     tokens,
     embed: (fm.embed && typeof fm.embed === 'object') ? fm.embed : null,
     wiki_discovery: (fm.wiki_discovery && typeof fm.wiki_discovery === 'object') ? fm.wiki_discovery : null,
@@ -526,7 +535,7 @@ function readRunTranscript(workspaceDir, taskId, runId) {
   return {
     run_id: runId, role: rr.role, session_id: rr.session_id,
     state: rr.state, ended_at: rr.ended_at, git_base: rr.git_base, tool: rr.tool, gate: rr.gate, embed: rr.embed,
-    wiki_discovery: rr.wiki_discovery,
+    wiki_discovery: rr.wiki_discovery, isolation: rr.isolation, branch: rr.branch, worktree_path: rr.worktree_path,
     tokens: rr.tokens, transcript: rr.transcript,
   };
 }
@@ -707,13 +716,24 @@ function setIsolation(workspaceDir, mode) {
   const text = fs.readFileSync(file, 'utf8');
   fs.writeFileSync(file, cf.editBlockLine(text, 'orchestrator', 'isolation', mode));
 }
+// ADR 0043 — the autopilot master switch + the parallel cap (same surgical idiom).
+function setAutopilot(workspaceDir, on) {
+  const file = path.join(workspaceDir, 'config.yaml');
+  fs.writeFileSync(file, cf.editBlockLine(fs.readFileSync(file, 'utf8'), 'orchestrator', 'autopilot', on ? 'true' : 'false'));
+}
+function setMaxParallel(workspaceDir, n) {
+  const v = parseInt(n, 10);
+  if (!Number.isFinite(v) || v < 1) throw new Error('bad-max-parallel');
+  const file = path.join(workspaceDir, 'config.yaml');
+  fs.writeFileSync(file, cf.editBlockLine(fs.readFileSync(file, 'utf8'), 'orchestrator', 'max_parallel', String(v)));
+}
 
 // --- Agents overview (cross-project, grouped by role) ---
 const AGENT_ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
-// ADR 0040 — supported git-isolation modes (the ONE canonical enum; run.cjs/index.cjs read it here).
-// `worktree` is documented in ADR 0040 but NOT yet supported (needs the workspace-root seam), so it is
-// deliberately absent — the server rejects a `worktree` request until that lands.
-const ISOLATION_MODES = ['in-place', 'branch'];
+// ADR 0040/0043 — supported git-isolation modes (the ONE canonical enum; run.cjs/index.cjs read it here).
+// in-place (current branch) | branch (task branch, same tree) | worktree (task branch in its own
+// git worktree — enables parallel autopilot, ADR 0043).
+const ISOLATION_MODES = ['in-place', 'branch', 'worktree'];
 
 // Parse an agents/{role}.md profile into { name, role (one-liner), description, skills[] }.
 // Extract the body of a `## {heading}` section (robust split — no fragile multiline regex).
@@ -803,7 +823,7 @@ module.exports = {
   // Orchestrator (schema 4): reads
   findTaskFolder, parseFrontmatter, serializeRunRecord, parseRunRecord, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
   // Orchestrator: the one canonical task-file writer + settings writes
-  appendLogEntry, writeTaskStatus, setRoleTool, setBudget, setAutoAdvance, setIsolation,
+  appendLogEntry, writeTaskStatus, setRoleTool, setBudget, setAutoAdvance, setIsolation, setAutopilot, setMaxParallel,
   // Agents overview + run history
   buildAgentsOverview, parseAgentProfile, AGENT_ROLES, ISOLATION_MODES, buildRunsHistory,
 };

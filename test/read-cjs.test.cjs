@@ -419,8 +419,18 @@ test('ADR 0040 settings: readConfig defaults isolation to in-place; setIsolation
     const yaml = fs.readFileSync(path.join(ws, 'config.yaml'), 'utf8');
     assert.strictEqual((yaml.match(/^\s+isolation:/gm) || []).length, 1, 'exactly one isolation line');
     assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.isolation, 'in-place');
-    assert.throws(() => read.setIsolation(ws, 'worktree'), /unknown-isolation/, 'worktree is not yet a supported mode');
+    read.setIsolation(ws, 'worktree'); // ADR 0043 — worktree is now a supported mode
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.isolation, 'worktree');
     assert.throws(() => read.setIsolation(ws, 'bogus'), /unknown-isolation/);
+    // ADR 0043 — autopilot + max_parallel round-trip
+    read.setAutopilot(ws, true);
+    read.setMaxParallel(ws, 5);
+    const o = read.buildProjectDetail(proj).config.orchestrator;
+    assert.strictEqual(o.autopilot, true);
+    assert.strictEqual(o.max_parallel, 5);
+    read.setAutopilot(ws, false);
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.autopilot, false);
+    assert.throws(() => read.setMaxParallel(ws, 0), /bad-max-parallel/);
   } finally { fs.rmSync(proj, { recursive: true, force: true }); }
 });
 

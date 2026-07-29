@@ -5,7 +5,7 @@
 #   tcgflow_version  : the tool semver that last touched this workspace (informational).
 #   workspace_schema : layout version; `upgrade` runs migrations keyed off it. See ADR 0021.
 tcgflow_version: "0.0.0"             # stamped by init
-workspace_schema: 7                  # current layout (7 = orchestrator.isolation per ADR 0040; 6 = run-record tool/gate/embed per ADR 0035/0036; 5 = hooks/ + Trusted Commands; 4 = runs/ + orchestrator.roles)
+workspace_schema: 8                  # current layout (8 = orchestrator.autopilot/max_parallel/pr per ADR 0043; 7 = orchestrator.isolation per ADR 0040; 6 = run-record tool/gate/embed per ADR 0035/0036; 5 = hooks/ + Trusted Commands; 4 = runs/ + orchestrator.roles)
 
 project:
   name: ""                          # filled by init
@@ -74,11 +74,20 @@ wiki_search:
 #   auto_ingest_on_pull: true   # the git post-merge hook (geekstackflow hooks) launches an
 #                               # ingester run on new pull digests when the Cockpit is running
 orchestrator:
-  # Per-run git isolation (ADR 0040). in-place = run on the current branch (default, today's behaviour);
-  # branch = create/continue a task branch `tcgflow/<TASK-ID>` in the same working tree (no auto-merge —
-  # you integrate it manually). `worktree` is documented in ADR 0040 but not yet supported. The Cockpit
-  # run controls can override this per run.
-  isolation: in-place               # in-place | branch
+  # Per-run git isolation (ADR 0040/0043). in-place = run on the current branch (default, today's
+  # behaviour); branch = create/continue a task branch `tcgflow/<TASK-ID>` in the same working tree;
+  # worktree = run in a dedicated git worktree so tasks can run in parallel. No auto-merge — you
+  # integrate the branch manually. The Cockpit run controls can override this per run.
+  isolation: in-place               # in-place | branch | worktree
+  # Autopilot (ADR 0043): every launched task runs in its own worktree, auto-chains planner → coder →
+  # reviewer, runs in parallel, then waits for a human-invoked PR (⑂ PR — no tester/ingester, no
+  # auto-merge). Off by default. Start all your tasks on the Cockpit and come back to review the PRs.
+  autopilot: false
+  max_parallel: 3                   # cap on concurrent worktree runs
+  pr:
+    remote: origin
+    base: ""                        # "" = the remote default branch
+    draft: true
   roles:
     planner: claude
     coder: claude

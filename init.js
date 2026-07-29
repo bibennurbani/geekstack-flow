@@ -33,6 +33,8 @@ Usage (all forms equivalent — pick what feels natural):
   geekstackflow hooks [target]                Install the git post-merge/post-rewrite hook: every git pull writes a
                                               pull digest into .tcgstackflow/raw/ for the Ingester (and, with
                                               orchestrator.auto_ingest_on_pull: true, auto-launches an ingest run).
+  geekstackflow pr <TASK-ID> [--yes]          Review what would be pushed on the task's worktree branch (tcgflow/<ID>),
+                                              then with --yes push it and open a draft PR (gh, else a compare URL). ADR 0043.
   geekstackflow --force [target]              Overwrite existing .tcgstackflow/
   geekstackflow --migrate-from <old> [target] Collect old AI infra into migration-notes/ for review
   geekstackflow --help                        Show this help
@@ -80,15 +82,16 @@ const GLOBAL_TEMPLATE = path.join(SCRIPT_DIR, 'templates/global/.tcgstackflow');
 // schema 5 = hooks/ area (git pull-digest hook) + Trusted Commands governance section
 // schema 6 = run-record frontmatter gains tool/gate/embed (per-tool runner adapter + deterministic re-embed) — ADR 0035/0036
 // schema 7 = orchestrator.isolation (per-run git isolation: in-place | branch) — ADR 0040
+// schema 8 = orchestrator.autopilot + max_parallel + pr (worktree autopilot → ready-for-PR) — ADR 0043
 function readToolVersion() {
   try { return JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, 'package.json'), 'utf8')).version || '0.0.0'; }
   catch { return '0.0.0'; }
 }
 const TOOL_VERSION = readToolVersion();
-const LATEST_SCHEMA = 7;
+const LATEST_SCHEMA = 8;
 
 function parseArgs(argv) {
-  const args = { force: false, help: false, upgrade: false, register: false, drift: false, doctor: false, wiki: false, ui: false, hooks: false, port: null, migrateFrom: null, target: process.cwd() };
+  const args = { force: false, help: false, upgrade: false, register: false, drift: false, doctor: false, wiki: false, ui: false, hooks: false, pr: false, yes: false, prTask: null, port: null, migrateFrom: null, target: process.cwd() };
   const positional = [];
   const raw = argv.slice(2);
 
@@ -116,6 +119,9 @@ function parseArgs(argv) {
   } else if (raw[0] === 'hooks') {
     raw.shift();
     args.hooks = true;
+  } else if (raw[0] === 'pr') {
+    raw.shift();
+    args.pr = true; // `geekstackflow pr <TASK-ID> [--yes]` — review + open the task's PR (ADR 0043)
   }
 
   for (let i = 0; i < raw.length; i++) {
@@ -124,6 +130,7 @@ function parseArgs(argv) {
     else if (a === '--force') args.force = true;
     else if (a === '--upgrade') args.upgrade = true;
     else if (a === '--wiki') args.wiki = true;
+    else if (a === '--yes' || a === '-y') args.yes = true;
     else if (a === '--port') { i++; args.port = parseInt(raw[i], 10); }
     else if (a === '--migrate-from') {
       i++;
@@ -131,7 +138,9 @@ function parseArgs(argv) {
       args.migrateFrom = path.resolve(raw[i]);
     } else positional.push(a);
   }
-  if (positional.length) args.target = path.resolve(positional[0]);
+  // For `pr`, the positional is the TASK-ID (run in the cwd); otherwise it's the target dir.
+  if (args.pr) args.prTask = positional[0] || null;
+  else if (positional.length) args.target = path.resolve(positional[0]);
   return args;
 }
 
@@ -531,6 +540,35 @@ const MIGRATIONS = [
         }
       }
       return n;
+    },
+  },
+  {
+    from: 7, to: 8,
+    label: 'add orchestrator.autopilot + max_parallel + pr (worktree autopilot → ready-for-PR) to config.yaml — ADR 0043',
+    apply(target, workspaceDir) {
+      const configPath = path.join(workspaceDir, 'config.yaml');
+      if (!fs.existsSync(configPath)) return 0;
+      let yaml = fs.readFileSync(configPath, 'utf8');
+      const orchBody = yaml.split(/^orchestrator:/m)[1] || '';
+      const orchScoped = orchBody.slice(0, (orchBody.search(/^\S/m) + 1) || orchBody.length);
+      if (/^\s+autopilot:/m.test(orchScoped)) return 0; // idempotent — already present
+      if (!/^orchestrator:/m.test(yaml)) return 0;       // no orchestrator block (pre-schema-4)
+      const block = [
+        '',
+        '  # Autopilot (ADR 0043): every launched task runs in its own git worktree, auto-chains',
+        '  # planner → coder → reviewer, runs in parallel, then waits for a human-invoked PR (no',
+        '  # tester/ingester, no auto-merge). Off by default.',
+        '  autopilot: false',
+        '  max_parallel: 3                   # cap on concurrent worktree runs',
+        '  pr:',
+        '    remote: origin',
+        '    base: ""                        # "" = the remote default branch',
+        '    draft: true',
+      ].join('\n');
+      yaml = yaml.replace(/^orchestrator:.*$/m, (l) => l + block);
+      fs.writeFileSync(configPath, yaml);
+      console.log('    ✓ added orchestrator.autopilot + max_parallel + pr to config.yaml (ADR 0043)');
+      return 1;
     },
   },
 ];
@@ -1648,6 +1686,40 @@ function runDoctor(target, opts = {}) {
   }
 }
 
+// ADR 0043 — `geekstackflow pr <TASK-ID> [--yes]`: review what would be pushed on the task's worktree
+// branch, then (with --yes) push it + open a draft PR. Shares ui/server/pr.cjs with the Cockpit action.
+async function runPrCommand(args) {
+  const target = args.target;
+  const taskId = args.prTask;
+  if (!taskId) { console.error('Usage: geekstackflow pr <TASK-ID> [--yes]'); process.exitCode = 1; return; }
+  if (!fs.existsSync(path.join(target, '.tcgstackflow', 'config.yaml'))) {
+    console.error(`No .tcgstackflow/ workspace at ${target}. Run this inside the project.`); process.exitCode = 1; return;
+  }
+  const pr = require(path.join(SCRIPT_DIR, 'ui/server/pr.cjs'));
+  const read = require(path.join(SCRIPT_DIR, 'ui/server/read.cjs'));
+  const prCfg = ((read.buildProjectDetail(target).config.orchestrator || {}).pr) || {};
+  const branch = pr.branchFor(taskId);
+  const plan = pr.prPlan(target, branch, { remote: prCfg.remote, base: prCfg.base });
+  console.log(`\nPR preview for ${taskId}`);
+  console.log(`  branch : ${plan.branch}`);
+  console.log(`  base   : ${plan.base}    remote: ${plan.remote}`);
+  console.log(`  commits: ${plan.ahead} ahead of ${plan.base}`);
+  if (plan.commits.length) console.log(plan.commits.map((c) => '    ' + c).join('\n'));
+  if (plan.diffstat) console.log('\n' + plan.diffstat.split('\n').map((l) => '    ' + l).join('\n'));
+  if (plan.ahead === 0) { console.log('\n  Nothing to push — the branch has no commits ahead of the base.'); return; }
+  if (!args.yes) {
+    console.log(`\n  Dry run. Re-run with --yes to push \`${branch}\` and open the PR` + (pr.hasGh() ? ' (draft, via gh).' : ' (gh not found → a compare URL will be printed).'));
+    return;
+  }
+  console.log('\n  Pushing + opening the PR…');
+  try {
+    const r = pr.openPr(target, branch, { remote: prCfg.remote, base: prCfg.base, draft: prCfg.draft !== false });
+    if (r.pr_url) console.log(`  ✓ PR opened: ${r.pr_url}`);
+    else if (r.compare_url) console.log(`  ✓ pushed \`${branch}\`. Open the PR: ${r.compare_url}`);
+    else console.log(`  ✓ pushed \`${branch}\` (no PR URL available).`);
+  } catch (e) { console.error('  ✗ PR failed: ' + String((e && e.message) || e)); process.exitCode = 1; }
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   if (args.help) {
@@ -1669,6 +1741,11 @@ async function main() {
 
   if (args.hooks) {
     installHooks(args.target);
+    return;
+  }
+
+  if (args.pr) {
+    await runPrCommand(args);
     return;
   }
 

@@ -39,8 +39,31 @@ function makeWorkspace() {
 
 const mig34 = gsf.MIGRATIONS.find((m) => m.from === 3 && m.to === 4);
 
-test('LATEST_SCHEMA is 7', () => {
-  assert.strictEqual(gsf.LATEST_SCHEMA, 7);
+test('LATEST_SCHEMA is 8', () => {
+  assert.strictEqual(gsf.LATEST_SCHEMA, 8);
+});
+
+const mig78 = gsf.MIGRATIONS.find((m) => m.from === 7 && m.to === 8);
+
+test('7→8 inserts orchestrator.autopilot + max_parallel + pr once; idempotent (ADR 0043)', () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-mig8-'));
+  const ws = path.join(target, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'config.yaml'),
+    ['workspace_schema: 7', '', 'orchestrator:', '  isolation: in-place', '  roles:', '    coder: claude', ''].join('\n'));
+  try {
+    assert.ok(mig78, 'a 7→8 migration entry exists');
+    assert.strictEqual(mig78.apply(target, ws), 1);
+    const yaml = fs.readFileSync(path.join(ws, 'config.yaml'), 'utf8');
+    assert.match(yaml, /^\s+autopilot: false/m);
+    assert.match(yaml, /^\s+max_parallel: 3/m);
+    assert.match(yaml, /^\s+pr:/m);
+    assert.match(yaml, /^\s+remote: origin/m);
+    // inserted under orchestrator: (before roles:), and the roles map is preserved
+    assert.match(yaml, /coder: claude/);
+    assert.strictEqual(mig78.apply(target, ws), 0, 're-run is a no-op');
+    assert.strictEqual((fs.readFileSync(path.join(ws, 'config.yaml'), 'utf8').match(/^\s+autopilot:/gm) || []).length, 1);
+  } finally { fs.rmSync(target, { recursive: true, force: true }); }
 });
 
 const mig67 = gsf.MIGRATIONS.find((m) => m.from === 6 && m.to === 7);

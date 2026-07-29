@@ -145,6 +145,7 @@ function subscribeRun(id) {
       toast('Chain → ' + d.role, 'info');
       try { await refreshTask(); } finally { subscribeRun(d.run_id); } // the hop must never be dropped
     } else if (d.state === 'done') { toast('Chain complete — ' + prettyStatus(d.status || ''), 'ok'); }
+    else if (d.state === 'ready-for-pr') { streamText.value += `\n\n━━ ready for PR: ${d.branch} — use the ⑂ PR button to review & open ━━\n\n`; toast('Ready for PR: ' + d.branch, 'ok'); refreshTask(); }
     else if (d.state === 'stopped') { toast('Chain stopped: ' + (d.reason === 'bounce-limit' ? `bounce limit (${d.next_ready} still ready)` : d.reason), 'err'); }
   });
   es.addEventListener('done', async () => {
@@ -187,6 +188,34 @@ async function quickRun(projectPath, taskId, role, chain = false) {
       detail.value = await api('/api/project?path=' + encodeURIComponent(projectPath));
     } else if (selected.value === null && !showRuns.value) { agents.value = await api('/api/agents'); }
   } else toast(j.error === 'task-already-running' ? taskId + ' already has an active run' : 'Launch failed: ' + (j.error || res.status), 'err');
+}
+// --- ADR 0043: PR command (review the task's worktree branch, then open the PR) + autopilot start-all ---
+const prPanel = ref(null);  // { task_id, ...plan } while the review dialog is open
+const prBusy = ref(false);
+const prResult = ref(null); // { pr_url | compare_url } after opening
+async function reviewPr(taskId) {
+  prResult.value = null; prBusy.value = true; prPanel.value = { task_id: taskId };
+  const j = await api('/api/task/pr/plan?path=' + encodeURIComponent(selected.value) + '&id=' + encodeURIComponent(taskId));
+  prBusy.value = false;
+  prPanel.value = (j && !j.error) ? { task_id: taskId, ...j } : { task_id: taskId, error: (j && j.error) || 'plan failed' };
+}
+function closePr() { prPanel.value = null; prResult.value = null; }
+async function confirmPr() {
+  if (!prPanel.value || prBusy.value) return;
+  prBusy.value = true;
+  const res = await postJSON('/api/task/pr', { path: selected.value, id: prPanel.value.task_id });
+  const j = await res.json().catch(() => ({}));
+  prBusy.value = false;
+  if (res.ok) { prResult.value = j; toast(j.pr_url ? 'PR opened' : 'Branch pushed — open the PR', 'ok'); }
+  else toast('PR failed: ' + (j.error || j.detail || res.status), 'err');
+}
+// Autopilot "start all": launch every actionable task in the project (each in its own worktree, run in
+// parallel up to max_parallel). With orchestrator.autopilot on, each launch becomes a worktree chain.
+async function startAll() {
+  const q = ((detail.value && detail.value.action_queue) || []).filter((a) => !a.run_state);
+  if (!q.length) { toast('Nothing ready to start', 'info'); return; }
+  toast(`Starting ${q.length} task(s)…`, 'info');
+  for (const a of q) await quickRun(selected.value, a.task_id, a.agent, false);
 }
 async function stopRun() {
   if (!runId.value) return;
@@ -403,6 +432,8 @@ const settingsRoles = ref({});
 const settingsBudget = ref('');
 const settingsAutoAdvance = ref(false);
 const settingsIsolation = ref('in-place'); // ADR 0040 — per-project default git isolation
+const settingsAutopilot = ref(false);      // ADR 0043 — worktree + chain-to-reviewer + parallel
+const settingsMaxParallel = ref('3');
 const settingsBusy = ref(false);
 const PRICING_TABLE = computed(() => pricingRows(pricing.value)); // derived from the single source
 function initSettings() {
@@ -411,10 +442,12 @@ function initSettings() {
   settingsBudget.value = o.budget_usd == null ? '' : String(o.budget_usd);
   settingsAutoAdvance.value = !!o.auto_advance;
   settingsIsolation.value = o.isolation || 'in-place';
+  settingsAutopilot.value = !!o.autopilot;
+  settingsMaxParallel.value = o.max_parallel == null ? '3' : String(o.max_parallel);
 }
 async function saveSettings() {
   settingsBusy.value = true;
-  const res = await postJSON('/api/project/settings', { path: selected.value, roles: settingsRoles.value, budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value), auto_advance: settingsAutoAdvance.value, isolation: settingsIsolation.value });
+  const res = await postJSON('/api/project/settings', { path: selected.value, roles: settingsRoles.value, budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value), auto_advance: settingsAutoAdvance.value, isolation: settingsIsolation.value, autopilot: settingsAutopilot.value, max_parallel: settingsMaxParallel.value });
   settingsBusy.value = false;
   if (res.ok) { toast('Settings saved', 'ok'); const p = projects.value.find((x) => x.path === selected.value); await loadProject(p); projectTab.value = 'settings'; }
   else { const j = await res.json().catch(() => ({})); toast('Save failed: ' + (j.error || res.status), 'err'); }
@@ -741,10 +774,11 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                 <span v-if="taskDetail.next_agent" class="muted" style="font-size:12px">next: <span class="agent" :class="'agent-' + taskDetail.next_agent">{{ taskDetail.next_agent }}</span></span>
                 <button v-if="taskDetail.next_agent === 'human'" class="btn" disabled title="The task is BLOCKED — it needs a human decision, not an agent">Blocked — needs a human</button>
                 <template v-else>
-                  <label class="muted" style="font-size:12px" title="Git isolation (ADR 0040): in-place runs on the current branch; branch creates/continues tcgflow/&lt;TASK-ID&gt; in the same working tree (no auto-merge — integrate it yourself)">git:
+                  <label class="muted" style="font-size:12px" title="Git isolation: in-place = current branch; branch = tcgflow/&lt;TASK-ID&gt; in the same tree (ADR 0040); worktree = a dedicated worktree so tasks run in parallel (ADR 0043). No auto-merge.">git:
                     <select class="select" v-model="isolationMode">
                       <option value="in-place">in-place</option>
                       <option value="branch">branch</option>
+                      <option value="worktree">worktree</option>
                     </select>
                   </label>
                   <label class="chain-toggle" title="Run to completion: after this role hands off, automatically run the next one (reviewer → tester → ingester) until the task is INGESTED, blocked, or bounces too often">
@@ -753,7 +787,38 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                   <button class="btn btn-primary" :disabled="runState === 'running' || runState === 'paused'" @click="startRun()">
                     {{ runState === 'running' ? 'Running…' : runState === 'paused' ? 'Paused' : 'Run ' + (taskDetail.next_agent || 'coder') }}
                   </button>
+                  <button class="btn" :disabled="runState === 'running'" title="Review the task's branch (tcgflow/&lt;ID&gt;) and open a PR — pushes on confirm (ADR 0043)" @click="reviewPr(selectedTask)">⑂ PR</button>
                 </template>
+              </div>
+
+              <!-- ADR 0043 — Review & open PR dialog -->
+              <div v-if="prPanel" class="modal-backdrop" @click.self="closePr">
+                <div class="modal" style="max-width:640px">
+                  <div class="row" style="align-items:center">
+                    <b>Review &amp; open PR — {{ prPanel.task_id }}</b>
+                    <span class="grow"></span>
+                    <button class="btn" @click="closePr">✕</button>
+                  </div>
+                  <div v-if="prBusy" class="empty">Working…</div>
+                  <div v-else-if="prPanel.error" class="badge st-BLOCKED">{{ prPanel.error }}</div>
+                  <template v-else-if="!prResult">
+                    <div class="muted" style="font-size:12px;margin:6px 0">branch <b class="mono">{{ prPanel.branch }}</b> → base <b class="mono">{{ prPanel.base }}</b> · {{ prPanel.ahead }} commit(s) ahead<span v-if="!prPanel.has_remote"> · no git remote</span></div>
+                    <div v-if="!prPanel.ahead" class="empty">Nothing to push — no commits ahead of the base.</div>
+                    <template v-else>
+                      <pre class="stream-pane" style="max-height:180px">{{ prPanel.commits.join('\n') }}
+
+{{ prPanel.diffstat }}</pre>
+                      <div class="row"><span class="grow"></span>
+                        <button class="btn btn-primary" :disabled="prBusy" @click="confirmPr">Push + open PR</button>
+                      </div>
+                    </template>
+                  </template>
+                  <div v-else style="margin-top:8px">
+                    <div v-if="prResult.pr_url">✓ PR opened: <a :href="prResult.pr_url" target="_blank" rel="noopener">{{ prResult.pr_url }}</a></div>
+                    <div v-else-if="prResult.compare_url">✓ Pushed. <a :href="prResult.compare_url" target="_blank" rel="noopener">Open the PR ↗</a></div>
+                    <div v-else>✓ Pushed <b class="mono">{{ prPanel.branch }}</b>.</div>
+                  </div>
+                </div>
               </div>
 
               <!-- live run stream -->
@@ -912,7 +977,13 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                 </div>
               </template>
 
-              <div class="section">Action queue</div>
+              <div class="section" style="display:flex;align-items:center;gap:8px">Action queue
+                <span class="grow"></span>
+                <button v-if="detail.action_queue.length && detail.config && detail.config.orchestrator && detail.config.orchestrator.autopilot"
+                  class="btn btn-primary" style="padding:4px 11px;font-size:12px"
+                  title="Autopilot: launch every ready task (each in its own worktree, in parallel) and come back to review their PRs"
+                  @click.stop="startAll">▶▶ Start all ({{ detail.action_queue.filter((a) => !a.run_state).length }})</button>
+              </div>
               <div v-if="!detail.action_queue.length" class="empty">Queue empty — nothing ready for an agent.</div>
               <div v-for="(a, i) in detail.action_queue" :key="a.task_id" class="card row interactive" @click="openTask(a)">
                 <div class="grow">
@@ -1078,8 +1149,21 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                 <select v-model="settingsIsolation" class="fsel">
                   <option value="in-place">in-place</option>
                   <option value="branch">branch</option>
+                  <option value="worktree">worktree</option>
                 </select>
-                <span class="muted" style="font-size:12px">Default for new runs (ADR 0040). <code>branch</code> creates/continues <code>tcgflow/&lt;TASK-ID&gt;</code> in the same working tree — no auto-merge, you integrate it. Overridable per run. (<code>worktree</code> is deferred.)</span>
+                <span class="muted" style="font-size:12px">Default for new runs. <code>branch</code>/<code>worktree</code> create/continue <code>tcgflow/&lt;TASK-ID&gt;</code> — no auto-merge, you integrate it. <code>worktree</code> runs in its own dir so tasks go parallel (ADR 0043). Overridable per run.</span>
+              </div>
+              <div class="section">Autopilot (ADR 0043)</div>
+              <div class="card">
+                <label class="srow" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                  <input type="checkbox" v-model="settingsAutopilot" />
+                  Autopilot: every launched task runs in its own <b>worktree</b>, auto-chains <b>planner → coder → reviewer</b>, and runs in parallel — then waits for you to review &amp; open its PR (⑂ PR). No tester/ingester, no auto-merge.
+                </label>
+                <div class="srow" style="margin-top:6px">
+                  <span style="width:120px">max parallel</span>
+                  <input v-model="settingsMaxParallel" class="fsearch" type="number" min="1" step="1" style="width:130px" />
+                  <span class="muted" style="font-size:12px">Cap on concurrent worktree runs. Note: parallel autopilot fires many real agent runs — mind the budget.</span>
+                </div>
               </div>
               <div class="section">Spend budget</div>
               <div class="card srow">

@@ -92,3 +92,52 @@ test('ensureBranch(): a git checkout failure PROPAGATES (executor fails the run 
   const { exec } = fakeExec({ 'rev-parse': 'main\n', 'show-ref': new Error('exit 1'), 'checkout': new Error('local changes would be overwritten') });
   assert.throws(() => git.ensureBranch('/proj', 'tcgflow/ES-1', exec), /would be overwritten/);
 });
+
+// --- ADR 0043 — worktree primitives ---
+
+// A fake exec that dispatches on the git subcommand string (worktree list/add/remove + show-ref).
+function wtFake({ listOut = '', branchExists = false } = {}) {
+  const calls = [];
+  const exec = (bin, args) => {
+    calls.push(args);
+    const j = args.join(' ');
+    if (j.includes('worktree list')) return listOut;
+    if (j.includes('show-ref')) { if (!branchExists) throw new Error('exit 1'); return ''; }
+    return ''; // worktree add / remove
+  };
+  return { exec, calls };
+}
+
+test('worktreeExists(): parses `worktree list --porcelain`; matches on resolved path', () => {
+  const wt = '/tmp/repo.worktrees/ES-1';
+  const listOut = `worktree /tmp/repo\nHEAD abc\nbranch refs/heads/main\n\nworktree ${wt}\nHEAD def\nbranch refs/heads/tcgflow/ES-1\n`;
+  assert.strictEqual(git.worktreeExists('/tmp/repo', wt, wtFake({ listOut }).exec), true);
+  assert.strictEqual(git.worktreeExists('/tmp/repo', '/tmp/repo.worktrees/OTHER', wtFake({ listOut }).exec), false);
+  assert.strictEqual(git.worktreeExists('/tmp/repo', wt, wtFake({ listOut: '' }).exec), false, 'empty list → false');
+});
+
+test('ensureWorktree(): reuse when it already exists (chain detect-and-continue), no add call', () => {
+  const wt = '/tmp/repo.worktrees/ES-1';
+  const f = wtFake({ listOut: `worktree ${wt}\nbranch refs/heads/tcgflow/ES-1\n` });
+  assert.deepStrictEqual(git.ensureWorktree('/tmp/repo', 'tcgflow/ES-1', wt, f.exec), { branch: 'tcgflow/ES-1', wtPath: wt, action: 'reused' });
+  assert.strictEqual(f.calls.filter((a) => a.join(' ').includes('worktree add')).length, 0, 'no add when reused');
+});
+
+test('ensureWorktree(): missing branch → `worktree add -b`; existing branch → `worktree add`', () => {
+  const wt = '/tmp/repo.worktrees/ES-1';
+  const created = wtFake({ listOut: '', branchExists: false });
+  assert.strictEqual(git.ensureWorktree('/tmp/repo', 'tcgflow/ES-1', wt, created.exec).action, 'created');
+  assert.deepStrictEqual(created.calls.find((a) => a.includes('add')), ['-C', '/tmp/repo', 'worktree', 'add', '-b', 'tcgflow/ES-1', wt]);
+  const attached = wtFake({ listOut: '', branchExists: true });
+  assert.strictEqual(git.ensureWorktree('/tmp/repo', 'tcgflow/ES-1', wt, attached.exec).action, 'attached');
+  assert.deepStrictEqual(attached.calls.find((a) => a.includes('add')), ['-C', '/tmp/repo', 'worktree', 'add', wt, 'tcgflow/ES-1']);
+});
+
+test('removeWorktree(): builds the argv, honors force', () => {
+  const f = wtFake();
+  git.removeWorktree('/tmp/repo', '/tmp/repo.worktrees/ES-1', { force: true }, f.exec);
+  assert.deepStrictEqual(f.calls[0], ['-C', '/tmp/repo', 'worktree', 'remove', '--force', '/tmp/repo.worktrees/ES-1']);
+  const f2 = wtFake();
+  git.removeWorktree('/tmp/repo', '/tmp/repo.worktrees/ES-1', {}, f2.exec);
+  assert.deepStrictEqual(f2.calls[0], ['-C', '/tmp/repo', 'worktree', 'remove', '/tmp/repo.worktrees/ES-1']);
+});

@@ -42,17 +42,18 @@ test('unknown task -> 404', async () => {
   assert.strictEqual(r.j.error, 'task-not-found');
 });
 
-// ADR 0040 — per-run isolation override is validated against the supported modes (worktree is deferred).
-test('POST /api/run rejects unknown isolation (incl. deferred worktree); accepts branch', async () => {
-  const bad = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder', isolation: 'worktree' });
-  assert.strictEqual(bad.s, 400);
-  assert.strictEqual(bad.j.error, 'unknown-isolation');
-  assert.deepStrictEqual(bad.j.supported, ['in-place', 'branch']);
+// ADR 0040/0043 — per-run isolation override is validated against the supported modes.
+test('POST /api/run rejects a bogus isolation; accepts branch and worktree', async () => {
   const bogus = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder', isolation: 'nope' });
   assert.strictEqual(bogus.s, 400);
+  assert.strictEqual(bogus.j.error, 'unknown-isolation');
+  assert.deepStrictEqual(bogus.j.supported, ['in-place', 'branch', 'worktree']);
   const ok = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder', isolation: 'branch' });
   assert.strictEqual(ok.s, 200, 'branch is a supported per-run override');
-  idx.runManager.abort(ok.j.run_id); // free the slot for later tests
+  idx.runManager.abort(ok.j.run_id); // free the slot
+  const wt = await req('POST', '/api/run', { project_path: proj, task_id: 'T-1', role: 'coder', isolation: 'worktree' });
+  assert.strictEqual(wt.s, 200, 'worktree is now a supported per-run override (ADR 0043)');
+  idx.runManager.abort(wt.j.run_id); // free the slot for later tests
 });
 
 // Card 2 — GET /api/pricing exposes the canonical server table so the SPA stops drifting (ADR 0034:21).

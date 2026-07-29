@@ -27,6 +27,7 @@ const runMod = require('./run.cjs');
 const runners = require('./runners/index.cjs'); // RunnerAdapter registry — the selector for the launch door (ADR 0035)
 const sessionReport = require('./session-report.cjs');
 const git = require('./git.cjs'); // the one seam for git shell-outs (Card 5 [22])
+const pr = require('./pr.cjs'); // ADR 0043 — the human-invoked PR command core
 
 // GOV-4 governance config. controlUrl is filled once the server binds a port (in start()).
 const governance = {
@@ -191,9 +192,32 @@ function handleRequest(req, res) {
       const rec = read.readRunTranscript(ws, id, run);
       if (rec.error) return sendJSON(res, 404, rec);
       if (!rec.git_base) return sendJSON(res, 200, { git_base: null, diff: '', note: 'No git base captured for this run (it predates diff capture, or the project is not a git repo).' });
+      // ADR 0043 — a worktree run's changes live in its worktree, not the main working tree; diff there.
+      const diffRoot = rec.worktree_path && fs.existsSync(rec.worktree_path) ? rec.worktree_path : proj;
       try {
-        return sendJSON(res, 200, { git_base: rec.git_base, diff: git.diffSince(proj, rec.git_base) });
+        return sendJSON(res, 200, { git_base: rec.git_base, diff: git.diffSince(diffRoot, rec.git_base) });
       } catch (e) { return sendJSON(res, 200, { git_base: rec.git_base, diff: '', note: 'git diff failed: ' + String((e && e.message) || e).slice(0, 200) }); }
+    }
+    // ADR 0043 — PR command. `/plan` previews what would be pushed (read-only); POST opens the PR
+    // (the human gate for the HIGH push/open-PR action — invoked only by the Cockpit action / CLI).
+    if (p === '/api/task/pr/plan') {
+      const proj = u.searchParams.get('path'); const id = u.searchParams.get('id');
+      if (!proj || !id) return sendJSON(res, 400, { error: 'missing path/id' });
+      if (!isWorkspace(proj)) return sendJSON(res, 400, { error: 'not-a-workspace' });
+      const prCfg = ((read.buildProjectDetail(proj).config.orchestrator || {}).pr) || {};
+      try { return sendJSON(res, 200, pr.prPlan(proj, pr.branchFor(id), { remote: prCfg.remote, base: prCfg.base })); }
+      catch (e) { return sendJSON(res, 400, { error: String((e && e.message) || e) }); }
+    }
+    if (p === '/api/task/pr') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { path: proj, id } = body || {};
+        if (!proj || !id) return sendJSON(res, 400, { error: 'missing path/id' });
+        if (!isWorkspace(proj)) return sendJSON(res, 400, { error: 'not-a-workspace' });
+        const prCfg = ((read.buildProjectDetail(proj).config.orchestrator || {}).pr) || {};
+        try { return sendJSON(res, 200, pr.openPr(proj, pr.branchFor(id), { remote: prCfg.remote, base: prCfg.base, draft: prCfg.draft })); }
+        catch (e) { return sendJSON(res, 502, { error: 'pr-failed', detail: String((e && e.message) || e).slice(0, 400) }); }
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
     // Settings write: orchestrator role→tool map + spend budget (config.yaml).
     if (p === '/api/project/settings') {
@@ -208,6 +232,8 @@ function handleRequest(req, res) {
           if (budget_usd !== undefined) read.setBudget(ws, budget_usd === null || budget_usd === '' ? NaN : budget_usd);
           if (body.auto_advance !== undefined) read.setAutoAdvance(ws, !!body.auto_advance);
           if (isolation !== undefined) read.setIsolation(ws, isolation); // ADR 0040 — per-project default
+          if (body.autopilot !== undefined) read.setAutopilot(ws, !!body.autopilot); // ADR 0043
+          if (body.max_parallel !== undefined && body.max_parallel !== '' && body.max_parallel !== null) read.setMaxParallel(ws, body.max_parallel);
           return sendJSON(res, 200, { ok: true });
         } catch (e) { return sendJSON(res, 400, { error: String((e && e.message) || e) }); }
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
@@ -287,8 +313,19 @@ function handleRequest(req, res) {
           if (!runners.get(tool)) return sendJSON(res, 501, { error: 'runner-not-implemented', tool }); // ADR 0025/0035 — only a registered RunnerAdapter can launch (codex/copilot are follow-on plans)
           if (!governanceGateReady) return sendJSON(res, 503, { error: 'governance-gate-not-ready' }); // API-8
           // chain: explicit per-launch flag, falling back to the workspace's auto_advance default.
-          const doChain = chain !== undefined ? !!chain : !!(detail.config.orchestrator && detail.config.orchestrator.auto_advance);
-          const run = runManager.enqueue(project_path, task_id, role, { force: !!force, chain: doChain && !isRaw, bounces: 0, isolation: isolation || undefined });
+          const cfg = (detail.config && detail.config.orchestrator) || {};
+          // ADR 0043 — autopilot bundles worktree isolation + chain-to-reviewer + parallel. When it's
+          // on, a launch defaults to worktree + chain (still overridable per launch). RAW ingests are
+          // always in-place. Resolving the effective isolation HERE lets the run-manager route a
+          // worktree run to the parallel lane; `max_parallel` sets its cap.
+          const autopilot = !isRaw && !!cfg.autopilot;
+          const effIsolation = isRaw ? 'in-place' : (isolation || (autopilot ? 'worktree' : cfg.isolation) || 'in-place');
+          const doChain = chain !== undefined ? !!chain : (autopilot || !!cfg.auto_advance);
+          const run = runManager.enqueue(project_path, task_id, role, {
+            force: !!force, chain: doChain && !isRaw, bounces: 0,
+            isolation: effIsolation, maxParallel: cfg.max_parallel,
+            ...(autopilot ? { autopilot: true } : {}),
+          });
           return sendJSON(res, 200, { run_id: run.run_id, state: run.state, chain: !!run.chain });
         }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
       }

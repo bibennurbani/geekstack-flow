@@ -25,15 +25,21 @@ const LEGAL = {
 };
 function canTransition(from, to) { return !!LEGAL[from] && LEGAL[from].includes(to); }
 
+const DEFAULT_PARALLEL = 3; // fallback cap on concurrent worktree runs per project (ADR 0043)
+
 function createRunManager({ launch } = {}) {
   const doLaunch = typeof launch === 'function' ? launch : () => {}; // RUN-6 default no-op stub
-  // RUN-2/RUN-3 — registry keyed by RESOLVED project path; each slot is { active, waiting[] }.
+  // RUN-2/RUN-3 — registry keyed by RESOLVED project path. Two concurrency lanes per slot (ADR 0043):
+  //   MAIN lane   — `active` (single) + `waiting[]`: in-place/branch runs mutate the shared working
+  //                 tree, so at most one at a time (ADR 0026, unchanged).
+  //   WORKTREE lane — `activeWt[]` (up to `cap`) + `waitingWt[]`: worktree runs each have their own
+  //                 working dir, so they run in parallel up to `cap` (`orchestrator.max_parallel`).
   const registry = new Map();
   const byId = new Map(); // run_id -> Run (fast lookup for state changes)
 
   function slot(projectPath) {
     const key = path.resolve(projectPath);
-    if (!registry.has(key)) registry.set(key, { active: null, waiting: [] });
+    if (!registry.has(key)) registry.set(key, { active: null, waiting: [], activeWt: [], waitingWt: [], cap: DEFAULT_PARALLEL });
     return { key, s: registry.get(key) };
   }
   function transition(run, to) {
@@ -43,6 +49,7 @@ function createRunManager({ launch } = {}) {
     if (TERMINAL.has(to)) run.ended_at = new Date().toISOString();
     return run;
   }
+  // MAIN lane: at most one active per project (the ADR 0026 lock).
   function promote(s, key) {
     if (s.active || !s.waiting.length) return;
     const run = s.waiting.shift();
@@ -50,20 +57,31 @@ function createRunManager({ launch } = {}) {
     transition(run, 'running');
     try { doLaunch(run); } catch (e) { /* a throwing launcher fails the run, frees the lock */ fail(run.run_id, String((e && e.message) || e)); }
   }
+  // WORKTREE lane: fill up to `cap` concurrent runs (ADR 0043 parallel autopilot).
+  function promoteWt(s, key) {
+    while (s.activeWt.length < s.cap && s.waitingWt.length) {
+      const run = s.waitingWt.shift();
+      s.activeWt.push(run);
+      transition(run, 'running');
+      try { doLaunch(run); } catch (e) { fail(run.run_id, String((e && e.message) || e)); }
+    }
+  }
   function finish(run_id, to, errMsg) {
     const run = byId.get(run_id);
     if (!run) return null;
     if (!TERMINAL.has(run.state)) transition(run, to);
     if (errMsg) run.last_error = errMsg;
     const { s, key } = slot(run.project_path);
-    if (s.active && s.active.run_id === run_id) { s.active = null; promote(s, key); }
-    else { s.waiting = s.waiting.filter((w) => w.run_id !== run_id); } // cancel a still-queued run
+    const wtIdx = s.activeWt.findIndex((r) => r.run_id === run_id);
+    if (s.active && s.active.run_id === run_id) { s.active = null; promote(s, key); }         // main lane freed
+    else if (wtIdx >= 0) { s.activeWt.splice(wtIdx, 1); promoteWt(s, key); }                   // worktree lane freed
+    else { s.waiting = s.waiting.filter((w) => w.run_id !== run_id); s.waitingWt = s.waitingWt.filter((w) => w.run_id !== run_id); } // cancel a still-queued run
     return run;
   }
 
-  // RUN-2 — enqueue; promote immediately if the project slot is free, else FIFO-queue.
-  // `extra` is spread onto the run BEFORE promote (which may launch synchronously) — used for
-  // launch flags the executor must see, e.g. `force` (budget override).
+  // RUN-2 — enqueue; promote immediately if the lane has room, else FIFO-queue. `extra` is spread onto
+  // the run BEFORE promote (which may launch synchronously) — used for launch flags the executor must
+  // see (e.g. `force`, `isolation`). A worktree run (`isolation: 'worktree'`) takes the parallel lane.
   function enqueue(projectPath, task_id, role, extra = {}) {
     const run = {
       ...extra,
@@ -76,8 +94,14 @@ function createRunManager({ launch } = {}) {
     };
     byId.set(run.run_id, run);
     const { s, key } = slot(projectPath);
-    s.waiting.push(run);
-    promote(s, key); // becomes running iff slot was free (sequential-within-project, ADR 0026)
+    if (run.isolation === 'worktree') {
+      if (Number.isFinite(+extra.maxParallel) && +extra.maxParallel > 0) s.cap = +extra.maxParallel; // latest config wins
+      s.waitingWt.push(run);
+      promoteWt(s, key); // runs now iff the parallel lane has room (ADR 0043)
+    } else {
+      s.waiting.push(run);
+      promote(s, key); // becomes running iff the main slot was free (sequential-within-project, ADR 0026)
+    }
     return run;
   }
   const complete = (run_id) => finish(run_id, 'done');
@@ -86,22 +110,27 @@ function createRunManager({ launch } = {}) {
   function pause(run_id) { const r = byId.get(run_id); if (r) transition(r, 'paused'); return r; }
   function resume(run_id) { const r = byId.get(run_id); if (r) transition(r, 'running'); return r; }
 
-  // RUN-3 — the lock is the active slot; no lockfile (ADR 0024 no second store).
-  function isProjectBusy(projectPath) { return !!slot(projectPath).s.active; }
+  // RUN-3 — a project is "busy" if any run is active in either lane (used to refuse a read-only chat
+  // that would race a live session). No lockfile (ADR 0024 no second store).
+  function isProjectBusy(projectPath) { const { s } = slot(projectPath); return !!s.active || s.activeWt.length > 0; }
 
   const get = (run_id) => byId.get(run_id) || null;
   function list() {
     const out = {};
-    for (const [key, s] of registry) out[key] = { active: s.active, waiting: s.waiting.slice() };
+    for (const [key, s] of registry) out[key] = { active: s.active, waiting: s.waiting.slice(), activeWt: s.activeWt.slice(), waitingWt: s.waitingWt.slice(), cap: s.cap };
     return out;
   }
 
   // RUN-4 (server side) — transient overlay for a project's action queue, injected into read.cjs.
+  // Includes BOTH lanes so the per-task duplicate guard and the UI badges see every in-flight run.
   function overlayFor(projectPath) {
     const { s } = slot(projectPath);
     const map = {};
-    if (s.active) map[s.active.task_id] = { run_state: s.active.state, run_id: s.active.run_id, role: s.active.role };
-    for (const w of s.waiting) if (!map[w.task_id]) map[w.task_id] = { run_state: w.state, run_id: w.run_id, role: w.role };
+    const add = (r) => { if (r && !map[r.task_id]) map[r.task_id] = { run_state: r.state, run_id: r.run_id, role: r.role }; };
+    if (s.active) add(s.active);
+    for (const w of s.activeWt) add(w);
+    for (const w of s.waiting) add(w);
+    for (const w of s.waitingWt) add(w);
     return map;
   }
 

@@ -4,6 +4,15 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — Worktree autopilot: parallel task runs → ready-for-PR (ADR 0043, schema 8)
+
+- **`orchestrator.autopilot` (default off)** — turn it on and every task you launch runs in its own git **worktree** (`<repo>.worktrees/<TASK-ID>`), auto-chains **planner → coder → reviewer**, and runs **in parallel** with your other tasks; each finished task waits for you to **review & open its PR**. On the Cockpit you press **▶▶ Start all**, then come back to a set of ready PRs. Chain stops at reviewer (no tester/ingester, no auto-merge).
+- **`isolation: worktree` is now supported** (completing ADR 0040's enum). The agent works entirely inside the worktree; `.qmd` is **symlinked** in (gitignored → no git noise) so wiki search still works; the run record + budget stay at the repo root while hand-off detection reads Status from the worktree. `main` and your main working tree are never touched.
+- **Parallel for worktree runs (lifts ADR 0026, bounded).** A second run-manager lane runs worktree tasks concurrently up to **`orchestrator.max_parallel`** (default 3); in-place/branch keep the single per-repo slot. The per-task guard still blocks a duplicate run on one task.
+- **The PR command — UI + CLI, human-invoked.** A per-task **⑂ PR** action in the Cockpit and **`geekstackflow pr <TASK-ID> [--yes]`** both preview the branch's commits + diff, then on confirm push the branch and open a **draft** PR via `gh` (or a GitHub compare URL if `gh`/remote is absent). Push + open-PR stay HIGH — the command is the approval; nothing hits the remote unattended.
+- **Config/schema** — `orchestrator` gains `autopilot`, `max_parallel`, `pr.{remote,base,draft}` (schema 7→8, idempotent migration). Autopilot Settings + a `worktree` isolation option added to the Cockpit.
+- New ADR: **0043** (worktree autopilot; parallel-for-worktree; the human-invoked PR command).
+
 ### Added — Browser verification: `/tcgflow-web-test` + the `web-test` skill (ADR 0041)
 
 - **`/tcgflow-web-test [TASK-ID] [environment / URL / notes]`** (19th command) — drives a **real browser** (Claude in Chrome) to verify the acceptance criteria a green suite can't settle. Everything after the command is free-form context: a task ID, an environment keyword or URL, an auth note (*"I'm already signed in via Microsoft"*), a focus. With **no** task ID the scope is your **uncommitted diff** — the "does what I just changed actually work?" case.

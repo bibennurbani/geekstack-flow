@@ -11,6 +11,7 @@ const cp = require('child_process');
 const read = require('./read.cjs');
 const cf = require('./config-fields.cjs'); // config.yaml parse primitives (Card 3 [0])
 const git = require('./git.cjs'); // the one seam for git shell-outs (Card 5 [22])
+const pr = require('./pr.cjs'); // ADR 0043 — canonical branchFor + the PR command core
 const sessionReport = require('./session-report.cjs'); // pricing for the launch-time budget re-check
 const runners = require('./runners/index.cjs'); // RunnerAdapter registry/selector (ADR 0035)
 
@@ -52,14 +53,29 @@ function readIsolation(workspaceDir) {
   return ISOLATION_MODES.includes(v) ? v : 'in-place';
 }
 
-// The task branch name: `tcgflow/<git-ref-safe task_id>`. Keyed on task_id (stable across the
-// coder→reviewer→tester→ingester chain) so downstream roles detect-and-continue on the same branch.
-function branchFor(taskId) {
-  const safe = String(taskId || '').trim()
-    .replace(/[^A-Za-z0-9._-]+/g, '-') // collapse anything not git-ref-safe (also drops slashes)
-    .replace(/\.\.+/g, '.')            // git forbids '..' in refs
-    .replace(/^[-.]+|[-.]+$/g, '');    // no leading/trailing '-' or '.'
-  return 'tcgflow/' + (safe || 'task');
+// The task branch name is the canonical helper in pr.cjs (shared with the PR command). Keyed on
+// task_id, so the chain's downstream roles detect-and-continue on the same branch/worktree.
+const branchFor = pr.branchFor;
+
+// ADR 0043 — the per-task worktree directory: a sibling `<repo>.worktrees/<TASK-ID>` dir. git can't
+// nest a worktree inside its own repo cleanly, and init.js already excludes `*.worktrees` sibling dirs
+// from project auto-detection (init.js:1005). Keyed on task_id so the chain reuses one worktree.
+function worktreePathFor(repoRoot, taskId) {
+  const safe = String(taskId || '').trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'task';
+  return path.join(path.dirname(repoRoot), path.basename(repoRoot) + '.worktrees', safe);
+}
+
+// ADR 0043 — share the repo-root `.qmd` index into a worktree so wiki search (qmd, ADR 0030) works
+// there. `.qmd/` is gitignored, so the symlink adds no git noise. Best-effort — never throws (wiki
+// search degrades to the index.md fallback if it can't be linked).
+function linkQmd(repoRoot, wtPath) {
+  try {
+    const src = path.join(repoRoot, '.qmd');
+    const dst = path.join(wtPath, '.qmd');
+    if (!fs.existsSync(src)) return;                                        // no index to share
+    if (fs.lstatSync(dst, { throwIfNoEntry: false })) return;              // already present (symlink or dir)
+    fs.symlinkSync(src, dst, 'dir');
+  } catch { /* best-effort */ }
 }
 
 // Effective isolation for a run: an explicit per-run override wins, else the project default, else
@@ -100,7 +116,7 @@ function writeRunRecord(workspaceDir, run, live, state) {
       session_id: live.latest_session_id || live.session_id,
       tokens: live.tokens || ZERO(), state,
       started_at: live.started_at, ended_at: live.ended_at, git_base: live.git_base,
-      isolation: live.isolation, branch: live.branch, // ADR 0040 — omitted from the record when in-place
+      isolation: live.isolation, branch: live.branch, worktree_path: live.worktree_path, // ADR 0040/0043 — omitted when in-place
       embed: live.embed, wiki_discovery: live.wiki_discovery, transcript: live.transcript,
     });
     fs.writeFileSync(path.join(dir, run.run_id + '.md'), body);
@@ -251,7 +267,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
         catch { spec = adapter.buildSpawn(run, { ...ctx, governance: null }, claudeBin); }
       }
       let child;
-      try { child = spawn(spec.bin, spec.args, { cwd: run.project_path, env: spec.env }); }
+      try { child = spawn(spec.bin, spec.args, { cwd: run.exec_root || run.project_path, env: spec.env }); } // ADR 0043 — worktree runs spawn in the worktree
       catch (e) { if (govCfgPath) { try { fs.unlinkSync(govCfgPath); } catch { /* ignore */ } } return resolve(-1); }
       run._child = child;
       child.on('error', () => resolve(-1)); // ENOENT etc.
@@ -321,8 +337,30 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
         onRunTerminal(run.run_id);
         return;
       }
+    } else if (L.isolation === 'worktree') {
+      // ADR 0043 — run in a dedicated git worktree so tasks can run in parallel. cwd moves to the
+      // worktree (run.exec_root), but the SERVER's artifacts (run record, budget) stay at the repo
+      // root; the agent works entirely inside the worktree with a shared .qmd index.
+      try {
+        const branch = branchFor(run.task_id);
+        const wtPath = worktreePathFor(run.project_path, run.task_id);
+        const r = gitSeam.ensureWorktree(run.project_path, branch, wtPath);
+        run.exec_root = r.wtPath;
+        L.branch = branch; L.worktree_path = r.wtPath;
+        linkQmd(run.project_path, r.wtPath);
+        emit(run.run_id, 'isolation', { mode: 'worktree', branch, worktree_path: r.wtPath, action: r.action });
+      } catch (e) {
+        emit(run.run_id, 'status', { state: 'error', error: 'isolation-failed', detail: String((e && e.message) || e).slice(0, 300) });
+        runManager.fail(run.run_id, 'isolation-failed');
+        onRunTerminal(run.run_id);
+        return;
+      }
     }
-    if (!L.git_base) L.git_base = gitSeam.head(run.project_path); // for the per-run diff viewer (base = task branch HEAD)
+    // taskRoot is where the AGENT reads/writes task files (the worktree for a worktree run, else the
+    // repo). The loop's hand-off detection, the Status safety-net, and git_base all target it, since
+    // that's where the agent wrote Status. The run RECORD still writes to the repo-root workspaceDir.
+    const taskRoot = run.exec_root || run.project_path;
+    if (!L.git_base) L.git_base = gitSeam.head(taskRoot); // for the per-run diff viewer (base = task branch/worktree HEAD)
     // Launch placeholder record (state: running, no ended_at) — THIS is what lets the boot-time
     // orphan scan detect a server death mid-run; the terminal write below overwrites it.
     writeRunRecord(workspaceDir, run, L, 'running');
@@ -335,7 +373,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       if (L.aborted || code !== 0) break;                      // aborted, timeout (-2), or spawn/exit failure
       if (isRawRun(run)) break;                                // raw-inbox ingests are single-shot (no task Status to advance)
       let settled = false;                                     // agent handed off (IN_REVIEW+) — or BLOCKED it for a human
-      try { const d = read.buildTaskDetail(run.project_path, run.task_id); settled = !d.error && (ADVANCED.has(d.status) || d.status === 'BLOCKED'); } catch { /* ignore */ }
+      try { const d = read.buildTaskDetail(taskRoot, run.task_id); settled = !d.error && (ADVANCED.has(d.status) || d.status === 'BLOCKED'); } catch { /* ignore */ }
       if (settled) break;
       if (L.transcript.length === before) break;               // produced nothing new → stop spinning
       if (iter + 1 < maxIters) emit(run.run_id, 'status', { state: 'continuing', iter: iter + 1 });
@@ -349,7 +387,7 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       runManager.abort(run.run_id);
     } else if (code === 0) {
       writeRunRecord(workspaceDir, run, L, 'done');
-      statusSafetyNet(run.project_path, run.task_id);
+      statusSafetyNet(taskRoot, run.task_id);
       emit(run.run_id, 'done', { session_id: L.latest_session_id || L.session_id, tokens: L.tokens, iterations: iters });
       runManager.complete(run.run_id);
       maybeChain(run, workspaceDir); // auto-advance: enqueue the next lifecycle role (after the slot freed)
@@ -391,8 +429,9 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   const PIPELINE = ['planner', 'coder', 'reviewer', 'tester', 'ingester'];
   function maybeChain(run, workspaceDir) {
     if (!run.chain || isRawRun(run)) return;
+    const taskRoot = run.exec_root || run.project_path; // read the status the agent wrote (worktree for worktree runs)
     let d;
-    try { d = read.buildTaskDetail(run.project_path, run.task_id); } catch { return; }
+    try { d = read.buildTaskDetail(taskRoot, run.task_id); } catch { return; }
     if (!d || d.error) return;
     if (d.status === 'BLOCKED') return emit(run.run_id, 'chain', { state: 'stopped', reason: 'blocked' });
     const next = d.next_agent;
@@ -404,7 +443,14 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     let maxB = 1;
     try { const m = fs.readFileSync(path.join(workspaceDir, 'config.yaml'), 'utf8').match(/^\s+max_bounces:\s*(\d+)/m); if (m) maxB = parseInt(m[1], 10); } catch { /* default */ }
     if (bounced && bounces > maxB) return emit(run.run_id, 'chain', { state: 'stopped', reason: 'bounce-limit', bounces, next_ready: next });
-    const nextRun = runManager.enqueue(run.project_path, run.task_id, next, { chain: true, bounces });
+    // ADR 0043 — autopilot stops after a clean reviewer pass (planner→coder→reviewer): it does NOT
+    // auto-run tester/ingester. The task is left ready for a human-invoked PR on its worktree branch.
+    if (run.autopilot && run.role === 'reviewer' && !bounced) {
+      return emit(run.run_id, 'chain', { state: 'ready-for-pr', task_id: run.task_id, branch: branchFor(run.task_id), worktree_path: run.exec_root || null });
+    }
+    // Carry the isolation mode (and autopilot) through the chain so downstream roles reuse the SAME
+    // branch/worktree (detect-and-continue) and see the previous role's changes.
+    const nextRun = runManager.enqueue(run.project_path, run.task_id, next, { chain: true, bounces, ...(run.isolation ? { isolation: run.isolation } : {}), ...(run.autopilot ? { autopilot: true } : {}) });
     emit(run.run_id, 'chain', { state: 'next', role: next, run_id: nextRun.run_id, bounces });
   }
 
@@ -470,4 +516,4 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
   };
 }
 
-module.exports = { buildRunPrompt, readRoleTool, embedOnIngest, readIsolation, branchFor, resolveIsolation, ISOLATION_MODES, defaultEmbed, writeRunRecord, statusSafetyNet, reconcileOrphanedRuns, createExecutor, ROLES };
+module.exports = { buildRunPrompt, readRoleTool, embedOnIngest, readIsolation, branchFor, worktreePathFor, resolveIsolation, ISOLATION_MODES, defaultEmbed, writeRunRecord, statusSafetyNet, reconcileOrphanedRuns, createExecutor, ROLES };
