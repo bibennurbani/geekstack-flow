@@ -141,3 +141,56 @@ test('removeWorktree(): builds the argv, honors force', () => {
   git.removeWorktree('/tmp/repo', '/tmp/repo.worktrees/ES-1', {}, f2.exec);
   assert.deepStrictEqual(f2.calls[0], ['-C', '/tmp/repo', 'worktree', 'remove', '/tmp/repo.worktrees/ES-1']);
 });
+
+// --- ADR 0043 worktree reclamation (item 4) --------------------------------------------------------
+// removeWorktree existed and was unit-tested but was called from NO server path, so autopilot
+// accumulated one worktree dir + one checked-out branch per task forever.
+
+const runMod = require('../ui/server/run.cjs');
+const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+
+test('worktreesRoot agrees with run.worktreePathFor — cleanup cannot go blind to what the executor creates', () => {
+  // The contract is absolute project paths: every caller gets project_path from the Cockpit registry.
+  for (const repo of ['/repos/widgets', '/repos/widgets/', '/a/b/c/proj']) {
+    const fromRun = path.dirname(runMod.worktreePathFor(repo, 'ES-1'));
+    assert.strictEqual(git.worktreesRoot(repo), fromRun,
+      `worktreesRoot(${repo}) must equal the parent of run.worktreePathFor — the two formulas have drifted`);
+  }
+  // Intentional difference: worktreesRoot resolves, because isReclaimableWorktreePath compares resolved
+  // paths to refuse traversal. worktreePathFor does not resolve, and is only ever handed an absolute path.
+  assert.strictEqual(git.worktreesRoot('relative/repo'), path.resolve('relative/repo.worktrees'));
+});
+
+test('isReclaimableWorktreePath accepts only direct children of the worktrees root', () => {
+  const repo = '/repos/widgets';
+  const root = git.worktreesRoot(repo);
+  assert.ok(git.isReclaimableWorktreePath(repo, path.join(root, 'ES-1')));
+  // and refuses everything else
+  assert.ok(!git.isReclaimableWorktreePath(repo, root), 'the root itself is not removable');
+  assert.ok(!git.isReclaimableWorktreePath(repo, path.join(root, 'ES-1', 'nested')), 'grandchild refused');
+  assert.ok(!git.isReclaimableWorktreePath(repo, path.join(root, '..', 'widgets')), 'sibling escape refused');
+  assert.ok(!git.isReclaimableWorktreePath(repo, '/etc/passwd'), 'absolute elsewhere refused');
+  assert.ok(!git.isReclaimableWorktreePath(repo, repo), 'the repo itself refused');
+  assert.ok(!git.isReclaimableWorktreePath(repo, ''), 'empty refused');
+  assert.ok(!git.isReclaimableWorktreePath(repo, null), 'null refused');
+  // traversal that would resolve back out of the root
+  assert.ok(!git.isReclaimableWorktreePath(repo, path.join(root, '../../etc')), 'traversal refused');
+});
+
+test('listTaskWorktrees reports existing dirs sorted, and tolerates an absent root', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-wt-'));
+  const repo = path.join(tmp, 'widgets');
+  fs.mkdirSync(repo, { recursive: true });
+  try {
+    assert.deepStrictEqual(git.listTaskWorktrees(repo), [], 'no worktrees dir → empty, not a throw');
+    const root = git.worktreesRoot(repo);
+    fs.mkdirSync(path.join(root, 'ES-2'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'ES-1'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'stray.txt'), 'not a dir');
+    const got = git.listTaskWorktrees(repo);
+    assert.deepStrictEqual(got.map((w) => w.task_id), ['ES-1', 'ES-2'], 'dirs only, sorted');
+    assert.strictEqual(got[0].path, path.join(root, 'ES-1'));
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});

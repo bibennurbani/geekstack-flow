@@ -444,3 +444,30 @@ test('Card 3 run-record: parse defaults — tokens always 4 keys; absent session
   assert.deepStrictEqual(back.tokens, { input: 0, output: 0, cache_read: 0, cache_creation: 0 });
   assert.deepStrictEqual(read.parseRunRecord('').tokens, { input: 0, output: 0, cache_read: 0, cache_creation: 0 }, 'garbage → safe defaults, never throws');
 });
+
+// --- ADR 0037 second signal: write_attempts round-trip -------------------------------------------
+// Copies wiki_discovery's omit-when-absent pattern so existing runs/ records stay byte-identical.
+
+test('serializeRunRecord: write_attempts round-trips and is omitted when absent or zero', () => {
+  const base = { task: 'T-1', role: 'reviewer', tokens: { input: 1, output: 2, cache_read: 3, cache_creation: 4 }, state: 'done', ended_at: '2026-08-05T00:00:00.000Z' };
+
+  const withWrites = read.serializeRunRecord({ ...base, write_attempts: { role: 'reviewer', count: 3, tools: { Write: 1, Edit: 2 } } });
+  const fm = read.parseFrontmatter(withWrites);
+  assert.strictEqual(fm.write_attempts.role, 'reviewer');
+  assert.strictEqual(fm.write_attempts.count, 3);
+  // flat scalar, NOT a nested map — the frontmatter parser is two levels deep and a third level leaks
+  // the tool keys into the parent object.
+  assert.strictEqual(fm.write_attempts.tools, 'Edit=2 Write=1', 'tools is a sorted flat scalar');
+  assert.strictEqual(fm.role, 'reviewer', 'the parent object is not polluted by the tools breakdown');
+
+  // Existing records must be untouched: absent, zero-count, and empty-tools all omit the block.
+  assert.ok(!read.serializeRunRecord(base).includes('write_attempts'), 'absent → omitted');
+  assert.ok(!read.serializeRunRecord({ ...base, write_attempts: { role: 'coder', count: 0, tools: {} } }).includes('write_attempts'), 'zero → omitted');
+  assert.strictEqual(read.serializeRunRecord(base), read.serializeRunRecord({ ...base, write_attempts: undefined }),
+    'a record without the signal is byte-identical to before the field existed');
+
+  // count without a tools breakdown still serializes
+  const noTools = read.parseFrontmatter(read.serializeRunRecord({ ...base, write_attempts: { role: 'tester', count: 1 } }));
+  assert.strictEqual(noTools.write_attempts.count, 1);
+  assert.strictEqual(noTools.write_attempts.tools, undefined);
+});

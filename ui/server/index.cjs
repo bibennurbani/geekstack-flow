@@ -66,6 +66,29 @@ function gov6Record(rec, decision) {
 }
 const approvals = createApprovals({ emit: executor.pushEvent, record: gov6Record });
 
+// Push + open-PR is the only remote-mutating action in the system, and governance.md:18 lists it HIGH —
+// yet it was the one HIGH action with no audit trail, while a `pnpm install` inside a run got both an
+// approval card and a structured `governance:` block. The PR command IS the approval (ADR 0043 left it
+// human-invoked deliberately), so this does not add a second gate — it records the one that happened, in
+// the same shape and through the same canonical writer as every in-run decision, so "pushed and opened a
+// PR" is indistinguishable in the record from any other approval (ADR 0027's stated guarantee).
+function recordPrApproval(projectPath, taskId, result) {
+  try {
+    const found = read.findTaskFolder(path.join(projectPath, '.tcgstackflow'), taskId);
+    if (!found) return;
+    const target = (result && (result.pr_url || result.compare_url)) || null;
+    const action = `Push branch ${result.branch} to ${result.base ? `${result.base} ` : ''}remote and open a PR${result.method === 'gh' ? '' : ' (compare link — gh not installed)'}`;
+    read.appendLogEntry(found.folder, taskId, {
+      timestamp: new Date().toISOString(), author: 'orchestrator',
+      summary: `Governance: HIGH action approved — ${action}`,
+      why: 'Human-invoked PR command; invoking it is the approval (ADR 0043/0027).',
+      validation: [target ? `PR/compare: ${target}` : 'Pushed; no PR URL returned'],
+      tags: ['governance', 'approved', 'pr'],
+      governance: { action, risk: 'HIGH', decision: 'approved', via: 'pr-command' },
+    });
+  } catch { /* recording must never fail the PR that already succeeded */ }
+}
+
 // API-8 / GOV-4 — the gate is now wired, so orchestrated runs are ENABLED. Kept as an explicit,
 // toggleable flag (POST /api/run refuses with 503 when false).
 let governanceGateReady = true;
@@ -215,8 +238,46 @@ function handleRequest(req, res) {
         if (!proj || !id) return sendJSON(res, 400, { error: 'missing path/id' });
         if (!isWorkspace(proj)) return sendJSON(res, 400, { error: 'not-a-workspace' });
         const prCfg = ((read.buildProjectDetail(proj).config.orchestrator || {}).pr) || {};
-        try { return sendJSON(res, 200, pr.openPr(proj, pr.branchFor(id), { remote: prCfg.remote, base: prCfg.base, draft: prCfg.draft })); }
-        catch (e) { return sendJSON(res, 502, { error: 'pr-failed', detail: String((e && e.message) || e).slice(0, 400) }); }
+        try {
+          const result = pr.openPr(proj, pr.branchFor(id), { remote: prCfg.remote, base: prCfg.base, draft: prCfg.draft });
+          recordPrApproval(proj, id, result); // audit the HIGH action that just happened
+          return sendJSON(res, 200, result);
+        } catch (e) { return sendJSON(res, 502, { error: 'pr-failed', detail: String((e && e.message) || e).slice(0, 400) }); }
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+    }
+    // ADR 0043 left worktree removal manual (deletion is HIGH), but nothing ever reclaimed them, so
+    // autopilot accumulated one directory + one checked-out branch per task forever. These two endpoints
+    // add the affordance, not automation: GET reports what is reclaimable, POST removes exactly one
+    // named task's worktree. A task is reclaimable only once it reaches INGESTED/COMPLETED.
+    if (p === '/api/project/worktrees') {
+      if (req.method !== 'GET') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      const proj = u.searchParams.get('path');
+      if (!proj) return sendJSON(res, 400, { error: 'missing path' });
+      if (!isWorkspace(proj)) return sendJSON(res, 400, { error: 'not-a-workspace' });
+      const items = git.listTaskWorktrees(proj).map((w) => {
+        let status = null;
+        try {
+          const d = read.buildTaskDetail(proj, w.task_id);
+          if (d && !d.error) status = d.status;
+        } catch { /* unknown task → not reclaimable */ }
+        return { ...w, status, reclaimable: status === 'INGESTED' || status === 'COMPLETED' };
+      });
+      return sendJSON(res, 200, { root: git.worktreesRoot(proj), worktrees: items });
+    }
+    if (p === '/api/project/worktree/remove') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { path: proj, id, force } = body || {};
+        if (!proj || !id) return sendJSON(res, 400, { error: 'missing path/id' });
+        if (!isWorkspace(proj)) return sendJSON(res, 400, { error: 'not-a-workspace' });
+        const target = path.join(git.worktreesRoot(proj), String(id));
+        // Hard refusal, independent of how `id` was constructed — a traversal or absolute path can
+        // never reach removeWorktree.
+        if (!git.isReclaimableWorktreePath(proj, target)) return sendJSON(res, 400, { error: 'refused-path' });
+        try {
+          git.removeWorktree(proj, target, { force: !!force });
+          return sendJSON(res, 200, { removed: true, path: target });
+        } catch (e) { return sendJSON(res, 502, { error: 'remove-failed', detail: String((e && e.message) || e).slice(0, 400) }); }
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
     // Settings write: orchestrator role→tool map + spend budget (config.yaml).
@@ -378,6 +439,20 @@ function handleRequest(req, res) {
         if (!run) return sendJSON(res, 404, { error: 'unknown-run' });
         if (!token || token !== executor.tokenFor(run_id)) return sendJSON(res, 403, { error: 'bad-token' });
         executor.noteDiscovery(run_id, { path: dpath, reason });
+        return sendJSON(res, 200, { ok: true });
+      }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
+    }
+    // ADR 0037 (second signal) — loopback intake for the write-attempt counter. Same contract as
+    // wiki-discovery: fire-and-forget, token-authenticated, purely observational. Attribution to the
+    // acting role happens server-side (a run has exactly one role), so the gate posts only the tool name.
+    if (p === '/api/run/write-attempt') {
+      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
+      return readJsonBody(req).then((body) => {
+        const { run_id, token, tool } = body || {};
+        const run = runManager.get(run_id);
+        if (!run) return sendJSON(res, 404, { error: 'unknown-run' });
+        if (!token || token !== executor.tokenFor(run_id)) return sendJSON(res, 403, { error: 'bad-token' });
+        executor.noteWriteAttempt(run_id, { tool });
         return sendJSON(res, 200, { ok: true });
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
@@ -546,4 +621,4 @@ if (require.main === module) {
   start(portArg ? parseInt(portArg, 10) : DEFAULT_PORT);
 }
 
-module.exports = { server, start, handleRequest, DEFAULT_PORT, HOST, runManager, executor, approvals, setGovernanceGateReady, pendingIngestPlan };
+module.exports = { server, start, handleRequest, DEFAULT_PORT, HOST, runManager, executor, approvals, setGovernanceGateReady, pendingIngestPlan, recordPrApproval };

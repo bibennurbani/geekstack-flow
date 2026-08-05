@@ -37,6 +37,19 @@ async function decide(params, ctx) {
       if (!st.qmdSeen) { st.qmdSeen = true; if (ctx.reportDiscovery) ctx.reportDiscovery({ path: 'qmd' }); }
     }
   } catch { /* observation must never affect the gate outcome */ }
+  // ADR 0037 (observe half, second signal) — count write ATTEMPTS so separation of duties becomes
+  // measurable. The gate is action-scoped, never actor-scoped: Edit/Write classify MEDIUM and the
+  // LOW|MEDIUM branch below auto-allows, so a Reviewer can rewrite the code it is reviewing and a Tester
+  // can patch production code, with no card and no log entry. That is the one invariant the enforcement
+  // layer never checks — but no run has been observed doing it, and ADR 0037 already built and shelved a
+  // methodology gate for exactly this shape. So: measure first, gate only if the record shows real
+  // bypassing. The run's role is attributed server-side (a run has exactly one role), so nothing extra
+  // is threaded into the child's env. Purely observational — NEVER changes allow/deny. Fails silent.
+  try {
+    if (/^(Edit|Write|MultiEdit|NotebookEdit)$/i.test(String(toolName)) && ctx.reportWriteAttempt) {
+      ctx.reportWriteAttempt({ tool: String(toolName) });
+    }
+  } catch { /* observation must never affect the gate outcome */ }
   let level;
   try { level = ctx.classify(toolName, input, ctx.rules || [], ctx.trusted || []); } catch { level = 'HIGH'; }
   if (level === 'LOW' || level === 'MEDIUM') return allow(input);
@@ -107,6 +120,19 @@ function postDiscovery(payload) {
   } catch { /* observe half never throws */ }
 }
 
+// ADR 0037 (observe half) — fire-and-forget write-attempt telemetry, same contract as postDiscovery:
+// best-effort, silent on any error, never blocks or crashes a run.
+function postWriteAttempt(payload) {
+  try {
+    const base = process.env.GSF_CONTROL_URL; if (!base) return;
+    const url = new URL('/api/run/write-attempt', base);
+    const body = Buffer.from(JSON.stringify({ run_id: process.env.GSF_RUN_ID, token: process.env.GSF_RUN_TOKEN, ...payload }));
+    const lib = url.protocol === 'https:' ? require('https') : require('http');
+    const req = lib.request({ hostname: url.hostname, port: url.port, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': body.length } });
+    req.on('error', () => {}); req.write(body); req.end();
+  } catch { /* observe half never throws */ }
+}
+
 function runStdio() {
   const { classify, recipeFor, parseProjectRules, parseTrustedCommands, isQmdInvocation } = require('./governance-classify.cjs');
   let rules = [], trusted = [];
@@ -118,7 +144,7 @@ function runStdio() {
   require('child_process').execFile('qmd', ['--version'], { timeout: 5000 }, (err) => {
     if (err) { state.qmdAbsent = true; postDiscovery({ path: 'index-fallback', reason: 'missing' }); }
   });
-  const ctx = { classify, recipeFor, rules, trusted, postIntake, isQmdInvocation, state, reportDiscovery: postDiscovery };
+  const ctx = { classify, recipeFor, rules, trusted, postIntake, isQmdInvocation, state, reportDiscovery: postDiscovery, reportWriteAttempt: postWriteAttempt };
   let buf = '';
   process.stdin.on('data', async (chunk) => {
     buf += chunk.toString('utf8');
@@ -135,4 +161,4 @@ function runStdio() {
 
 if (require.main === module) runStdio();
 
-module.exports = { handleMessage, decide, describeAction, allow, deny, postIntake, TOOL_NAME, PROTOCOL_VERSION };
+module.exports = { handleMessage, decide, describeAction, allow, deny, postIntake, postWriteAttempt, TOOL_NAME, PROTOCOL_VERSION };

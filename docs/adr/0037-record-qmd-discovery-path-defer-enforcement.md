@@ -25,3 +25,25 @@ ADR 0030 made qmd the **mandatory** wiki/docs search layer, but "mandatory" only
 - Prose updated: `wiki-search/SKILL.md`, `grill-task`/`plan-task`/`review-diff` skill bodies, `refactorer.md`, `CONTEXT.md` ("mandatory" split into install-time vs query-time), and an amendment header on ADR 0006. The `post-merge` hook and `audit-workspace` detector are added.
 - **Amends ADR 0030**: adds query-time *observability* (not enforcement) and pins that `index.md` + `[[wikilink]]` navigation is the sole sanctioned non-qmd discovery path.
 - **Follow-up trigger:** revisit the deferred gate (`feat/qmd-query-path-enforcement-full`) once the `wiki_discovery` record across real runs shows a non-trivial rate of `index-fallback`/redirect-worthy grepping that isn't explained by qmd genuinely being absent.
+
+## Amendment (2026-08-05) — the same posture now covers writes-by-role
+
+A second invariant turned out to have the same shape, so it gets the same treatment rather than its own ADR.
+The permission gate is **action-scoped, never actor-scoped**: one `--allowedTools Read,Grep,Glob,LS` constant
+serves all six roles, `Edit`/`Write` classify MEDIUM, and `governance-mcp.cjs` `decide()` auto-allows MEDIUM.
+So in an orchestrated run a **Reviewer can rewrite the code it is reviewing** and a **Tester can patch
+production code**, with no approval card and no log entry, then advance the task with unreviewed changes.
+Separation of duties is the organizing idea of the whole workspace and it is the one invariant the
+enforcement layer never checks.
+
+The option-(B) objections transfer verbatim — a role dimension in `classify()` adds a second concern
+(methodology, not risk) to the risk-approval gate, and defends a bypass no agent is instructed to perform.
+No run has been observed doing it. So: **observe, do not gate.** `decide()` counts
+`Edit|Write|MultiEdit|NotebookEdit` attempts and the run record gains an optional `write_attempts` block
+(`role`, `count`, flat `tools` scalar), omitted when absent so existing `runs/` files stay byte-identical.
+The acting role is attributed **server-side** — a run has exactly one role — so nothing extra is threaded
+into the child's env. The allow/deny outcome is unchanged, and a throwing telemetry path cannot affect it.
+
+- **Follow-up trigger:** build the role-aware gate if *any* reviewer, tester or ingester run records a
+  `write_attempts` count. One occurrence is enough — unlike the qmd signal, there is no benign
+  explanation for a read-only role writing code. Until then the Cockpit badge is the whole feature.

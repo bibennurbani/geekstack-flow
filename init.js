@@ -88,7 +88,7 @@ function readToolVersion() {
   catch { return '0.0.0'; }
 }
 const TOOL_VERSION = readToolVersion();
-const LATEST_SCHEMA = 8;
+const LATEST_SCHEMA = 9;
 
 function parseArgs(argv) {
   const args = { force: false, help: false, upgrade: false, register: false, drift: false, doctor: false, wiki: false, ui: false, hooks: false, pr: false, yes: false, prTask: null, port: null, migrateFrom: null, target: process.cwd() };
@@ -571,6 +571,57 @@ const MIGRATIONS = [
       return 1;
     },
   },
+  {
+    from: 8, to: 9,
+    label: 'governance.md: document the parseable escalation-rule form + add commented default rules (ADR 0044)',
+    apply(target, workspaceDir) {
+      const govPath = path.join(workspaceDir, 'governance.md');
+      if (!fs.existsSync(govPath)) return 0;
+      let gov = fs.readFileSync(govPath, 'utf8');
+      if (/-\s*<glob>\s*->\s*LEVEL/.test(gov)) return 0; // idempotent — already documented
+      if (!/^## Project-Specific Rules/m.test(gov)) return 0;
+      let n = 0;
+
+      // ADDITIVE: insert the form documentation + commented defaults directly under the
+      // "## Project-Specific Rules" heading. Never touches the user's existing rules or prose below it.
+      // Defaults ship COMMENTED so upgrading changes no classification — the parser fix in this same
+      // release makes "commented" genuinely mean disabled, which it previously did not.
+      const doc = [
+        '',
+        '**Form (parsed):** `- <glob> -> LEVEL`, where LEVEL is `LOW` | `MEDIUM` | `HIGH` | `CRITICAL`. The glob is',
+        'matched against the action\'s file path *and* command text. `->`, `→` and `:` are all accepted separators.',
+        '',
+        'Without a rule here, editing a sensitive path classifies only on the *tool* — an `Edit` to',
+        '`prisma/migrations/001.sql` is MEDIUM and proceeds silently during an orchestrated run, even though the',
+        'Risk Levels table above calls migrations HIGH. **The table describes intent; only these rules enforce it.**',
+        '',
+        'Suggested starting rules — **uncomment the ones that apply to this project**:',
+        '',
+        '<!--',
+        '- prisma/migrations/** -> CRITICAL',
+        '- src/auth/** -> HIGH',
+        '- .github/workflows/** -> CRITICAL',
+        '- infra/** -> CRITICAL',
+        '-->',
+        '',
+      ].join('\n');
+      gov = gov.replace(/^(## Project-Specific Rules.*(?:\n_\(.*\)_)?)/m, (m) => m + '\n' + doc);
+      fs.writeFileSync(govPath, gov);
+      console.log('    ✓ governance.md: documented the parseable `- <glob> -> LEVEL` rule form + added commented defaults');
+      n++;
+
+      // The nudge. Two things the user must know, because both are silent otherwise.
+      const trusted = /^## Trusted Commands/m.test(gov);
+      console.log('    ! ACTION NEEDED — governance.md escalation rules are commented out (no classification change on upgrade).');
+      console.log('      Uncomment the ones that apply, or migrations / auth code / CI workflows keep auto-approving in runs.');
+      if (trusted) {
+        console.log('    ! Trusted Commands now honours HTML comments. Previously the shipped commented examples');
+        console.log('      (`npx vitest`, `npx tsc --noEmit`, `./gradlew test`) were parsed as LIVE prefixes by mistake.');
+        console.log('      If you relied on them, uncomment them — otherwise those commands now classify HIGH and pause runs.');
+      }
+      return n;
+    },
+  },
 ];
 
 // Launch the Cockpit: spawn the zero-dep local server as a child process and open the browser.
@@ -751,7 +802,7 @@ async function upgradeWorkspace(target) {
     console.log('\n  ~ tool-owned files (commands + agents + skills + adapters) already current — nothing to refresh');
   }
 
-  console.log('\nNot refreshed by upgrade (intentional — your customizations): governance.md, config.yaml (beyond the migration above), your existing skills, and everything below the "Edit below this line" marker in each tool adapter.');
+  console.log('\nNot refreshed by upgrade (intentional — your customizations): governance.md and config.yaml (beyond the additive migrations above, which only insert sections that are absent and never touch your own rules), your existing skills, and everything below the "Edit below this line" marker in each tool adapter.');
 
   // Tell the user EXACTLY which non-auto-merged files (existing skills + tool adapters) carry
   // upstream changes, so the manual merge is targeted rather than guesswork. `geekstackflow drift`
@@ -1303,6 +1354,49 @@ function renderConfigYaml(templateText, answers, detected = [], toolVersion = TO
   return yaml;
 }
 
+// Would this command classify HIGH in ui/server/governance-classify.cjs *purely* because it invokes an
+// interpreter or a script (`npx …`, `./gradlew …`, `go test ./...`)? Those are the only commands worth
+// writing into governance.md's Trusted Commands: a prefix exists to cap an otherwise-HIGH command at
+// MEDIUM, so listing an already-MEDIUM command (`pnpm test`, `dotnet test`, `cargo test`) is pure noise.
+//
+// Mirrored rather than imported — ADR 0022 keeps init.js free of ui/server requires on the init path.
+// The mirror is held in sync by test/init-governance.test.cjs, which cross-checks every prefix this
+// function emits against the REAL classifier, so drift fails the suite rather than shipping silently.
+function commandNeedsTrust(cmd) {
+  const c = String(cmd || '').trim();
+  if (!c) return false;
+  return /^(npx|bunx)\s+\S/.test(c)          // arbitrary package execution
+    || /(^|\s)\.\/\S/.test(c)                // ./gradlew test, go test ./...
+    || /^(node|python3?|ruby|perl)\s+\S+\.(js|cjs|mjs|ts|py|rb)\b/.test(c); // script execution
+}
+
+// Trusted-command prefixes for the detected stack, in declaration order, de-duplicated. Derived from
+// the sub-projects' own `test`/`lint` commands so a .NET or Python workspace never carries JS-flavoured
+// entries — and so a workspace whose commands are all already MEDIUM gets an empty list, which is the
+// correct answer rather than a failure.
+function trustedPrefixesFor(detected = []) {
+  const out = [];
+  for (const p of detected || []) {
+    for (const cmd of [p && p.test, p && p.lint]) {
+      if (!commandNeedsTrust(cmd)) continue;
+      const prefix = String(cmd).trim();
+      if (!out.includes(prefix)) out.push(prefix);
+    }
+  }
+  return out;
+}
+
+// Render governance.md's Trusted Commands list from the detected stack. Pure text→text, mirroring
+// renderConfigYaml's shape. Inserts bullets after the template's marker line; a template without the
+// marker (or an empty prefix list) is returned untouched.
+const TRUSTED_MARKER = '<!-- Add prefixes below this line. Lines inside an HTML comment are ignored by the gate. -->';
+function renderGovernanceMd(templateText, prefixes = []) {
+  const text = String(templateText || '');
+  if (!prefixes.length || !text.includes(TRUSTED_MARKER)) return text;
+  const bullets = prefixes.map((p) => `- \`${p}\``).join('\n');
+  return text.replace(TRUSTED_MARKER, `${TRUSTED_MARKER}\n\n${bullets}`);
+}
+
 // The init plan: decisions derived from the answers + project detection, with NO I/O.
 function computeInitPlan(answers, detected = []) {
   return {
@@ -1851,6 +1945,17 @@ async function main() {
     fs.writeFileSync(configPath, renderConfigYaml(fs.readFileSync(configPath, 'utf8'), answers, detected, TOOL_VERSION));
   }
 
+  // --- pre-fill governance.md's Trusted Commands from the detected stack ---
+  // The template ships the list EMPTY (a prefix permanently caps that command family at MEDIUM in every
+  // orchestrated run, so it must never be a shipped default). Anything added here is a command this
+  // project's own config.yaml already names and that would otherwise pause every run for approval.
+  const govPath = path.join(workspaceDest, 'governance.md');
+  const trustedPrefixes = trustedPrefixesFor(detected);
+  if (trustedPrefixes.length && fs.existsSync(govPath)) {
+    fs.writeFileSync(govPath, renderGovernanceMd(fs.readFileSync(govPath, 'utf8'), trustedPrefixes));
+    console.log(`  ✓ governance.md Trusted Commands pre-filled from detected stack: ${trustedPrefixes.join(', ')}`);
+  }
+
   if (plan.workspace_kind === 'multi-project') {
     console.log(`  ✓ detected ${plan.project_count} sub-projects, written to config.yaml:`);
     for (const p of detected) {
@@ -2063,6 +2168,7 @@ async function main() {
 module.exports = {
   detectProjects, analyseProject, slugify, renderProjectsYaml, SKIP_DIRS,
   computeInitPlan, initVars, renderConfigYaml,
+  commandNeedsTrust, trustedPrefixesFor, renderGovernanceMd, TRUSTED_MARKER,
   readWorkspaceSchema, stampWorkspaceVersion, upgradeWorkspace, installHooks,
   readProjectRegistry, writeProjectRegistry, registerProject, isWorkspace, REGISTRY_PATH,
   reportDriftFromTemplate, adapterDrifted, reportWorkspaceDrift,

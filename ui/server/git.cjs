@@ -8,6 +8,7 @@
 
 const cp = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 // HEAD sha of the repo at `cwd`, or null if git fails / it isn't a repo. Used to capture a run's
 // git_base at launch so the diff viewer can show "changes since this run began". Never throws.
@@ -109,4 +110,33 @@ function removeWorktree(repoRoot, wtPath, { force = false } = {}, exec = cp.exec
   exec('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-module.exports = { head, diffSince, currentBranch, branchExists, ensureBranch, worktreeExists, ensureWorktree, removeWorktree };
+// The sibling directory ADR 0043 puts per-task worktrees in. Must stay identical to run.worktreePathFor's
+// parent — test/git.test.cjs asserts the two agree, since a mismatch would make cleanup blind to the
+// directories the executor actually creates.
+function worktreesRoot(repoRoot) {
+  const r = path.resolve(repoRoot);
+  return path.join(path.dirname(r), path.basename(r) + '.worktrees');
+}
+
+// Deletion guard. Every removal path funnels through this: a target is acceptable ONLY if it is a direct
+// child of worktreesRoot(). Rejects absolute paths elsewhere, `..` escapes, and the root itself.
+function isReclaimableWorktreePath(repoRoot, target) {
+  if (!target) return false;
+  const root = worktreesRoot(repoRoot);
+  const t = path.resolve(target);
+  return path.dirname(t) === root && path.basename(t) === path.basename(t).replace(/[/\\]/g, '') && t !== root;
+}
+
+// Per-task worktree directories that currently exist on disk, as { task_id, path }. Pure fs — no git
+// call, so it still reports directories git has forgotten (the leak this exists to surface).
+function listTaskWorktrees(repoRoot, fsMod = fs) {
+  const root = worktreesRoot(repoRoot);
+  try {
+    return fsMod.readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => ({ task_id: e.name, path: path.join(root, e.name) }))
+      .sort((a, b) => a.task_id.localeCompare(b.task_id));
+  } catch { return []; } // no worktrees dir → nothing to reclaim
+}
+
+module.exports = { head, diffSince, currentBranch, branchExists, ensureBranch, worktreeExists, ensureWorktree, removeWorktree, worktreesRoot, isReclaimableWorktreePath, listTaskWorktrees };

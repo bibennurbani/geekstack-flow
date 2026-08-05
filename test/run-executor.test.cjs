@@ -111,6 +111,48 @@ test('launch (clean exit): captures real tokens+session, writes runs/ record, ad
   } finally { cleanup(proj); }
 });
 
+// D1 honesty: the safety-net advance is a hand-off to the Reviewer, so it stays — but the RECORD has to
+// say which exit produced it. Every entry used to read "Orchestrated run completed" even when the loop
+// cut the agent off at the iteration ceiling still mid-work, so a Reviewer could not tell a finished run
+// from a truncated one.
+test('safety-net flags a run cut off at the iteration ceiling as cut-off, not "completed"', async () => {
+  const { proj } = makeWs();
+  try {
+    const rm = fakeRunManager();
+    // maxIters 2 with a fake that emits output every iteration → never settles, never goes quiet →
+    // falls through the loop = iterations-exhausted.
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 2 });
+    exec.launch({ run_id: 'r-cut', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(80);
+
+    const d = read.buildTaskDetail(proj, 'T-1');
+    assert.strictEqual(d.status, 'IN_REVIEW', 'still hands off to the Reviewer — the server does not judge (D1)');
+    const last = d.timeline[d.timeline.length - 1];
+    assert.strictEqual(last.author, 'orchestrator');
+    assert.match(last.summary, /iteration ceiling/, `summary should name the ceiling, got: ${last.summary}`);
+    assert.ok((last.tags || []).includes('cut-off'), `entry should be tagged cut-off, got: ${JSON.stringify(last.tags)}`);
+    assert.match(last.why, /may be incomplete/, 'the entry must warn the Reviewer the work may be truncated');
+  } finally { cleanup(proj); }
+});
+
+test('safety-net does NOT advance — and records — a run that produced no output at all', async () => {
+  const { proj } = makeWs();
+  try {
+    const rm = fakeRunManager();
+    // A clean exit that streamed nothing: produced_work === false.
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn([], 0), claudeBin: 'fake', maxIters: 2 });
+    exec.launch({ run_id: 'r-nil', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(80);
+
+    const d = read.buildTaskDetail(proj, 'T-1');
+    assert.strictEqual(d.status, 'IN_PROGRESS', 'no work produced → no hand-off, Status untouched');
+    const last = d.timeline[d.timeline.length - 1];
+    assert.strictEqual(last.author, 'orchestrator');
+    assert.ok((last.tags || []).includes('no-handoff'), `entry should be tagged no-handoff, got: ${JSON.stringify(last.tags)}`);
+    assert.match(last.why, /no output at all/);
+  } finally { cleanup(proj); }
+});
+
 // non-zero exit -> fail, failed record, no task advance
 test('launch (non-zero exit): fails the run, writes failed record, does NOT advance the task', async () => {
   const { proj, ws } = makeWs();
@@ -820,5 +862,41 @@ test('isolation worktree mode: creates the worktree, spawns IN it, records workt
     assert.strictEqual(fm.branch, 'tcgflow/T-1');
     assert.strictEqual(fm.worktree_path, wt);
     assert.strictEqual(fm.git_base, 'basesha0', 'base captured from the worktree HEAD');
+  } finally { cleanup(proj); }
+});
+
+// ADR 0037 second signal — the acting role is attributed SERVER-side (a run has exactly one role), so
+// nothing extra is threaded into the child's env; the gate posts only the tool name.
+test('noteWriteAttempt attributes writes to the run role and lands on the run record', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const rm = fakeRunManager();
+    const run = { run_id: 'r-w', task_id: 'T-1', role: 'reviewer', project_path: proj };
+    rm._register(run);
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 1 });
+    exec.launch(run);
+    // Inject synchronously: the live entry exists as soon as launch() returns, and the fake child only
+    // starts emitting on setImmediate, so these land before the terminal record is written.
+    assert.strictEqual(exec.noteWriteAttempt('r-w', { tool: 'Edit' }), true);
+    exec.noteWriteAttempt('r-w', { tool: 'Edit' });
+    exec.noteWriteAttempt('r-w', { tool: 'Write' });
+    assert.strictEqual(exec.noteWriteAttempt('nope', { tool: 'Edit' }), false, 'unknown run → false, never throws');
+    await tick(60);
+
+    const fm = read.parseFrontmatter(fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-w.md'), 'utf8'));
+    assert.strictEqual(fm.write_attempts.role, 'reviewer', 'attributed to the run role, not reported by the gate');
+    assert.strictEqual(fm.write_attempts.count, 3);
+    assert.strictEqual(fm.write_attempts.tools, 'Edit=2 Write=1');
+  } finally { cleanup(proj); }
+});
+
+test('a run with no write attempts records no write_attempts block', async () => {
+  const { proj, ws } = makeWs();
+  try {
+    const rm = fakeRunManager();
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 1 });
+    exec.launch({ run_id: 'r-nw', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(60);
+    assert.ok(!fs.readFileSync(path.join(ws, 'runs', 'T-1', 'r-nw.md'), 'utf8').includes('write_attempts'));
   } finally { cleanup(proj); }
 });

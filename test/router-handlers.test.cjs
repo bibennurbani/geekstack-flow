@@ -197,3 +197,76 @@ test('POST /api/run/approval on an already-resolved id → 409', async () => {
   assert.strictEqual(second.statusCode, 409);
   assert.strictEqual(json(second).error, 'already-resolved');
 });
+
+// --- ADR 0043 worktree reclamation (item 4) --------------------------------------------------------
+
+const gitMod = require('../ui/server/git.cjs');
+
+function makeWsWithTask(id, status) {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-wt-router-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  const taskDir = path.join(ws, 'tasks', 'active', id);
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'config.yaml'), 'workspace_schema: 8\nproject:\n  name: "demo"\n');
+  fs.writeFileSync(path.join(taskDir, `TASK ${id}.md`), `# TASK ${id} — Demo\n\nStatus: ${status}\nLast updated: 2026-08-05\n\n## Implementation Log\n\n_(x)_\n`);
+  fs.writeFileSync(path.join(taskDir, `TASK details ${id}.md`), `# TASK details ${id}\n\nplan\n`);
+  return proj;
+}
+
+test('GET /api/project/worktrees reports reclaimable only for INGESTED/COMPLETED tasks', async () => {
+  const proj = makeWsWithTask('ES-DONE', 'INGESTED');
+  const root = gitMod.worktreesRoot(proj);
+  fs.mkdirSync(path.join(root, 'ES-DONE'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'ES-LIVE'), { recursive: true });  // no such task → not reclaimable
+  try {
+    const res = await call('GET', `/api/project/worktrees?path=${encodeURIComponent(proj)}`);
+    assert.strictEqual(res.statusCode, 200);
+    const b = json(res);
+    assert.strictEqual(b.root, root);
+    const byId = Object.fromEntries(b.worktrees.map((w) => [w.task_id, w]));
+    assert.strictEqual(byId['ES-DONE'].status, 'INGESTED');
+    assert.strictEqual(byId['ES-DONE'].reclaimable, true);
+    assert.strictEqual(byId['ES-LIVE'].reclaimable, false, 'a worktree with no matching task is never auto-reclaimable');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('GET /api/project/worktrees validates path + workspace', async () => {
+  assert.strictEqual((await call('GET', '/api/project/worktrees')).statusCode, 400);
+  const res = await call('GET', `/api/project/worktrees?path=${encodeURIComponent(os.tmpdir())}`);
+  assert.strictEqual(res.statusCode, 400);
+  assert.strictEqual(json(res).error, 'not-a-workspace');
+  assert.strictEqual((await call('POST', '/api/project/worktrees')).statusCode, 405);
+});
+
+test('POST /api/project/worktree/remove refuses a traversal id before touching git', async () => {
+  const proj = makeWsWithTask('ES-1', 'INGESTED');
+  try {
+    for (const id of ['../../etc', '..', '/etc/passwd', 'ES-1/nested']) {
+      const res = await call('POST', '/api/project/worktree/remove', { path: proj, id });
+      assert.strictEqual(res.statusCode, 400, `id ${id} should be refused`);
+      assert.strictEqual(json(res).error, 'refused-path', `id ${id} should be refused as a path`);
+    }
+    assert.strictEqual((await call('POST', '/api/project/worktree/remove', { path: proj })).statusCode, 400, 'missing id → 400');
+    assert.strictEqual((await call('GET', '/api/project/worktree/remove')).statusCode, 405);
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('POST /api/project/worktree/remove surfaces a git failure as 502, never a silent success', async () => {
+  const proj = makeWsWithTask('ES-1', 'INGESTED');
+  try {
+    // No real worktree registered → `git worktree remove` fails; the endpoint must report it.
+    const res = await call('POST', '/api/project/worktree/remove', { path: proj, id: 'ES-1' });
+    assert.strictEqual(res.statusCode, 502);
+    assert.strictEqual(json(res).error, 'remove-failed');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+// ADR 0037 second signal — the write-attempt loopback intake mirrors wiki-discovery's contract exactly.
+test('POST /api/run/write-attempt: 405 on GET, 404 on an unknown run', async () => {
+  assert.strictEqual((await call('GET', '/api/run/write-attempt')).statusCode, 405);
+  const unknown = await call('POST', '/api/run/write-attempt', { run_id: 'no-such-run', token: 'x', tool: 'Edit' });
+  assert.strictEqual(unknown.statusCode, 404);
+  assert.strictEqual(json(unknown).error, 'unknown-run');
+  // The token path is covered by the executor-level tests; enqueueing a real run here would spawn an
+  // agent, so this endpoint test stops at the auth boundary it can exercise without one.
+});
