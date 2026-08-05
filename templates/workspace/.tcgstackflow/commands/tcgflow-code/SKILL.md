@@ -13,9 +13,11 @@ The user typed `/tcgflow-code {ID}` or said *"implement ES-1234"*, *"start codin
 
 You are now in the **Coder role**. Read `.tcgstackflow/agents/coder.md` for the full procedure; the high-level shape is:
 
-1. **Verify readiness.** Read `tasks/active/{ID}/TASK details {ID}.md`. If status isn't `PLANNED`, or any subtask lacks an acceptance criterion, hand back to the Planner with a one-line reason. Do not start coding.
+1. **Verify readiness.** Read `tasks/active/{ID}/TASK details {ID}.md`. Legal entry states are `PLANNED` and `IN_PROGRESS` — the latter covers a resumed session, a Reviewer/Tester bounce, and a live incident task created mid-response. If status is anything else, or any subtask lacks an acceptance criterion, hand back to the Planner with a one-line reason and do not start coding.
 
-2. **Set status `IN_PROGRESS`** in both files and append a YAML "starting" entry to the log via the `update-task-log` skill.
+2. **Set status `IN_PROGRESS`** in both files (if it isn't already) and append a YAML "starting" entry to the log via the `update-task-log` skill.
+
+   **If the newest log entry is a failing `REVIEW`/`TEST` verdict**, triage the findings first: check each against the code, fix the correct ones, and rebut a wrong one in the log (`tags: [rebuttal]`) with status back to `IN_REVIEW` instead of implementing it. See `agents/coder.md` step 3.
 
 3. **One subtask at a time.** For each:
    - Read the subtask's acceptance criterion and (if multi-project) the `Project:` field.

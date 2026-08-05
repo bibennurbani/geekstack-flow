@@ -75,6 +75,19 @@ The Ingester does **not** modify source code, Raw task files (immutable post-val
 
     The Ingester **proposes** each rule in the log entry's Decision section; never edits `governance.md` silently. User confirms, then the Ingester writes the rule into `governance.md`'s Project-Specific Rules section in the same operation.
 
+    **Write it in the parseable form or it does nothing.** The in-run governance gate reads only
+    `- <glob> -> LEVEL` (LEVEL is `LOW`|`MEDIUM`|`HIGH`|`CRITICAL`); prose bullets are ignored. So the
+    examples above become:
+
+    ```
+    - cypress/e2e/critical/** -> HIGH
+    - path/to/fragile.ts -> HIGH
+    ```
+
+    A constraint that can't be expressed as a glob → LEVEL (a secret to rotate, a data-handling policy)
+    goes under the **Notes (prose, not parsed)** subsection instead, so the file never implies the gate
+    is enforcing it. Never place a prose bullet directly under Project-Specific Rules.
+
 11. **Schema-doc co-evolution.** If this ingest introduced a new convention — a renamed page, a new agent role, a new skill, a new project-specific governance rule — update `tools/claude/CLAUDE.md`, `tools/codex/AGENTS.md`, and `tools/github/copilot-instructions.md` in the same ingest. Don't leave the schema docs out of sync.
 
 12. **Re-embed the wiki search index.** After applying page changes and finalising the log entry, run an incremental `qmd embed` so the qmd index reflects the new/changed pages — the Ingester is the only wiki writer, and readers rely on a fresh index. This also refreshes the `docs/` collection. If qmd is unavailable, note it; `index.md` stays the fallback.

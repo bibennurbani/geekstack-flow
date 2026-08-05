@@ -39,8 +39,53 @@ function makeWorkspace() {
 
 const mig34 = gsf.MIGRATIONS.find((m) => m.from === 3 && m.to === 4);
 
-test('LATEST_SCHEMA is 8', () => {
-  assert.strictEqual(gsf.LATEST_SCHEMA, 8);
+test('LATEST_SCHEMA is 9', () => {
+  assert.strictEqual(gsf.LATEST_SCHEMA, 9);
+});
+
+const mig89 = gsf.MIGRATIONS.find((m) => m.from === 8 && m.to === 9);
+const gov = require('../ui/server/governance-classify.cjs');
+
+test('8→9 documents the parseable rule form + adds COMMENTED defaults; idempotent (ADR 0044)', () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-mig9-'));
+  const ws = path.join(target, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  // A pre-schema-9 governance.md with a rule the user already wrote — it must survive untouched.
+  fs.writeFileSync(path.join(ws, 'governance.md'), [
+    '# Governance', '', '## Trusted Commands', '', '- `npx vitest`', '',
+    '## Project-Specific Rules', '', '_(Edited per project.)_', '',
+    '- my/own/path/** -> HIGH', '',
+  ].join('\n'));
+  try {
+    assert.ok(mig89, 'an 8→9 migration entry exists');
+    assert.strictEqual(mig89.apply(target, ws), 1);
+    const text = fs.readFileSync(path.join(ws, 'governance.md'), 'utf8');
+
+    // the parseable form is now documented
+    assert.match(text, /-\s*<glob>\s*->\s*LEVEL/);
+    // the user's own rule survived AND still parses
+    const rules = gov.parseProjectRules(text);
+    assert.deepStrictEqual(rules, [{ glob: 'my/own/path/**', level: 'HIGH' }],
+      `migration changed live classification: ${JSON.stringify(rules)}`);
+    // the user's trusted prefix survived
+    assert.deepStrictEqual(gov.parseTrustedCommands(text), ['npx vitest']);
+    // defaults are present but COMMENTED — zero classification change on upgrade
+    assert.match(text, /<!--[\s\S]*prisma\/migrations\/\*\* -> CRITICAL[\s\S]*-->/);
+
+    assert.strictEqual(mig89.apply(target, ws), 0, 're-run is a no-op');
+    assert.strictEqual((fs.readFileSync(path.join(ws, 'governance.md'), 'utf8').match(/<glob>/g) || []).length, 1);
+  } finally { fs.rmSync(target, { recursive: true, force: true }); }
+});
+
+test('8→9 is a no-op when governance.md has no Project-Specific Rules section', () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-mig9b-'));
+  const ws = path.join(target, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'governance.md'), '# Governance\n\n## Risk Levels\n');
+  try {
+    assert.strictEqual(mig89.apply(target, ws), 0);
+    assert.strictEqual(mig89.apply(target, path.join(target, 'nope')), 0, 'missing governance.md is a no-op');
+  } finally { fs.rmSync(target, { recursive: true, force: true }); }
 });
 
 const mig78 = gsf.MIGRATIONS.find((m) => m.from === 7 && m.to === 8);

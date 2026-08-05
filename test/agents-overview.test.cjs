@@ -62,6 +62,30 @@ test('buildAgentsOverview tolerates an empty registry', () => {
   assert.strictEqual(ov.roles.coder.runs, 0);
 });
 
+// The lifecycle is encoded twice: once in code (STATUS_NEXT_AGENT, which the Cockpit action queue and
+// the chain dispatch on) and once in prose (the role profile the agent actually reads). They disagreed
+// once already — read.cjs dispatched IN_PROGRESS to the coder while agents/coder.md told the coder to
+// refuse anything that wasn't PLANNED, which broke every reviewer bounce, tester failure and resumed
+// session. This asserts the two encodings still agree.
+test('every status that dispatches to the coder is a legal entry state in agents/coder.md', () => {
+  const WS = path.join(__dirname, '..', 'templates', 'workspace', '.tcgstackflow');
+  const profile = fs.readFileSync(path.join(WS, 'agents', 'coder.md'), 'utf8');
+  const command = fs.readFileSync(path.join(WS, 'commands', 'tcgflow-code', 'SKILL.md'), 'utf8');
+  const dispatched = Object.entries(read.STATUS_NEXT_AGENT).filter(([, role]) => role === 'coder').map(([s]) => s);
+
+  assert.ok(dispatched.length >= 2, `expected >1 status to dispatch to coder, got ${dispatched.join(',')}`);
+  // "Legal entry states" region: the profile's step 1 and the command's step 1 must each name every
+  // dispatched status. Matching on `\`STATUS\`` (backticked) is how both documents write them.
+  for (const status of dispatched) {
+    const re = new RegExp('legal entry states[\\s\\S]{0,400}?`' + status + '`', 'i');
+    assert.match(profile, re, `agents/coder.md does not name ${status} as a legal entry state`);
+    assert.match(command, re, `commands/tcgflow-code/SKILL.md does not name ${status} as a legal entry state`);
+  }
+  // And the old absolute refusal must not come back.
+  assert.doesNotMatch(profile, /status is not `PLANNED`/, 'agents/coder.md still refuses every non-PLANNED status');
+  assert.doesNotMatch(command, /status isn't `PLANNED`/, "commands/tcgflow-code/SKILL.md still refuses every non-PLANNED status");
+});
+
 test('buildRunsHistory lists run records across the registry', () => {
   const a = makeProject('Proj');
   try {

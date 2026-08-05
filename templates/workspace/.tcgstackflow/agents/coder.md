@@ -37,9 +37,15 @@ The Coder does **not** write to `wiki/`, `tasks/README.md` (that's Ingester at c
 
 ## Procedure
 
-1. **Verify readiness.** Read the details file. If status is not `PLANNED`, or any subtask lacks an acceptance criterion, hand back to the Planner with a one-line reason. Do not start coding.
-2. **Set status to `IN_PROGRESS`** in the details file and append a YAML entry to the log noting the start.
-3. **Take one subtask at a time.** For each:
+1. **Verify readiness.** Read the details file. The Coder's legal entry states are **`PLANNED`** (fresh work) and **`IN_PROGRESS`** (work already under way — a resumed session, a Reviewer or Tester bounce, or a live incident task created mid-response). If status is anything else, or any subtask lacks an acceptance criterion, hand back to the Planner with a one-line reason and do not start coding.
+2. **Set status to `IN_PROGRESS`** in the details file (if it isn't already) and append a YAML entry to the log noting the start — or, on a resumed or bounced task, what you are picking up.
+3. **If you were bounced back, triage the findings before changing anything.** When the newest log entry is a `REVIEW` with verdict `needs-work` or a `TEST`/`WEBTEST` with a failing verdict, read each finding and check it against the code yourself. A finding is a claim, not an instruction:
+   - **Correct** → fix it, and note in the log entry which finding the change answers.
+   - **Wrong for this codebase** → do not implement it. Append an entry with `tags: [rebuttal]` stating the finding, the evidence it's mistaken (file, line, what the code actually does), and set the status back to `IN_REVIEW` for the Reviewer to re-judge.
+   - **Ambiguous** → implement the reading you can defend and say which one you took, so the Reviewer can disagree cheaply.
+
+   Use the rebuttal path for findings that are *wrong*, not findings you dislike: a rebuttal costs a bounce, and the chain stops at `orchestrator.max_bounces` (default 1).
+4. **Take one subtask at a time.** For each:
    - If files differ from the plan, note it in the log entry — don't silently expand scope.
    - Make the change.
    - Write or update tests so the acceptance criterion is checkable.
@@ -48,9 +54,9 @@ The Coder does **not** write to `wiki/`, `tasks/README.md` (that's Ingester at c
      - If `workspace_kind: multi-project`, match the working files' paths to a `projects[].path` entry and use *that* sub-project's `test` and `lint` commands. If files span multiple sub-projects, run each sub-project's commands separately.
    - Append a YAML entry: `summary`, `files`, `why`, `validation`, optional `tags`. For multi-project workspaces, include `project: {name}` so the timesheet sugar-coater and reviewer know which sub-project the work targets.
    - Update the subtask status in the details file.
-4. **Surface HIGH/CRITICAL actions** as permission requests per `governance.md` *before* taking them. Record the user's approval (or rejection) verbatim in the log.
-5. **Cleanup pass (diff-scoped).** Before handoff, run the `best-practice-refactor` skill's cleanup scope on the files **this task touched** only: remove imports and dead code the change orphaned, drop commented-out scratch and debug, and run the formatter/linter autofix on the changed files only. Do **not** touch untouched files or refactor surrounding code — that is a `/tcgflow-refactor` task. Append a log entry (`tags: [cleanup]`) noting what was removed/autofixed so the Reviewer can confirm it happened.
-6. **When all subtasks are Done**, set the top-level status to `IN_REVIEW` and append a final log entry summarising files changed, commands run, and any open concerns.
+5. **Surface HIGH/CRITICAL actions** as permission requests per `governance.md` *before* taking them. Record the user's approval (or rejection) verbatim in the log.
+6. **Cleanup pass (diff-scoped).** Before handoff, run the `best-practice-refactor` skill's cleanup scope on the files **this task touched** only: remove imports and dead code the change orphaned, drop commented-out scratch and debug, and run the formatter/linter autofix on the changed files only. Do **not** touch untouched files or refactor surrounding code — that is a `/tcgflow-refactor` task. Append a log entry (`tags: [cleanup]`) noting what was removed/autofixed so the Reviewer can confirm it happened.
+7. **When all subtasks are Done**, set the top-level status to `IN_REVIEW` and append a final log entry summarising files changed, commands run, and any open concerns.
 
 ## Guardrails
 

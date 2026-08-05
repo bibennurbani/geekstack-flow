@@ -290,9 +290,29 @@ Each dedups against existing tasks, groups at the source's natural unit, and set
 | HIGH | install deps, push, open PR, edit auth code, update a ticket | **ask first** |
 | CRITICAL | prod deploy, destructive DB op, force push, rotate secrets | **ask first + rollback plan** |
 
-Agents read this on every session. The **Reviewer** is the backstop — a HIGH/CRITICAL action taken without a recorded approval is a blocking issue. Add your own constraints under the **Project-Specific Rules** section (e.g. "never touch `prisma/migrations/` without approval", "Client X data is HIPAA — no PII to external services").
+Agents read this on every session. The **Reviewer** is the backstop — a HIGH/CRITICAL action taken without a recorded approval is a blocking issue.
 
 **During Cockpit Runs**, governance is enforced live: the runner delegates permission prompts to a local approve tool, the request pauses the run, and you approve or deny it in the Cockpit's governance modal — the decision is recorded with the run (ADR 0027/0032).
+
+That live gate reads exactly **two** machine-readable sections of `governance.md`, and only in these forms (ADR 0044):
+
+```
+## Project-Specific Rules
+- prisma/migrations/** -> CRITICAL       # raise a path's level; LOW|MEDIUM|HIGH|CRITICAL
+- src/auth/** -> HIGH
+
+## Trusted Commands
+- `npx vitest`                            # cap an otherwise-HIGH command at MEDIUM
+```
+
+**Prose in those sections is not enforced.** A bullet like "never touch `prisma/migrations/` without
+approval" reads well and does nothing — without a `-> LEVEL` rule, an `Edit` to that path classifies
+MEDIUM and proceeds silently during a run. The table above describes *intent*; only the parseable rules
+enforce it. Constraints no glob can express (HIPAA/PII handling, "no pushes to `main`") belong under
+**Notes (prose, not parsed)**, where the file no longer implies they are gated.
+
+Escalation rules ship **commented out** — uncomment the ones that apply. `init` pre-fills Trusted Commands
+from your detected stack; most stacks need no entries, because `pnpm test`-shaped commands are already MEDIUM.
 
 ---
 
