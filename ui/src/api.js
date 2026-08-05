@@ -41,3 +41,6 @@ export const getRunsHistory = () => api('/api/runs/history');
 export const getApprovals = () => api('/api/approvals');
 export const getPricing = () => api('/api/pricing');
 export const reportHtmlUrl = (path, id, run) => url('/api/project/task/report.html', { path, id, run });
+// ADR 0043 worktree reclamation — listing is read-only; removal is human-invoked (deletion is HIGH).
+export const getWorktrees = (path) => api(url('/api/project/worktrees', { path }));
+export const removeWorktree = (path, id, force = false) => postJSON('/api/project/worktree/remove', { path, id, force });

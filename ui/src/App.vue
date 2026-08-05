@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { api, postJSON } from './api.js';
+import { api, postJSON, getWorktrees, removeWorktree } from './api.js';
 import { PRICING, costOf, pricingRows, opusPromptPrices } from './pricing.js';
 import { fmtTok, fmtUsd, relTime } from './format.js';
 import { filterTasks, bucketCounts as bucketCountsOf } from './projection.js';
@@ -209,6 +209,28 @@ async function confirmPr() {
   if (res.ok) { prResult.value = j; toast(j.pr_url ? 'PR opened' : 'Branch pushed — open the PR', 'ok'); }
   else toast('PR failed: ' + (j.error || j.detail || res.status), 'err');
 }
+// --- ADR 0043/0044: worktree reclamation. Autopilot creates one worktree + one checked-out branch per
+// task and nothing ever reclaimed them. Listing is read-only; removal stays human-invoked (deletion is
+// HIGH per governance.md) and only offered once a task reaches INGESTED/COMPLETED.
+const wtPanel = ref(null);   // { root, worktrees: [...] } while the dialog is open
+const wtBusy = ref(false);
+async function openWorktrees() {
+  wtBusy.value = true; wtPanel.value = { worktrees: [] };
+  const j = await getWorktrees(selected.value);
+  wtBusy.value = false;
+  wtPanel.value = (j && !j.error) ? j : { worktrees: [], error: (j && j.error) || 'listing failed' };
+}
+function closeWorktrees() { wtPanel.value = null; }
+async function pruneWorktree(id, force = false) {
+  if (wtBusy.value) return;
+  wtBusy.value = true;
+  const res = await removeWorktree(selected.value, id, force);
+  const j = await res.json().catch(() => ({}));
+  wtBusy.value = false;
+  if (res.ok) { toast('Removed worktree ' + id, 'ok'); await openWorktrees(); }
+  else toast('Remove failed: ' + (j.detail || j.error || res.status), 'err');
+}
+
 // Autopilot "start all": launch every actionable task in the project (each in its own worktree, run in
 // parallel up to max_parallel). With orchestrator.autopilot on, each launch becomes a worktree chain.
 async function startAll() {
@@ -821,6 +843,37 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                 </div>
               </div>
 
+              <!-- ADR 0043/0044 — worktree reclamation (human-invoked; deletion is HIGH) -->
+              <div v-if="wtPanel" class="modal-backdrop" @click.self="closeWorktrees">
+                <div class="modal" style="max-width:640px">
+                  <div class="row" style="align-items:center">
+                    <b>Worktrees</b>
+                    <span class="grow"></span>
+                    <button class="btn" @click="closeWorktrees">✕</button>
+                  </div>
+                  <div v-if="wtPanel.root" class="muted mono" style="font-size:12px;margin:6px 0">{{ wtPanel.root }}</div>
+                  <div v-if="wtBusy" class="empty">Working…</div>
+                  <div v-else-if="wtPanel.error" class="badge st-BLOCKED">{{ wtPanel.error }}</div>
+                  <div v-else-if="!wtPanel.worktrees.length" class="empty">No per-task worktrees on disk.</div>
+                  <table v-else class="tbl">
+                    <thead><tr><th>Task</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                      <tr v-for="w in wtPanel.worktrees" :key="w.task_id">
+                        <td class="mono">{{ w.task_id }}</td>
+                        <td><span class="badge" :class="'st-' + (w.status || 'BLOCKED')">{{ w.status || 'no task' }}</span></td>
+                        <td style="text-align:right">
+                          <button v-if="w.reclaimable" class="btn" :disabled="wtBusy"
+                                  title="git worktree remove — the branch is kept; only the working directory is reclaimed"
+                                  @click="pruneWorktree(w.task_id)">Remove</button>
+                          <span v-else class="muted" style="font-size:12px" title="Only INGESTED/COMPLETED tasks are offered — the work must be folded into the wiki first">in flight</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div class="muted" style="font-size:12px;margin-top:8px">Removing a worktree deletes only its working directory — the task branch is kept, so nothing is lost.</div>
+                </div>
+              </div>
+
               <!-- live run stream -->
               <template v-if="runState !== 'idle'">
                 <div class="section" style="display:flex;align-items:center;gap:8px">Live run
@@ -983,6 +1036,9 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                   class="btn btn-primary" style="padding:4px 11px;font-size:12px"
                   title="Autopilot: launch every ready task (each in its own worktree, in parallel) and come back to review their PRs"
                   @click.stop="startAll">▶▶ Start all ({{ detail.action_queue.filter((a) => !a.run_state).length }})</button>
+                <button class="btn" style="padding:4px 11px;font-size:12px"
+                  title="Per-task git worktrees on disk — reclaim the ones whose task is finished (ADR 0043)"
+                  @click.stop="openWorktrees">⑂ Worktrees</button>
               </div>
               <div v-if="!detail.action_queue.length" class="empty">Queue empty — nothing ready for an agent.</div>
               <div v-for="(a, i) in detail.action_queue" :key="a.task_id" class="card row interactive" @click="openTask(a)">
