@@ -802,7 +802,7 @@ async function upgradeWorkspace(target) {
     console.log('\n  ~ tool-owned files (commands + agents + skills + adapters) already current — nothing to refresh');
   }
 
-  console.log('\nNot refreshed by upgrade (intentional — your customizations): governance.md, config.yaml (beyond the migration above), your existing skills, and everything below the "Edit below this line" marker in each tool adapter.');
+  console.log('\nNot refreshed by upgrade (intentional — your customizations): governance.md and config.yaml (beyond the additive migrations above, which only insert sections that are absent and never touch your own rules), your existing skills, and everything below the "Edit below this line" marker in each tool adapter.');
 
   // Tell the user EXACTLY which non-auto-merged files (existing skills + tool adapters) carry
   // upstream changes, so the manual merge is targeted rather than guesswork. `geekstackflow drift`
