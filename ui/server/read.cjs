@@ -453,6 +453,7 @@ function serializeRunRecord(rec = {}) {
   const sid = rec.session_id; // omit when falsy — an empty `session_id:` parses as a truthy {} downstream
   const e = rec.embed;
   const w = rec.wiki_discovery; // ADR 0037 — which discovery path this run took (qmd | index-fallback | none)
+  const wa = rec.write_attempts; // ADR 0037 — writes attempted by this run's role (observe only; omitted when absent)
   return [
     '---',
     `task: ${rec.task}`,
@@ -480,6 +481,11 @@ function serializeRunRecord(rec = {}) {
       ...(w.reason ? [`  reason: ${w.reason}`] : []),
       ...(w.queries ? [`  queries: ${w.queries}`] : []),
       ...(w.redirects ? [`  redirects: ${w.redirects}`] : [])] : []),
+    // `tools` is a flat scalar (`Edit=2 Write=1`), not a nested map: the frontmatter parser is two levels
+    // deep, and a third level round-trips wrong (the tool keys leak into the parent object).
+    ...(wa && wa.count ? ['write_attempts:', `  role: ${wa.role || 'unknown'}`, `  count: ${wa.count}`,
+      ...(wa.tools && Object.keys(wa.tools).length
+        ? [`  tools: ${Object.keys(wa.tools).sort().map((k) => `${k}=${wa.tools[k]}`).join(' ')}`] : [])] : []),
     '---',
     rec.transcript || '',
     '',

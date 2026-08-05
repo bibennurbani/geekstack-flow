@@ -73,3 +73,47 @@ test('stdio framing: script answers initialize + a LOW tools/call over a pipe', 
   assert.ok(call, 'got tools/call result');
   assert.strictEqual(JSON.parse(call.result.content[0].text).behavior, 'allow', 'LOW Read allowed over the pipe');
 });
+
+// --- ADR 0037 second signal: write attempts by role (observe only) ---------------------------------
+// The gate is action-scoped, never actor-scoped: Edit/Write classify MEDIUM and decide() auto-allows
+// MEDIUM for EVERY role, so a Reviewer can rewrite the code it is reviewing with no card and no log
+// entry. Separation of duties is the organizing idea of the workspace and the one invariant the
+// enforcement layer never checks. These tests pin the counter — and pin that it changes NOTHING.
+
+test('decide() reports Edit/Write/MultiEdit/NotebookEdit attempts and still allows them', async () => {
+  const seen = [];
+  const ctx = {
+    classify: () => 'MEDIUM',
+    postIntake: async () => { throw new Error('must not be called for MEDIUM'); },
+    reportWriteAttempt: (p) => seen.push(p.tool),
+  };
+  for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
+    const d = await mcp.decide({ arguments: { tool_name: tool, input: { file_path: 'src/a.ts' } } }, ctx);
+    assert.strictEqual(d.behavior, 'allow', `${tool} must still be allowed — the counter never gates`);
+  }
+  assert.deepStrictEqual(seen, ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+});
+
+test('decide() does not report non-write tools', async () => {
+  const seen = [];
+  const ctx = { classify: () => 'LOW', postIntake: async () => ({ decision: 'approved' }), reportWriteAttempt: (p) => seen.push(p.tool) };
+  for (const tool of ['Read', 'Grep', 'Glob', 'Bash']) {
+    await mcp.decide({ arguments: { tool_name: tool, input: {} } }, ctx);
+  }
+  assert.deepStrictEqual(seen, [], 'only Edit/Write/MultiEdit/NotebookEdit count as write attempts');
+});
+
+test('a throwing reportWriteAttempt never affects the gate outcome', async () => {
+  const ctx = {
+    classify: () => 'CRITICAL',
+    postIntake: async () => ({ decision: 'approved' }),
+    reportWriteAttempt: () => { throw new Error('telemetry exploded'); },
+  };
+  const d = await mcp.decide({ arguments: { tool_name: 'Write', input: { file_path: 'x' } } }, ctx);
+  assert.strictEqual(d.behavior, 'allow', 'observation must never change the decision');
+});
+
+test('the counter is optional — a ctx without reportWriteAttempt still works', async () => {
+  const d = await mcp.decide({ arguments: { tool_name: 'Edit', input: { file_path: 'x' } } }, { classify: () => 'MEDIUM' });
+  assert.strictEqual(d.behavior, 'allow');
+});

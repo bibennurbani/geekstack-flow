@@ -924,6 +924,13 @@ onUnmounted(() => { closeStream(); closeChat(); if (inboxTimer) clearInterval(in
                 <span v-if="r.wiki_discovery && r.wiki_discovery.path" class="badge"
                   :class="r.wiki_discovery.path === 'qmd' ? 'st-COMPLETED' : 'soft'"
                   :title="wikiDiscoveryTitle(r.wiki_discovery)">🔍 {{ r.wiki_discovery.path === 'qmd' ? 'qmd' : 'index-fallback' }}<span v-if="r.wiki_discovery.redirects"> ⚠︎{{ r.wiki_discovery.redirects }}</span></span>
+                <!-- ADR 0037 (observe only) — writes attempted by this run's role. A read-only role
+                     (reviewer/tester/ingester) showing writes is the signal that would justify a
+                     role-aware gate; nothing is blocked today. -->
+                <span v-if="r.write_attempts && r.write_attempts.count" class="badge"
+                  :class="['reviewer','tester'].includes(r.write_attempts.role) ? 'st-BLOCKED' : 'soft'"
+                  :title="'This ' + r.write_attempts.role + ' run attempted ' + r.write_attempts.count + ' write(s) — ' + (r.write_attempts.tools || 'Edit/Write') + '. Observed, not blocked (ADR 0037): Edit/Write classify MEDIUM for every role, so separation of duties is not enforced by the gate.'"
+                  >✎ {{ r.write_attempts.count }}</span>
                 <!-- ADR 0040 — the git branch this run created/continued. Absent (in-place) → no badge. -->
                 <span v-if="r.branch" class="badge soft mono" :title="'Ran on branch ' + r.branch + ' (ADR 0040 — no auto-merge)'">⑂ {{ r.branch }}</span>
                 <span class="badge" :class="r.state === 'done' ? 'st-COMPLETED' : r.state === 'failed' ? 'st-BLOCKED' : 'soft'">{{ r.state || '?' }}</span>

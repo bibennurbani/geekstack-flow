@@ -260,3 +260,13 @@ test('POST /api/project/worktree/remove surfaces a git failure as 502, never a s
     assert.strictEqual(json(res).error, 'remove-failed');
   } finally { fs.rmSync(proj, { recursive: true, force: true }); }
 });
+
+// ADR 0037 second signal — the write-attempt loopback intake mirrors wiki-discovery's contract exactly.
+test('POST /api/run/write-attempt: 405 on GET, 404 on an unknown run', async () => {
+  assert.strictEqual((await call('GET', '/api/run/write-attempt')).statusCode, 405);
+  const unknown = await call('POST', '/api/run/write-attempt', { run_id: 'no-such-run', token: 'x', tool: 'Edit' });
+  assert.strictEqual(unknown.statusCode, 404);
+  assert.strictEqual(json(unknown).error, 'unknown-run');
+  // The token path is covered by the executor-level tests; enqueueing a real run here would spawn an
+  // agent, so this endpoint test stops at the auth boundary it can exercise without one.
+});

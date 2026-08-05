@@ -117,7 +117,7 @@ function writeRunRecord(workspaceDir, run, live, state) {
       tokens: live.tokens || ZERO(), state,
       started_at: live.started_at, ended_at: live.ended_at, git_base: live.git_base,
       isolation: live.isolation, branch: live.branch, worktree_path: live.worktree_path, // ADR 0040/0043 — omitted when in-place
-      embed: live.embed, wiki_discovery: live.wiki_discovery, transcript: live.transcript,
+      embed: live.embed, wiki_discovery: live.wiki_discovery, write_attempts: live.write_attempts, transcript: live.transcript,
     });
     fs.writeFileSync(path.join(dir, run.run_id + '.md'), body);
   } catch { /* a failed flush must never crash the server */ }
@@ -567,11 +567,29 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     return true;
   }
 
+  // ADR 0037 (observe half, second signal) — count write attempts and attribute them to the run's role.
+  // Separation of duties is the organizing idea of the workspace, and it is the one invariant the gate
+  // never checks: Edit/Write classify MEDIUM and auto-allow for every role. This measures whether that
+  // actually gets exercised; it changes no allow/deny outcome. Never throws.
+  function noteWriteAttempt(run_id, payload = {}) {
+    const L = live.get(run_id); if (!L) return false;
+    const run = runManager.get(run_id);
+    const role = (run && run.role) || 'unknown';
+    const w = L.write_attempts || { role, count: 0, tools: {} };
+    w.role = role;
+    w.count = (w.count || 0) + 1;
+    const t = String(payload.tool || 'unknown');
+    w.tools[t] = (w.tools[t] || 0) + 1;
+    L.write_attempts = w;
+    return true;
+  }
+
   return {
     launch, subscribe, abortRun, chat, getLive: (id) => live.get(id) || null, ROLES,
     pushEvent: (id, type, data) => emit(id, type, data),   // GOV-2 — approvals push onto the run's SSE
     tokenFor: (id) => { const L = live.get(id); return L ? L.token : null; }, // GOV-4 — intake auth
     noteDiscovery,                                          // ADR 0037 — gate telemetry → run record
+    noteWriteAttempt,                                       // ADR 0037 — writes-by-role counter (observe only)
   };
 }
 
