@@ -108,6 +108,18 @@ test('chain: backward bounce beyond max_bounces stops the chain', async () => {
     const ev = exec.getLive('r-b').events.find((e) => e.type === 'chain');
     assert.strictEqual(ev.data.state, 'stopped');
     assert.strictEqual(ev.data.reason, 'bounce-limit');
+
+    // The halt must be DURABLE, not SSE-only: under ADR 0043 autopilot with the Cockpit closed, an
+    // event nobody is subscribed to leaves no trace in a system whose premise (ADR 0032) is that files
+    // are the single source of truth.
+    const d = read.buildTaskDetail(proj, 'T-1');
+    const halt = d.timeline.filter((e) => (e.tags || []).includes('bounce-limit'));
+    assert.strictEqual(halt.length, 1, `expected one durable bounce-limit entry, got ${halt.length}`);
+    assert.strictEqual(halt[0].author, 'orchestrator');
+    assert.match(halt[0].summary, /bounce limit \(2\/1\)/, `summary should carry the counts, got: ${halt[0].summary}`);
+    // Worded as a reclassification — re-running the same role is the wrong next move.
+    assert.match(halt[0].why, /plan defect/);
+    assert.match(halt[0].why, /re-plan/);
   } finally { cleanup(proj); }
 });
 

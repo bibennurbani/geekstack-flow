@@ -125,17 +125,57 @@ function writeRunRecord(workspaceDir, run, live, state) {
 
 // API-7 — Status safety-net (D1). Only acts when a clean run left Status un-advanced; the agent
 // normally self-advances to IN_REVIEW. Routes through the canonical writer (read.writeTaskStatus).
-function statusSafetyNet(projectPath, id) {
+//
+// Advancing to IN_REVIEW is not a claim that the work is good — it hands the task to the Reviewer, who
+// is the judge (build decision D1: the server never judges). So the advance itself stays. What was
+// dishonest was the RECORD: every entry read "Orchestrated run completed" regardless of why the loop
+// stopped, including when the agent was cut off at the iteration ceiling still mid-work. A Reviewer
+// reading the log could not tell a finished run from a truncated one.
+//
+// Note `settled` never reaches here (the agent wrote an ADVANCED/BLOCKED status itself, so the guard
+// below returns first). The two exits that do reach here are:
+//
+//   iterations-exhausted → agent still emitting output at the ceiling. Advance, but flag it `cut-off`:
+//                          a re-prompted agent with nothing left to do still emits text, so this is
+//                          also the normal path for "finished but forgot the Status line" — the two are
+//                          not separable from the transcript, and the Reviewer is the right arbiter.
+//   no-progress          → produced nothing new. Advance if it produced work at all this run…
+//   …produced nothing, ever → the agent did literally nothing. Never advance: dispatching a Reviewer at
+//                          zero work wastes a run. Record it durably instead.
+function statusSafetyNet(projectPath, id, exit = {}) {
   try {
     const d = read.buildTaskDetail(projectPath, id);
     // No-op when the agent advanced it, the task is gone — or the agent deliberately BLOCKED it
     // (a blocked task is a hand-off to a HUMAN; force-advancing to IN_REVIEW would silently un-block).
     if (d.error || ADVANCED.has(d.status) || d.status === 'BLOCKED') return;
+
+    const reason = exit.reason || 'no-progress';
+    const iters = Number(exit.iterations || 0);
+
+    if (exit.produced_work === false) {
+      // Unambiguous: nothing was produced. Leave Status alone and say so durably, so a silent no-op run
+      // is discoverable from the task file rather than only from a live SSE stream.
+      const found = read.findTaskFolder(path.join(projectPath, '.tcgstackflow'), id);
+      if (found) read.appendLogEntry(found.folder, id, {
+        timestamp: new Date().toISOString(),
+        author: 'orchestrator',
+        summary: `Orchestrated run ended without producing any work (${reason})`,
+        tags: ['orchestrated-run', 'no-handoff'],
+        why: `The run exited cleanly but the agent produced no output at all (exit: ${reason}, iterations: ${iters}). Status left at ${d.status} — nothing was handed off, so no Reviewer was dispatched.`,
+      });
+      return;
+    }
+
+    const cutOff = reason === 'iterations-exhausted';
     read.writeTaskStatus(projectPath, id, 'IN_REVIEW', {
       author: 'orchestrator', via: null,
-      summary: 'Orchestrated run completed; Status advanced by server safety-net',
-      tags: ['orchestrated-run'],
-      why: 'Clean run exit but the agent left Status un-advanced (D1 safety-net).',
+      summary: cutOff
+        ? `Orchestrated run hit the ${iters}-iteration ceiling; Status advanced by server safety-net`
+        : 'Orchestrated run completed; Status advanced by server safety-net',
+      tags: cutOff ? ['orchestrated-run', 'cut-off'] : ['orchestrated-run'],
+      why: cutOff
+        ? `The run reached its ${iters}-iteration ceiling while the agent was still producing output, and the agent left Status un-advanced (D1 safety-net). The work may be incomplete — Reviewer, check the subtask statuses in the details file against the diff before approving, and bounce it back if the plan was not finished.`
+        : `Clean run exit (${reason}) after ${iters} iteration(s) and the agent left Status un-advanced (D1 safety-net).`,
     });
   } catch { /* best-effort */ }
 }
@@ -365,17 +405,20 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     // orphan scan detect a server death mid-run; the terminal write below overwrites it.
     writeRunRecord(workspaceDir, run, L, 'running');
     let code = 0, iters = 0;
+    // Why the loop stopped. Consumed by statusSafetyNet, which must not treat "cut off mid-work" as a
+    // hand-off. 'iterations-exhausted' is the fall-through when no break fires.
+    let exitReason = 'iterations-exhausted';
     for (let iter = 0; iter < maxIters; iter++) {
-      if (L.aborted) break;                                    // stopped by the user between iterations
+      if (L.aborted) { exitReason = 'aborted'; break; }         // stopped by the user between iterations
       iters = iter + 1;
       const before = L.transcript.length;
       code = await spawnOnce(run, L, workspaceDir, iter);
-      if (L.aborted || code !== 0) break;                      // aborted, timeout (-2), or spawn/exit failure
-      if (isRawRun(run)) break;                                // raw-inbox ingests are single-shot (no task Status to advance)
+      if (L.aborted || code !== 0) { exitReason = L.aborted ? 'aborted' : 'exit-nonzero'; break; } // aborted, timeout (-2), or spawn/exit failure
+      if (isRawRun(run)) { exitReason = 'raw-single-shot'; break; } // raw-inbox ingests are single-shot (no task Status to advance)
       let settled = false;                                     // agent handed off (IN_REVIEW+) — or BLOCKED it for a human
       try { const d = read.buildTaskDetail(taskRoot, run.task_id); settled = !d.error && (ADVANCED.has(d.status) || d.status === 'BLOCKED'); } catch { /* ignore */ }
-      if (settled) break;
-      if (L.transcript.length === before) break;               // produced nothing new → stop spinning
+      if (settled) { exitReason = 'settled'; break; }
+      if (L.transcript.length === before) { exitReason = 'no-progress'; break; } // produced nothing new → stop spinning
       if (iter + 1 < maxIters) emit(run.run_id, 'status', { state: 'continuing', iter: iter + 1 });
     }
     L.iterations = iters;
@@ -387,8 +430,8 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
       runManager.abort(run.run_id);
     } else if (code === 0) {
       writeRunRecord(workspaceDir, run, L, 'done');
-      statusSafetyNet(taskRoot, run.task_id);
-      emit(run.run_id, 'done', { session_id: L.latest_session_id || L.session_id, tokens: L.tokens, iterations: iters });
+      statusSafetyNet(taskRoot, run.task_id, { reason: exitReason, iterations: iters, produced_work: L.transcript.length > 0 });
+      emit(run.run_id, 'done', { session_id: L.latest_session_id || L.session_id, tokens: L.tokens, iterations: iters, exit: exitReason });
       runManager.complete(run.run_id);
       maybeChain(run, workspaceDir); // auto-advance: enqueue the next lifecycle role (after the slot freed)
       reembedIfIngest(run, workspaceDir, L); // WK-1: deterministic qmd re-embed after a clean ingester run (fire-and-forget)
@@ -442,7 +485,23 @@ function createExecutor({ runManager, spawn = cp.spawn, claudeBin = 'claude', go
     const bounces = (run.bounces || 0) + (bounced ? 1 : 0);
     let maxB = 1;
     try { const m = fs.readFileSync(path.join(workspaceDir, 'config.yaml'), 'utf8').match(/^\s+max_bounces:\s*(\d+)/m); if (m) maxB = parseInt(m[1], 10); } catch { /* default */ }
-    if (bounced && bounces > maxB) return emit(run.run_id, 'chain', { state: 'stopped', reason: 'bounce-limit', bounces, next_ready: next });
+    if (bounced && bounces > maxB) {
+      // Durable halt. The SSE event alone is invisible under autopilot with the Cockpit closed, in a
+      // system whose premise (ADR 0032) is that files are the single source of truth. Record it, worded
+      // as a reclassification: N bounces on the same task is a planning defect, not a coder defect, so
+      // re-running the coder is the wrong next move.
+      try {
+        const found = read.findTaskFolder(workspaceDir, run.task_id);
+        if (found) read.appendLogEntry(found.folder, run.task_id, {
+          timestamp: new Date().toISOString(),
+          author: 'orchestrator',
+          summary: `Chain stopped at the bounce limit (${bounces}/${maxB}) — ${next} was next`,
+          tags: ['orchestrated-run', 'bounce-limit'],
+          why: `The task moved backward ${bounces} time(s) (${run.role} → ${next}), reaching orchestrator.max_bounces (${maxB}). Treat this as a plan defect and re-plan rather than re-running ${next}: a task that keeps bouncing usually has an acceptance criterion that is ambiguous or untestable. Status left at ${d.status}.`,
+        });
+      } catch { /* best-effort — the halt itself must still be emitted */ }
+      return emit(run.run_id, 'chain', { state: 'stopped', reason: 'bounce-limit', bounces, next_ready: next });
+    }
     // ADR 0043 — autopilot stops after a clean reviewer pass (planner→coder→reviewer): it does NOT
     // auto-run tester/ingester. The task is left ready for a human-invoked PR on its worktree branch.
     if (run.autopilot && run.role === 'reviewer' && !bounced) {

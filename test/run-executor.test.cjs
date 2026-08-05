@@ -111,6 +111,48 @@ test('launch (clean exit): captures real tokens+session, writes runs/ record, ad
   } finally { cleanup(proj); }
 });
 
+// D1 honesty: the safety-net advance is a hand-off to the Reviewer, so it stays — but the RECORD has to
+// say which exit produced it. Every entry used to read "Orchestrated run completed" even when the loop
+// cut the agent off at the iteration ceiling still mid-work, so a Reviewer could not tell a finished run
+// from a truncated one.
+test('safety-net flags a run cut off at the iteration ceiling as cut-off, not "completed"', async () => {
+  const { proj } = makeWs();
+  try {
+    const rm = fakeRunManager();
+    // maxIters 2 with a fake that emits output every iteration → never settles, never goes quiet →
+    // falls through the loop = iterations-exhausted.
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn(FIXTURE_LINES, 0), claudeBin: 'fake', maxIters: 2 });
+    exec.launch({ run_id: 'r-cut', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(80);
+
+    const d = read.buildTaskDetail(proj, 'T-1');
+    assert.strictEqual(d.status, 'IN_REVIEW', 'still hands off to the Reviewer — the server does not judge (D1)');
+    const last = d.timeline[d.timeline.length - 1];
+    assert.strictEqual(last.author, 'orchestrator');
+    assert.match(last.summary, /iteration ceiling/, `summary should name the ceiling, got: ${last.summary}`);
+    assert.ok((last.tags || []).includes('cut-off'), `entry should be tagged cut-off, got: ${JSON.stringify(last.tags)}`);
+    assert.match(last.why, /may be incomplete/, 'the entry must warn the Reviewer the work may be truncated');
+  } finally { cleanup(proj); }
+});
+
+test('safety-net does NOT advance — and records — a run that produced no output at all', async () => {
+  const { proj } = makeWs();
+  try {
+    const rm = fakeRunManager();
+    // A clean exit that streamed nothing: produced_work === false.
+    const exec = runMod.createExecutor({ runManager: rm, spawn: fakeSpawn([], 0), claudeBin: 'fake', maxIters: 2 });
+    exec.launch({ run_id: 'r-nil', task_id: 'T-1', role: 'coder', project_path: proj });
+    await tick(80);
+
+    const d = read.buildTaskDetail(proj, 'T-1');
+    assert.strictEqual(d.status, 'IN_PROGRESS', 'no work produced → no hand-off, Status untouched');
+    const last = d.timeline[d.timeline.length - 1];
+    assert.strictEqual(last.author, 'orchestrator');
+    assert.ok((last.tags || []).includes('no-handoff'), `entry should be tagged no-handoff, got: ${JSON.stringify(last.tags)}`);
+    assert.match(last.why, /no output at all/);
+  } finally { cleanup(proj); }
+});
+
 // non-zero exit -> fail, failed record, no task advance
 test('launch (non-zero exit): fails the run, writes failed record, does NOT advance the task', async () => {
   const { proj, ws } = makeWs();
