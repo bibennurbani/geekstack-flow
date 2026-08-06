@@ -38,6 +38,7 @@ Usage (all forms equivalent — pick what feels natural):
   geekstackflow --force [target]              Overwrite existing .tcgstackflow/
   geekstackflow --migrate-from <old> [target] Collect old AI infra into migration-notes/ for review
   geekstackflow --help                        Show this help
+  geekstackflow --version                     Print the tool version and exit
 
   (node init.js ... works the same — substitute 'node init.js' for 'geekstackflow' anywhere.)
 
@@ -91,7 +92,7 @@ const TOOL_VERSION = readToolVersion();
 const LATEST_SCHEMA = 9;
 
 function parseArgs(argv) {
-  const args = { force: false, help: false, upgrade: false, register: false, drift: false, doctor: false, wiki: false, ui: false, hooks: false, pr: false, yes: false, prTask: null, port: null, migrateFrom: null, target: process.cwd() };
+  const args = { force: false, help: false, version: false, upgrade: false, register: false, drift: false, doctor: false, wiki: false, ui: false, hooks: false, pr: false, yes: false, prTask: null, port: null, migrateFrom: null, target: process.cwd() };
   const positional = [];
   const raw = argv.slice(2);
 
@@ -127,6 +128,7 @@ function parseArgs(argv) {
   for (let i = 0; i < raw.length; i++) {
     const a = raw[i];
     if (a === '--help' || a === '-h') args.help = true;
+    else if (a === '--version' || a === '-v') args.version = true;
     else if (a === '--force') args.force = true;
     else if (a === '--upgrade') args.upgrade = true;
     else if (a === '--wiki') args.wiki = true;
@@ -136,6 +138,14 @@ function parseArgs(argv) {
       i++;
       if (i >= raw.length) throw new Error('--migrate-from requires a path argument');
       args.migrateFrom = path.resolve(raw[i]);
+    } else if (a === '--') {
+      // Everything after a bare `--` is positional, so a target path may start with a dash.
+      for (let j = i + 1; j < raw.length; j++) positional.push(raw[j]);
+      break;
+    } else if (a.startsWith('-') && a !== '-') {
+      // Never silently treat an unrecognised flag as the target directory — a typo like
+      // `--upgade` would otherwise scaffold a workspace into a folder literally named that.
+      throw new Error(`unknown option '${a}'. Run \`geekstackflow --help\` for the available commands and flags.`);
     } else positional.push(a);
   }
   // For `pr`, the positional is the TASK-ID (run in the cwd); otherwise it's the target dir.
@@ -1820,6 +1830,10 @@ async function main() {
     console.log(HELP);
     return;
   }
+  if (args.version) {
+    console.log(TOOL_VERSION);
+    return;
+  }
 
   // geekstackflow targets Node >=22 (the mandatory qmd wiki-search layer needs it). The CLI
   // itself runs on older Node, so this is an advisory, not a hard gate.
@@ -2166,6 +2180,7 @@ async function main() {
 
 // Expose detection helpers so they can be unit-tested without running the full installer.
 module.exports = {
+  parseArgs,
   detectProjects, analyseProject, slugify, renderProjectsYaml, SKIP_DIRS,
   computeInitPlan, initVars, renderConfigYaml,
   commandNeedsTrust, trustedPrefixesFor, renderGovernanceMd, TRUSTED_MARKER,
