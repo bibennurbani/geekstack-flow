@@ -16,12 +16,12 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 
 | Role | When the user invokes it | Profile |
 |---|---|---|
-| `planner` | "plan ES-1234", "let's design …", "we need a task for …" | [agents/planner.md](../../agents/planner.md) |
-| `coder` | "implement ES-1234", "work on the planned task", "start coding" | [agents/coder.md](../../agents/coder.md) |
-| `reviewer` | "review the diff", "is this ready?", "check ES-1234" | [agents/reviewer.md](../../agents/reviewer.md) |
-| `tester` | "test ES-1234", "verify this works", "run the E2E", "write a test plan", "web test ES-1234", "check this in the browser" | [agents/tester.md](../../agents/tester.md) |
-| `ingester` | "ingest ES-1234", "fold this into the wiki", "ingest raw/" | [agents/ingester.md](../../agents/ingester.md) |
-| `refactorer` | "refactor X", "best-practice refactor of …", "/tcgflow-refactor" | [agents/refactorer.md](../../agents/refactorer.md) |
+| `planner` | "plan ES-1234", "let's design …", "we need a task for …" | [agents/planner.md](.tcgstackflow/agents/planner.md) |
+| `coder` | "implement ES-1234", "work on the planned task", "start coding" | [agents/coder.md](.tcgstackflow/agents/coder.md) |
+| `reviewer` | "review the diff", "is this ready?", "check ES-1234" | [agents/reviewer.md](.tcgstackflow/agents/reviewer.md) |
+| `tester` | "test ES-1234", "verify this works", "run the E2E", "write a test plan", "web test ES-1234", "check this in the browser" | [agents/tester.md](.tcgstackflow/agents/tester.md) |
+| `ingester` | "ingest ES-1234", "fold this into the wiki", "ingest raw/" | [agents/ingester.md](.tcgstackflow/agents/ingester.md) |
+| `refactorer` | "refactor X", "best-practice refactor of …", "/tcgflow-refactor" | [agents/refactorer.md](.tcgstackflow/agents/refactorer.md) |
 
 Lifecycle: `planner → coder → reviewer → tester → ingester` (`IN_PROGRESS → IN_REVIEW → IN_TEST → VALIDATED → INGESTED`). Reviewer checks the code is *right* (static); Tester checks it *works* (dynamic). The `refactorer` is **not** a linear stage — it is a manually-invoked Coder-peer (via `/tcgflow-refactor`) whose output re-enters the lifecycle at Reviewer.
 
@@ -33,24 +33,24 @@ Under `.tcgstackflow/skills/`. Eighteen starter skills ship with V1:
 
 | Skill | Role | Purpose |
 |---|---|---|
-| [`wiki-search`](../../skills/wiki-search/SKILL.md) | any | qmd discovery over the wiki/docs — find which pages are relevant before reading or ingesting |
-| [`best-practice-refactor`](../../skills/best-practice-refactor/SKILL.md) | coder (cleanup scope) / refactorer (broad scope) | Behavior-preserving structure cleanup — diff-scoped Coder pass or broad Refactorer task |
-| [`grill-task`](../../skills/grill-task/SKILL.md) | planner | Interview the user before writing the plan |
-| [`plan-task`](../../skills/plan-task/SKILL.md) | planner | Write the two-file task structure |
-| [`update-task-log`](../../skills/update-task-log/SKILL.md) | coder | Append YAML entry to `TASK {ID}.md` |
-| [`review-diff`](../../skills/review-diff/SKILL.md) | reviewer | Walk diff against acceptance + governance |
-| [`verify`](../../skills/verify/SKILL.md) | tester | Build a test plan, run tests/E2E/app, record a pass/fail verdict |
-| [`web-test`](../../skills/web-test/SKILL.md) | tester / standalone | Drive a real browser (Claude in Chrome) for UI criteria the suites can't settle — interactive sessions only |
-| [`ingest`](../../skills/ingest/SKILL.md) | ingester | Fold a Raw source into the wiki, log-first |
-| [`lint-wiki`](../../skills/lint-wiki/SKILL.md) | ingester | Periodic health-check of the wiki |
-| [`audit-workspace`](../../skills/audit-workspace/SKILL.md) | ingester / standalone | Cross-check agents ↔ skills ↔ codebase drift |
-| [`migrate-to-gsf`](../../skills/migrate-to-gsf/SKILL.md) | planner / coder | Migrate an existing project's ad-hoc AI infra onto canonical `.tcgstackflow/` |
-| [`task-from-snyk`](../../skills/task-from-snyk/SKILL.md) | planner / standalone | Create a PLANNED task from Snyk findings, grouped by package |
-| [`task-from-cypress`](../../skills/task-from-cypress/SKILL.md) | planner / standalone | Create a PLANNED task from Cypress failures, classified by failure type |
-| [`task-from-datadog`](../../skills/task-from-datadog/SKILL.md) | planner / standalone | Create a task from a Datadog incident/alert — investigate / mitigate / fix / postmortem |
-| [`sync-jira`](../../skills/sync-jira/SKILL.md) | any (LOW) | Fetch Jira status of tasks via Atlassian MCP → `tasks/jira-cache.json` (Cockpit reads it) |
-| [`generate-timesheet`](../../skills/generate-timesheet/SKILL.md) | user (LOW) | Weekly Tempo draft from task data |
-| [`submit-timesheet`](../../skills/submit-timesheet/SKILL.md) | user (HIGH) | Submit worklogs via Atlassian MCP |
+| [`wiki-search`](.tcgstackflow/skills/wiki-search/SKILL.md) | any | qmd discovery over the wiki/docs — find which pages are relevant before reading or ingesting |
+| [`best-practice-refactor`](.tcgstackflow/skills/best-practice-refactor/SKILL.md) | coder (cleanup scope) / refactorer (broad scope) | Behavior-preserving structure cleanup — diff-scoped Coder pass or broad Refactorer task |
+| [`grill-task`](.tcgstackflow/skills/grill-task/SKILL.md) | planner | Interview the user before writing the plan |
+| [`plan-task`](.tcgstackflow/skills/plan-task/SKILL.md) | planner | Write the two-file task structure |
+| [`update-task-log`](.tcgstackflow/skills/update-task-log/SKILL.md) | coder | Append YAML entry to `TASK {ID}.md` |
+| [`review-diff`](.tcgstackflow/skills/review-diff/SKILL.md) | reviewer | Walk diff against acceptance + governance |
+| [`verify`](.tcgstackflow/skills/verify/SKILL.md) | tester | Build a test plan, run tests/E2E/app, record a pass/fail verdict |
+| [`web-test`](.tcgstackflow/skills/web-test/SKILL.md) | tester / standalone | Drive a real browser (Claude in Chrome) for UI criteria the suites can't settle — interactive sessions only |
+| [`ingest`](.tcgstackflow/skills/ingest/SKILL.md) | ingester | Fold a Raw source into the wiki, log-first |
+| [`lint-wiki`](.tcgstackflow/skills/lint-wiki/SKILL.md) | ingester | Periodic health-check of the wiki |
+| [`audit-workspace`](.tcgstackflow/skills/audit-workspace/SKILL.md) | ingester / standalone | Cross-check agents ↔ skills ↔ codebase drift |
+| [`migrate-to-gsf`](.tcgstackflow/skills/migrate-to-gsf/SKILL.md) | planner / coder | Migrate an existing project's ad-hoc AI infra onto canonical `.tcgstackflow/` |
+| [`task-from-snyk`](.tcgstackflow/skills/task-from-snyk/SKILL.md) | planner / standalone | Create a PLANNED task from Snyk findings, grouped by package |
+| [`task-from-cypress`](.tcgstackflow/skills/task-from-cypress/SKILL.md) | planner / standalone | Create a PLANNED task from Cypress failures, classified by failure type |
+| [`task-from-datadog`](.tcgstackflow/skills/task-from-datadog/SKILL.md) | planner / standalone | Create a task from a Datadog incident/alert — investigate / mitigate / fix / postmortem |
+| [`sync-jira`](.tcgstackflow/skills/sync-jira/SKILL.md) | any (LOW) | Fetch Jira status of tasks via Atlassian MCP → `tasks/jira-cache.json` (Cockpit reads it) |
+| [`generate-timesheet`](.tcgstackflow/skills/generate-timesheet/SKILL.md) | user (LOW) | Weekly Tempo draft from task data |
+| [`submit-timesheet`](.tcgstackflow/skills/submit-timesheet/SKILL.md) | user (HIGH) | Submit worklogs via Atlassian MCP |
 
 Skills are atomic — one capability per skill. Compose them via agent profiles.
 
@@ -85,7 +85,7 @@ You may be launched headlessly by the **Cockpit Orchestrator** (`geekstackflow u
 
 The wiki is flat, Obsidian-flavoured Markdown with `[[wikilinks]]`. Pattern is [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
-- **Search the wiki via the [`wiki-search`](../../skills/wiki-search/SKILL.md) skill (qmd) — the mandatory discovery layer.** qmd ([qmd](https://github.com/tobi/qmd)) finds *which* pages are relevant (CLI canonical: `qmd query "..." -c wiki --json`; the qmd MCP is an optional Claude convenience). Open those pages and follow `[[wikilinks]]` one hop. `wiki/index.md` remains the always-current fallback when the index is stale or qmd is unavailable. Setup is done by `/tcgflow-init` (installs qmd + indexes the wiki and `docs/`).
+- **Search the wiki via the [`wiki-search`](.tcgstackflow/skills/wiki-search/SKILL.md) skill (qmd) — the mandatory discovery layer.** qmd ([qmd](https://github.com/tobi/qmd)) finds *which* pages are relevant (CLI canonical: `qmd query "..." -c wiki --json`; the qmd MCP is an optional Claude convenience). Open those pages and follow `[[wikilinks]]` one hop. `wiki/index.md` remains the always-current fallback when the index is stale or qmd is unavailable. Setup is done by `/tcgflow-init` (installs qmd + indexes the wiki and `docs/`).
 - Start at `wiki/index.md` when qmd is unavailable.
 - Follow `[[wikilinks]]` only to pages relevant to the current topic.
 - Bump `updated:` frontmatter whenever you touch a page during ingestion.
