@@ -27,7 +27,9 @@
   },
   "scripts": {
     "smoke": "node init.js --help && echo '✓ init.js is parseable'",
-    "test": "node --test"
+    "test": "node --test",
+    "build:ui": "npm --prefix ui ci && npm --prefix ui run build",
+    "prepack": "npm run build:ui"
   },
   "keywords": [
     "ai",
@@ -48,12 +50,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TheCreativeGeeks/geekstack-flow.git"
+    "url": "git+https://github.com/bibennurbani/geekstack-flow.git"
   },
   "bugs": {
-    "url": "https://github.com/TheCreativeGeeks/geekstack-flow/issues"
+    "url": "https://github.com/bibennurbani/geekstack-flow/issues"
   },
-  "homepage": "https://github.com/TheCreativeGeeks/geekstack-flow#readme",
+  "homepage": "https://github.com/bibennurbani/geekstack-flow#readme",
   "publishConfig": {
     "access": "public"
   }

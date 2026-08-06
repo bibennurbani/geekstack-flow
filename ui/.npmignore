@@ -1,0 +1,20 @@
+# Why this file exists at all.
+#
+# npm has no .npmignore of its own here, so it falls back to `ui/.gitignore` — which ignores
+# `dist/`, because the built SPA is a build artifact and must not be committed. But `dist/` is
+# exactly what the published package needs: `ui/server/index.cjs` serves it for
+# `geekstackflow ui`, and without it a global install falls back to a 4 KB stub telling the
+# user to run a build inside their global node_modules, which they cannot do.
+#
+# A nested .gitignore still applies inside a directory listed in package.json "files", so the
+# root `files: ["ui/dist/"]` allowlist does NOT override it. A root .npmignore does not help
+# either — it only supersedes the ROOT .gitignore, never this one. The only thing that works
+# is an .npmignore *here*, which takes precedence over `ui/.gitignore` for packing.
+#
+# Verified: without this file `npm pack --dry-run` emits 155 files and zero ui/dist entries;
+# with it, 160 files including all five. `package.json`'s `prepack` rebuilds dist first so the
+# shipped bundle is never stale. Keep both, and see test/npm-package.test.cjs.
+
+node_modules/
+.vite/
+*.log
