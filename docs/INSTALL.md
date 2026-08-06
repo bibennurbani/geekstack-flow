@@ -22,7 +22,7 @@ This puts two identical binaries on your PATH: **`geekstackflow`** and the short
 ## Option B — from a local clone (today)
 
 ```bash
-git clone https://github.com/TheCreativeGeeks/geekstack-flow.git
+git clone https://github.com/bibennurbani/geekstack-flow.git
 cd geekstack-flow
 npm link            # symlinks `geekstackflow` + `tcgflow` onto your PATH
 ```

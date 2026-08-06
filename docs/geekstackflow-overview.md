@@ -4,7 +4,7 @@
 >
 > *"A structured AI workflow for planning, coding, reviewing, testing, and shipping software — with project memory, task tracking, governance, and a local cockpit that runs your agents."*
 
-This document is the written companion to the slide deck. It's pitched for a **mixed audience** — engineers plus management/stakeholders — so it leads with the value story and then goes into technical depth. Every number below was verified against the codebase on **2026-07-14** (see [Verified facts & sources](#appendix-a--verified-facts--sources)).
+This document is the written companion to the slide deck. It's pitched for a **mixed audience** — engineers plus management/stakeholders — so it leads with the value story and then goes into technical depth. Every number below was verified against the codebase on **2026-08-06** (see [Verified facts & sources](#appendix-a--verified-facts--sources)).
 
 ---
 
@@ -17,8 +17,8 @@ This document is the written companion to the slide deck. It's pitched for a **m
 | **Runtime** | Pure Node ≥ 22, **0 runtime CLI dependencies** (qmd search adds ~2 GB of local models) |
 | **Works with** | Claude Code, Codex, GitHub Copilot — one workflow, any tool |
 | **The workspace** | `6` agent roles · `18` skills · `19` `tcgflow-*` commands · `4` risk levels · workspace schema `7` |
-| **The Cockpit** | Local browser dashboard at `127.0.0.1:4729` — zero-dependency Node `http` server (~2,590 lines) + a single Vue 3 SPA (`App.vue`, 1,331 lines) |
-| **Maturity** | 3 releases in under a month (0.1.0 → 0.3.0), **42 ADRs**, **236** passing tests |
+| **The Cockpit** | Local browser dashboard at `127.0.0.1:4729` — zero-dependency Node `http` server (~3,330 lines) + a single Vue 3 SPA (`App.vue`, 1,517 lines) |
+| **Maturity** | 3 releases in under a month (0.1.0 → 0.3.0), **44 ADRs**, **315** passing tests |
 | **Architecture** | No database — plain files are the single source of truth; nothing leaves your machine |
 
 ---
@@ -84,7 +84,7 @@ your-project/
 │  ├─ wiki/                  the LLM-wiki (memory) + log.md + index.md
 │  ├─ runs/                  runs/{task-id}/{run-id}.md  (per-run audit)
 │  ├─ governance.md          4 risk levels + project rules
-│  └─ config.yaml            workspace_schema: 7
+│  └─ config.yaml            workspace_schema: 9
 └─ tools/ → CLAUDE.md · AGENTS.md · .github/copilot-instructions.md
                               (generated adapters, all → .tcgstackflow/)
 
@@ -150,7 +150,7 @@ This decouples the process from any one vendor and sets up the **economic axis**
 
 `geekstackflow ui` opens a local browser dashboard at `127.0.0.1:4729` (local-only, no auth). Read-only browsing was **retired** (ADR 0032) — you now launch agents from the browser. It has **7 per-project tabs**: Overview / Tasks / Wiki / Governance / Timesheet / Tools / Settings. "Copy prompt" is now just the manual fallback.
 
-Engineering restraint worth noting: the whole server is a **zero-dependency, built-in Node `http`** server (~2,590 lines) bound to localhost, and the UI is a **single Vue 3 file** (`App.vue`, 1,331 lines). *(ADR 0022 originally named Hono; the shipped code substitutes built-in `http` — zero-dependency and testable without an install.)*
+Engineering restraint worth noting: the whole server is a **zero-dependency, built-in Node `http`** server (~3,330 lines) bound to localhost, and the UI is a **single Vue 3 file** (`App.vue`, 1,517 lines). *(ADR 0022 originally named Hono; the shipped code substitutes built-in `http` — zero-dependency and testable without an install.)*
 
 ### Launch, watch, and run to completion
 
@@ -198,15 +198,15 @@ Governance went from an informally-followed doc (ADR 0008) to **machine-enforced
 ### Maturity — three releases, disciplined decisions
 
 - **3 releases in under a month:** 0.1.0 (2026-05-31) → 0.2.0 (2026-06-01) → 0.3.0 (2026-06-25, the Orchestrator pivot) — with active development since.
-- **42 ADRs** — every substantive call recorded; a living log that openly amends and reverses itself.
+- **44 ADRs** — every substantive call recorded; a living log that openly amends and reverses itself.
 - **Evidence-first:** the wiki structure, task layout, and three-bucket model were reverse-engineered from real working AI workspaces, not theory.
 - **Complexity deferred until earned:** manual handoff before automated, sequential before parallel, read-only before Orchestrator.
 - **Non-destructive upgrades:** `.bak` backups, a drift report, and a CRITICAL gate before deleting old scaffolding.
 
 ### Test rigor — the safety story is tested
 
-- **236** `node --test` tests (236 pass, 0 fail) across the server/CLI · **23** test files · **3,722** test lines.
-- Two runners: `node --test` (server/CLI) + **vitest** (the Vue SPA).
+- **315** `node --test` tests (315 pass, 0 fail) across the server/CLI · **29** test files · **4,903** test lines.
+- One runner: `node --test` (server + CLI). The Vue SPA has no unit tests yet; the Cockpit is covered indirectly via the server-side handler tests and is verified in the browser.
 - **Governance is the most-tested area** — 4 dedicated files (approvals, classify, integration, MCP).
 - The largest test file exercises the highest-risk path: `run-executor.test.cjs` (~42 KB — the continuation loop).
 - The invariant "no client can one-click a CRITICAL action" is asserted directly in tests.
@@ -251,7 +251,7 @@ geekstackflow ui        # open the Cockpit at 127.0.0.1:4729, then press ▶ Run
 | **Session report** | A per-task post-mortem parsing the real Claude Code session JSONL into a token trace and a dollar-cost waterfall — the one place $ cost is shown; never fabricated. |
 | **Workspace status vs Jira status** | Two statuses per task — our lifecycle vs the client's Jira business state — with the Cockpit flagging drift; Jira arrives via a credential-free local cache. |
 | **Pull digest** | A Raw file the git hook writes after every `git pull` so the Ingester keeps the wiki current automatically. |
-| **ADR** | Architecture Decision Record — 42 of them trace the tool's evidence-first evolution; later ADRs openly amend earlier ones. |
+| **ADR** | Architecture Decision Record — 44 of them trace the tool's evidence-first evolution; later ADRs openly amend earlier ones. |
 
 ---
 
@@ -266,12 +266,12 @@ All figures verified against the working tree on 2026-07-14:
 | Agent roles | 6 | `templates/workspace/.tcgstackflow/agents/` |
 | Skills | 18 | `templates/workspace/.tcgstackflow/skills/` |
 | Commands | 19 | `templates/workspace/.tcgstackflow/commands/` |
-| Workspace schema | 7 | `init.js` `LATEST_SCHEMA = 7` |
-| ADRs | 42 | `docs/adr/*.md` (up to 0042) |
-| Tests | 236 pass, 0 fail | `node --test` |
-| Test files / lines | 23 files / 3,722 lines | `test/` |
-| Cockpit server | zero-dependency built-in Node `http`, ~2,590 lines, 12 `.cjs` files | `ui/server/` (**not** Hono, despite ADR 0022) |
-| Cockpit SPA | Vue 3 + Vite, `App.vue` = 1,331 lines | `ui/src/App.vue`, `ui/package.json` |
+| Workspace schema | 9 | `init.js` `LATEST_SCHEMA = 9` |
+| ADRs | 44 | `docs/adr/*.md` (up to 0044) |
+| Tests | 315 pass, 0 fail | `node --test` |
+| Test files / lines | 29 files / 4,903 lines | `test/` |
+| Cockpit server | zero-dependency built-in Node `http`, ~3,330 lines, 13 `.cjs` files | `ui/server/` (**not** Hono, despite ADR 0022) |
+| Cockpit SPA | Vue 3 + Vite, `App.vue` = 1,517 lines | `ui/src/App.vue`, `ui/package.json` |
 | Cockpit port | `127.0.0.1:4729` | `ui/server/index.cjs` `DEFAULT_PORT`; binds localhost only |
 | Cockpit tabs | 7 (Overview/Tasks/Wiki/Governance/Timesheet/Tools/Settings) | `ui/src/App.vue` |
 | Multi-project stacks | 9 (JS/TS, .NET, Python, Go, Rust, Ruby, Java, PHP, Pulumi) | `init.js` `analyseProject()` |

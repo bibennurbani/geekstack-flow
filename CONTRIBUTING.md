@@ -5,7 +5,7 @@ Thanks for considering a contribution. The tool is intentionally small — a sin
 ## Local setup
 
 ```bash
-git clone https://github.com/TheCreativeGeeks/geekstack-flow.git
+git clone https://github.com/bibennurbani/geekstack-flow.git
 cd geekstack-flow
 # No dependencies to install — init.js uses Node built-ins only.
 # Optionally link globally so `geekstackflow` and `tcgflow` are on your PATH:
@@ -18,6 +18,42 @@ After `npm link`:
 cd /path/to/some/project
 geekstackflow init .         # or: tcgflow init .
 ```
+
+Requires **Node ≥ 22** (`engines` in `package.json` — the mandatory qmd wiki-search layer needs it).
+
+## Running the tests
+
+Run these before opening a PR. There is nothing to install first, and the whole suite takes a few seconds.
+
+```bash
+npm test          # the full suite — node --test over test/*.test.{cjs,mjs}
+npm run smoke     # node init.js --help — proves the single-file installer still parses
+```
+
+One file at a time while you iterate:
+
+```bash
+node --test test/pr.test.cjs
+```
+
+Conventions worth knowing before you add a test:
+
+- Tests live in `test/` as `*.test.cjs` (a couple are `.mjs`) and use Node's built-in runner and `node:assert` — no framework, no dependencies.
+- `init.js` exports its internals (`parseArgs`, `detectProjects`, `computeInitPlan`, `checkWikiStructure`, …) specifically so they can be unit-tested without running the installer. Prefer that over shelling out.
+- **Assert on behaviour, not on source text.** Build the artifact the shipped code builds and assert on its output. A whole class of governance tests once passed while the shipped template was inert, because each test hand-wrote its own `governance.md` string instead of using the real one (see the ADR 0044 entry in `CHANGELOG.md`). `test/shipped-templates-behavior.test.cjs` is the pattern to copy.
+- Anything that writes files must work inside a temp directory (`os.tmpdir()`) and clean up after itself. Per [ADR 0013](docs/adr/0013-tool-repo-stays-clean.md) there must never be a `.tcgstackflow/` in this repo, so don't run `init` against the checkout.
+
+CI runs the same two commands on Linux and macOS across Node 22 and 24, plus a Cockpit build (`.github/workflows/ci.yml`).
+
+## Opening a pull request
+
+- Keep the diff focused; one concern per PR.
+- `npm test` and `npm run smoke` pass locally.
+- If you changed behaviour, a test covers it. If you fixed a bug, the test names the bug.
+- If the change embodies a design decision, say which ADR it follows — or note that a new one is needed and sketch it in the PR description (see [How design decisions are made](#how-design-decisions-are-made)).
+- Update `CHANGELOG.md` under `## [Unreleased]` for anything user-visible.
+
+There is no CLA and no DCO sign-off requirement. By opening a PR you agree your contribution ships under the repository's [MIT licence](LICENSE).
 
 ## Repo layout
 

@@ -1,10 +1,26 @@
 # Creative GeekStack Flow
 
+[![CI](https://github.com/bibennurbani/geekstack-flow/actions/workflows/ci.yml/badge.svg)](https://github.com/bibennurbani/geekstack-flow/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](https://nodejs.org)
+[![Runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)](package.json)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 **A structured AI workflow for planning, coding, reviewing, testing, and shipping software — with project memory, task tracking, governance, and a local cockpit that runs your agents.**
 
 `geekstackflow` scaffolds a `.tcgstackflow/` workspace inside any project that gives your AI coding tools (Claude Code, Codex, GitHub Copilot) a shared brain: a Karpathy-style LLM wiki for memory (searched via mandatory [qmd](https://github.com/tobi/qmd) hybrid search), a strict two-file task system, six agent roles with a clear lifecycle, governance with risk levels, and a local web **Cockpit** that is also the **Orchestrator** — launch agents on tasks from the browser, watch the run stream live, approve HIGH/CRITICAL actions, and track token spend.
 
-> **Scope:** personal-first → team-usable → OSS-ready. Built for one author, designed so a teammate can adopt it on day one, and structured so it can become a public tool without re-architecting. See [docs/adr/0001](docs/adr/0001-personal-first-team-usable-oss-ready.md).
+## Why this exists
+
+Every AI coding tool ships its own instructions file — `CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`. None of them carries a **workflow**. They hold prose: not project memory, not task state, not a review gate, not a brake. So three things keep happening:
+
+- **The agent has no memory.** It relearns your codebase every session. What it worked out last week is gone, and you re-explain the same architecture forever.
+- **The agent has no lifecycle.** "Write it" and "check it" collapse into one prompt, and nothing durable records what was decided, by whom, or why.
+- **The agent has no brakes.** Nothing sits between a plausible-looking suggestion and a force-push, a dropped table, or a rewritten migration.
+
+`geekstackflow` gives a project one `.tcgstackflow/` source of truth and generates every tool's adapter from it — so the memory, the task history, the agent roles and the risk rules outlive whichever tool you happened to use last week.
+
+**Who it's for:** a developer or small team already using Claude Code, Codex or Copilot daily, who has reached the point where the AI's missing memory and missing guardrails cost more than they save. If you're trying to work out whether agentic coding can be trusted on real work, this is the scaffolding that makes that question answerable.
 
 📚 **Full docs:** [Install](docs/INSTALL.md) · [Quick Start](docs/QUICKSTART.md) · [Usage Guide](docs/USAGE.md) · [docs index](docs/README.md)
 
@@ -12,6 +28,7 @@
 
 ## Table of contents
 
+- [Why this exists](#why-this-exists)
 - [What you get](#what-you-get)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -40,7 +57,7 @@ After `geekstackflow init`, your project has a `.tcgstackflow/` folder containin
 - **19 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
 - **Governance** (`governance.md`) — four risk levels (LOW/MEDIUM/HIGH/CRITICAL) + a permission-request recipe + your project-specific rules. Enforced live during orchestrated runs (approve/deny in the browser).
 - **Tool adapters** (`tools/`) — generated `CLAUDE.md`, `AGENTS.md` (Codex), and `.github/copilot-instructions.md` (Copilot), all pointing back at `.tcgstackflow/` as the single source of truth.
-- **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, session id, the runner `tool`/`gate`, the qmd re-embed outcome, and (for branch-isolated runs) the `isolation`/`branch` it used (workspace schema 8).
+- **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, session id, the runner `tool`/`gate`, the qmd re-embed outcome, and (for branch-isolated runs) the `isolation`/`branch` it used (workspace schema 9).
 - **A local Cockpit / Orchestrator** — `geekstackflow ui` opens a browser dashboard over all your projects that also *runs* the workflow: launch any agent on a task, watch the live stream, approve HIGH/CRITICAL actions, browse run history and per-run reports/diffs, chat with a finished run, and track token spend against a budget — plus task board, wiki activity, Jira status, governance, timesheet.
 
 Plus a **global** home at `~/.tcgstackflow/` for cross-project memory (`memory/`) and a shared tech-skill library (`skills/`).
@@ -54,7 +71,7 @@ Plus a **global** home at `~/.tcgstackflow/` for cross-project memory (`memory/`
 npm install -g geekstackflow
 
 # From a local clone (today):
-git clone https://github.com/TheCreativeGeeks/geekstack-flow.git
+git clone https://github.com/bibennurbani/geekstack-flow.git
 cd geekstack-flow
 npm link                 # puts `geekstackflow` + `tcgflow` on your PATH
 cd ui && npm install && npm run build   # build the Cockpit SPA (one-time)
@@ -289,11 +306,13 @@ The `geekstackflow` binary (alias **`tcgflow`**; `node init.js …` works the sa
 | `geekstackflow hooks [dir]` | Install the git `post-merge`/`post-rewrite` **pull-digest hook** into `.git/hooks` (preserves any existing hook as `*.pre-gsf`) |
 | `geekstackflow register [dir]` | Add an already-initialised project to the Cockpit registry without re-running init (e.g. after cloning to a new machine) |
 | `geekstackflow drift [dir]` | Read-only report of which existing skills / tool adapters differ from the current templates (the files `upgrade` won't auto-merge) |
+| `geekstackflow pr <TASK-ID> [--yes]` | Preview the commits + diff on the task's worktree branch (`tcgflow/<ID>`); with `--yes`, push it and open a **draft** PR via `gh` (else print a compare URL). Push + open-PR are HIGH — this command *is* the approval (ADR 0043) |
 | `geekstackflow --migrate-from <old> [dir]` | During init, collect old AI infra from `<old>` into `migration-notes/` for manual review (collects, never auto-merges) |
 | `geekstackflow --force [dir]` | Overwrite an existing `.tcgstackflow/` (and root adapters) during init |
+| `geekstackflow --version` *(`-v`)* | Print the tool version and exit |
 | `geekstackflow --help` *(`-h`)* | Show usage |
 
-Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `register`, `drift`, `doctor`, `ui`, and `hooks` are subcommands only.
+Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `register`, `drift`, `doctor`, `ui`, `hooks`, and `pr` are subcommands only. An unrecognised flag is a hard error — it is never silently treated as `dir`.
 
 ---
 
@@ -412,7 +431,7 @@ geekstack-flow/
 ├── init.js                 # the CLI (init / upgrade / register / drift / ui / hooks) — zero dependencies
 ├── package.json            # bin: { geekstackflow, tcgflow }, v0.3.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
-├── docs/adr/               # 43 Architecture Decision Records
+├── docs/adr/               # 44 Architecture Decision Records
 ├── test/                   # node --test suite (run with `npm test`)
 ├── ui/                     # the Cockpit/Orchestrator (Vue 3 + Vite SPA + zero-dep Node server)
 │   ├── server/             #   read.cjs (data) · index.cjs (http) · run.cjs (agent executor)
@@ -440,8 +459,10 @@ geekstack-flow/
 
 ## Design & decisions
 
+> **Scope ladder:** personal-first → team-usable → OSS-ready. Built by one author against real daily work, designed so a teammate can adopt it on day one, and structured so it can become a public tool without re-architecting. See [docs/adr/0001](docs/adr/0001-personal-first-team-usable-oss-ready.md).
+
 - **[CONTEXT.md](CONTEXT.md)** — the project's domain language (Wiki, Raw, Ingest/Query/Lint, Agent, Skill, Command, Cockpit, Orchestrator, Workspace vs Jira status, …).
-- **[docs/adr/](docs/adr/)** — 43 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation in-place/branch/worktree (0040), worktree autopilot → parallel runs + PR command (0043), browser web-test as a Tester skill, interactive-only (0041), `upgrade` owns the adapter head + root copies (0042).
+- **[docs/adr/](docs/adr/)** — 44 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation in-place/branch/worktree (0040), worktree autopilot → parallel runs + PR command (0043), browser web-test as a Tester skill, interactive-only (0041), `upgrade` owns the adapter head + root copies (0042).
 
 ## Inspirations
 

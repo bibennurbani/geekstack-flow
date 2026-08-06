@@ -422,12 +422,19 @@ geekstackflow init [target]                  initialise a workspace
 geekstackflow upgrade [target]               migrate layout + refresh tool-owned files
 geekstackflow register [target]              add an existing workspace to the Cockpit registry
 geekstackflow drift [target]                 report skills/adapters that differ from the templates (read-only)
+geekstackflow doctor [target]                health-check qmd collections + wiki structure everywhere (read-only, non-zero on any problem)
+geekstackflow doctor --wiki [target]         just the deterministic wiki-structure check for this workspace (read-only)
 geekstackflow ui [--port N]                  launch the Cockpit
+geekstackflow hooks [target]                 install the git post-merge/post-rewrite pull-digest hook
+geekstackflow pr <TASK-ID> [--yes]           preview the task branch; with --yes push it and open a draft PR (ADR 0043)
 geekstackflow init --migrate-from <old> .    collect old AI infra for migration review
 geekstackflow init --force [target]          overwrite an existing .tcgstackflow/
+geekstackflow --version                      print the tool version
 geekstackflow --help
 ```
 
+An unrecognised flag exits non-zero rather than being read as `target`.
+
 ### Design rationale
 
-Every decision is recorded in [adr/](adr/) (42 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).
+Every decision is recorded in [adr/](adr/) (44 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).
