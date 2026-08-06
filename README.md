@@ -1,6 +1,8 @@
 # Creative GeekStack Flow
 
 [![CI](https://github.com/bibennurbani/geekstack-flow/actions/workflows/ci.yml/badge.svg)](https://github.com/bibennurbani/geekstack-flow/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/geekstackflow.svg)](https://www.npmjs.com/package/geekstackflow)
+[![npm downloads](https://img.shields.io/npm/dm/geekstackflow.svg)](https://www.npmjs.com/package/geekstackflow)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](https://nodejs.org)
 [![Runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)](package.json)
@@ -67,7 +69,7 @@ Plus a **global** home at `~/.tcgstackflow/` for cross-project memory (`memory/`
 ## Install
 
 ```bash
-# Global install (once published to npm):
+# Global install — published with provenance from CI:
 npm install -g geekstackflow
 
 # From a local clone (today):

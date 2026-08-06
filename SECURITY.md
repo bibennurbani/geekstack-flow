@@ -13,10 +13,18 @@ security model rather than on process boilerplate.
 | `≤ 0.3.x` | ❌ Upgrade with `geekstackflow upgrade .` |
 
 Pre-1.0: `v0.4.0` is the first tagged release, and there are no maintenance branches — `main` **is**
-the release line, so a fix ships as the next `0.x` tag plus a `CHANGELOG.md` entry. Install is
-`git clone` + `npm link` ([docs/INSTALL.md](docs/INSTALL.md)); until the package is on npm,
-**updating means pulling `main`** (or fetching the newest tag). Requires Node ≥ 22 (`engines` in
-`package.json`).
+the release line, so a fix ships as the next `0.x` tag plus a `CHANGELOG.md` entry. Update with
+`npm install -g geekstackflow@latest`, or pull `main` if you installed from a clone
+([docs/INSTALL.md](docs/INSTALL.md)). Requires Node ≥ 22 (`engines` in `package.json`).
+
+Releases are published **from CI with npm provenance** (`.github/workflows/release.yml`), so every
+tarball carries a signed SLSA attestation tying it to a specific workflow run and commit. Verify
+before trusting a build:
+
+```bash
+npm audit signatures         # after installing
+npm view geekstackflow dist.attestations
+```
 
 Dependency exposure is deliberately near-zero: the CLI (`init.js`) has **no runtime dependencies** —
 built-ins only, and no network calls of its own. Only the Cockpit SPA under `ui/` has dependencies
