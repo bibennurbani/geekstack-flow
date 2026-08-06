@@ -1,21 +1,32 @@
 # Publish to npm on a version tag, with provenance.
 #
-# Why provenance rather than a local `npm publish`: publishing from a workstation produces an
-# unattested tarball, which turns OpenSSF Scorecard's Signed-Releases check from *inconclusive*
-# (excluded from the score) into a hard 0 at weight 7.5 — actively lowering the score. Publishing
-# from here with --provenance attaches a signed attestation linking the tarball to this workflow
-# run and this commit, so consumers can verify where it came from.
+# AUTH: this is mid-migration, deliberately. The npm CLI tries OIDC (trusted publishing) FIRST and
+# falls back to NODE_AUTH_TOKEN, so both paths are wired and the workflow keeps working either way.
+#   - Today: publishes with the NPM_TOKEN secret (a classic Automation token).
+#   - Once the trusted publisher is configured on npmjs.com, the same run authenticates via OIDC
+#     and the token is never used. Then delete the secret and the `env:` block below.
 #
-# ONE-TIME SETUP before the first release: add a repository secret named NPM_TOKEN
-#   npmjs.com -> Access Tokens -> Generate -> Granular, "Read and write" on this package
-#   gh secret set NPM_TOKEN --repo bibennurbani/geekstack-flow
-# Alternatively configure npm Trusted Publishing (OIDC) for the package and drop NODE_AUTH_TOKEN.
+# WHY MIGRATE: npm is restricting tokens that bypass 2FA — account changes Aug 2026, direct
+# publishing Jan 2027 (github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation).
+# The Automation token this currently uses is exactly the kind being deprecated. Trusted publishing
+# has no long-lived credential to leak, expire, or rotate.
+#
+# ONE-TIME npm SETUP — npmjs.com → Packages → geekstackflow → Settings → Trusted publishing:
+#   Publisher:          GitHub Actions
+#   Organization/user:  bibennurbani
+#   Repository:         geekstack-flow
+#   Workflow filename:  release.yml      <- filename only, with the extension, case-sensitive
+#   Allowed actions:    npm publish
+# npm does NOT validate these when you save them; a typo only surfaces as ENEEDAUTH on publish.
+# Requires npm >= 11.5.1 and Node >= 22.14.0 — hence Node 24 below (Node 22 still ships npm 10.x).
+# Also requires package.json `repository.url` to match the GitHub repo exactly, which it now does.
+#
+# AFTER the first successful OIDC publish, harden it:
+#   Settings → Publishing access → "Require two-factor authentication and disallow tokens"
+#   then revoke the NPM_TOKEN automation token and delete the repo secret.
 #
 # To release: bump `version` in package.json + ui/package.json, close the CHANGELOG section,
 # commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
-#
-# NOTE: this workflow has not been executed end to end — it cannot be until NPM_TOKEN exists.
-# The first tag push is its first real run; check the run output before assuming it published.
 
 name: Release
 
@@ -32,14 +43,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # required for npm provenance attestation
+      id-token: write # required both for npm provenance and for OIDC trusted publishing
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          # Node 24 ships npm 11.x. Trusted publishing needs npm >= 11.5.1, which Node 22 (npm 10.x)
+          # does not provide — the package itself still supports Node >= 22 per `engines`.
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # npm's guidance: never cache in a release build
 
       - name: Install
         run: npm ci
@@ -52,7 +66,11 @@ jobs:
       # `prepack` (npm --prefix ui ci && npm --prefix ui run build) runs automatically here and
       # builds ui/dist, which ui/.npmignore then allows into the tarball. Without both, the
       # published Cockpit serves a fallback stub — see test/npm-package.test.cjs.
+      #
+      # --provenance is explicit so the token path also produces an attestation. Under trusted
+      # publishing it is generated automatically and the flag is simply redundant, not harmful.
       - name: Publish
         run: npm publish --provenance --access public
         env:
+          # Ignored once OIDC is configured; remove this block after the migration is confirmed.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

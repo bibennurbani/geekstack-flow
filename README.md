@@ -10,6 +10,10 @@
 
 **A structured AI workflow for planning, coding, reviewing, testing, and shipping software — with project memory, task tracking, governance, and a local cockpit that runs your agents.**
 
+[![The Cockpit — every project's ready work, grouped by the agent role that comes next](docs/images/cockpit.jpg)](docs/images/cockpit.jpg)
+
+<sub>`geekstackflow ui` — every project's ready work, grouped by the agent role that comes next. Press **▶** and the Orchestrator launches that agent, streams the run live, and pauses for your approval on anything HIGH or CRITICAL. *(Shown with a demo workspace.)*</sub>
+
 `geekstackflow` scaffolds a `.tcgstackflow/` workspace inside any project that gives your AI coding tools (Claude Code, Codex, GitHub Copilot) a shared brain: a Karpathy-style LLM wiki for memory (searched via mandatory [qmd](https://github.com/tobi/qmd) hybrid search), a strict two-file task system, six agent roles with a clear lifecycle, governance with risk levels, and a local web **Cockpit** that is also the **Orchestrator** — launch agents on tasks from the browser, watch the run stream live, approve HIGH/CRITICAL actions, and track token spend.
 
 ## Why this exists
