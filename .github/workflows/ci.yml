@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: nothing in this workflow writes to the repo (OpenSSF Token-Permissions).
+permissions:
+  contents: read
+
+# A new push to the same ref supersedes the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      # The point of the matrix is to see *which* combination broke.
+      fail-fast: false
+      matrix:
+        # init.js shells out to git and writes under os.tmpdir(); both are worth
+        # exercising on Linux and macOS. package.json engines: node >=22.
+        os: [ubuntu-latest, macos-latest]
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          # No dependency cache on purpose: the CLI has zero runtime dependencies
+          # (init.js is pure node: built-ins), so `npm ci` here resolves nothing
+          # from the network and finishes in about a second.
+
+      - name: Install (root — lockfile is effectively empty)
+        run: npm ci
+
+      - name: Unit + template-structure tests
+        run: npm test # node --test over test/*.test.{cjs,mjs}
+        env:
+          # test/run-executor.test.cjs waits on async work with fixed sleeps, which are too
+          # tight on a shared runner. Give them 3x slack so CI is not intermittently red.
+          GSF_TEST_TICK_SCALE: '3'
+
+      - name: Smoke the CLI
+        run: npm run smoke # node init.js --help — proves the single-file installer parses and runs
+
+  cockpit:
+    name: cockpit build (vue 3 + vite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Built on the floor version the package declares. vite 8 requires
+          # ^20.19.0 || >=22.12.0, and `22` resolves to the latest 22.x.
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install Cockpit dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Build the Cockpit SPA
+        # Produces ui/dist/, which ui/server/index.cjs serves for `geekstackflow ui`.
+        run: npm run build
+        working-directory: ui
+
+      - name: Assert the published tarball would contain the built SPA
+        # Needs the build above, and shells out to `npm pack` — so it lives here rather than in
+        # the parallel unit suite. A nested ui/.gitignore once silently dropped ui/dist from the
+        # tarball, shipping a Cockpit that served a fallback stub. This is the guard.
+        run: node --test test/npm-package.test.cjs
+        env:
+          GSF_TEST_PACK: '1'

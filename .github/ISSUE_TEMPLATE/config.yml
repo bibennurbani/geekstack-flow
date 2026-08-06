@@ -1,0 +1,24 @@
+# Blank issues are off: the two forms above collect the version / Node / OS / area / evidence fields
+# that make a report actionable. Anything that does not fit a form belongs in Discussions.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Question or workflow idea — Discussions
+    url: https://github.com/bibennurbani/geekstack-flow/discussions
+    about: "\"How do I...\", \"is this the intended flow\", show-your-setup, and half-formed ideas. Ask here before filing a feature request."
+
+  - name: Docs — install, quick start, full usage guide
+    url: https://github.com/bibennurbani/geekstack-flow/blob/main/docs/README.md
+    about: INSTALL, QUICKSTART, and USAGE (the full plan-code-review-test-ingest loop, every CLI command, the Cockpit, troubleshooting).
+
+  - name: Architecture Decision Records — the "why" behind every design call
+    url: https://github.com/bibennurbani/geekstack-flow/tree/main/docs/adr
+    about: 44 short records. Read the relevant one before proposing a design change; the answer to "why is it like this?" is usually in here.
+
+  - name: Contributing guide
+    url: https://github.com/bibennurbani/geekstack-flow/blob/main/CONTRIBUTING.md
+    about: Local setup, repo layout, how to add a skill / command / tool adapter, the zero-dependency rule, and the versioning policy.
+
+  - name: Report a security vulnerability (private)
+    url: https://github.com/bibennurbani/geekstack-flow/security/advisories/new
+    about: Never file a vulnerability as a public issue. This opens a private advisory — see SECURITY.md for scope and response times.

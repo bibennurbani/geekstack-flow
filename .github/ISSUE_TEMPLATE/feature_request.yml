@@ -1,0 +1,145 @@
+name: Feature request / design proposal
+description: Propose a change to the workflow, the CLI, the Cockpit, or the shipped templates.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **How this project decides.** Substantive design calls are captured as ADRs in
+        [`docs/adr/`](https://github.com/bibennurbani/geekstack-flow/tree/main/docs/adr) — one short record
+        per decision, grounded in evidence. Two doctrines shape what gets built:
+
+        - **Earn the complexity** ([ADR 0001](https://github.com/bibennurbani/geekstack-flow/blob/main/docs/adr/0001-personal-first-team-usable-oss-ready.md)) —
+          scope is deliberately small. `init.js` has zero runtime dependencies and stays that way.
+        - **Observe before enforcing** ([ADR 0037](https://github.com/bibennurbani/geekstack-flow/blob/main/docs/adr/0037-record-qmd-discovery-path-defer-enforcement.md)) —
+          when a failure mode has not been *measured*, we ship the record/badge that makes it visible and
+          defer the gate. A fully-built enforcement branch sitting unmerged is a normal outcome here.
+
+        So: **lead with the problem, not the solution, and bring evidence.** A proposal that says
+        "here is what bit me, here is how often, here is the run record" gets built. A proposal that says
+        "it would be nice if" usually gets deferred with a follow-up trigger.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I skimmed `docs/adr/` for a decision that already covers this (and cited it below if one does).
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What were you trying to do, and where did the workflow get in the way? No proposed solution yet.
+      placeholder: |
+        Mid-run I need to know whether the Reviewer touched code, but the only signal is the
+        write_attempts badge after the run finishes — by then the task has already advanced.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence it is needed
+      description: >-
+        The part that decides whether this ships. How often has it actually happened — how many tasks,
+        how many runs, over what period? What in the workspace shows it: a run record, `doctor` output,
+        a `drift` report, a task's implementation log? If it has happened exactly once, say so.
+      placeholder: |
+        4 of the last ~20 orchestrated runs. runs/ES-1201/ and runs/ES-1187/ both show it.
+        Not reproducible on a fresh workspace, which is why I think it is X and not Y.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What do you do today instead?
+      description: The manual workaround, and what it costs each time. "Nothing, I just live with it" is a valid answer.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: smallest-slice
+    attributes:
+      label: If only the smallest useful slice shipped, what should it be?
+      description: Per ADR 0037 — observability and prose land first; gates and new machinery have to be earned.
+      options:
+        - "Record it — a field in the run record plus a Cockpit badge, no behaviour change"
+        - "Prose only — sharpen a skill body, agent profile, or doc so the right thing is the obvious thing"
+        - "A deterministic check — a new detector in doctor / audit-workspace that flags it"
+        - "Config-gated behaviour — opt-in via config.yaml, default off"
+        - "New enforcement / gate — it must be blocked, not merely observed"
+        - "New surface — a new CLI subcommand, /tcgflow-* command, skill, or agent role"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface would change?
+      options:
+        - "init.js — CLI, prompts, migrations, doctor"
+        - "Cockpit SPA (ui/src)"
+        - "Cockpit server / Orchestrator (ui/server)"
+        - "Governance — risk levels, classification, approval flow"
+        - "Shipped templates — skills, /tcgflow-* commands, agent profiles"
+        - "Tool adapters — Claude Code / Codex / Copilot, or a new tool"
+        - "Wiki / task / run file formats"
+        - "Docs, README, or ADRs only"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: adr
+    attributes:
+      label: Does this need an ADR?
+      description: >-
+        Per CONTRIBUTING: draft the ADR in the PR description, commit it once agreed. If it contradicts or
+        narrows an existing decision, it is an amendment — ADR 0037 carries one inline rather than spawning
+        a near-duplicate record.
+      options:
+        - "Yes — this is a new design decision and needs its own ADR"
+        - "It amends an existing ADR (numbered below)"
+        - "No — bug fix, polish, or docs; covered by an existing ADR"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: adr-refs
+    attributes:
+      label: Related ADR number(s)
+      description: Which decisions this touches, even if you are not proposing to change them.
+      placeholder: "0037, 0025"
+    validations:
+      required: false
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change (optional)
+      description: >-
+        Optional on purpose — a well-evidenced problem is worth more than a solution. If you do have a
+        design, note what you rejected and why; that is what the ADR's "Considered options" section wants.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints this proposal respects
+      description: >-
+        The house rules from CONTRIBUTING and ADR 0013. If your proposal genuinely needs to break one, leave
+        it unchecked and argue for it above — that is an ADR-sized conversation, not a blocker.
+      options:
+        - label: "No new runtime dependency in `init.js` — Node built-ins only (hand-roll it instead)."
+        - label: "Templates stay project-agnostic — no real project names, paths, or task IDs shipped to users."
+        - label: "No `.tcgstackflow/` workspace inside this repo — the tool repo is the tool (ADR 0013)."
+        - label: "Existing `tasks/`, `wiki/`, `governance.md`, `config.yaml`, and user-authored skills are never overwritten by an upgrade."

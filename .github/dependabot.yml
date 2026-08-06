@@ -1,0 +1,52 @@
+version: 2
+
+# One maintainer reviews these, so everything is grouped and weekly.
+# Security updates are deliberately NOT grouped — they arrive as individual,
+# prioritised PRs so they are obvious in the list.
+updates:
+  # The published CLI (init.js) has zero runtime dependencies and intends to keep
+  # it that way — see CONTRIBUTING.md "Style". This entry is therefore a tripwire:
+  # if a dependency ever lands in the root manifest, it starts getting updates
+  # instead of silently ageing.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      cli:
+        patterns: ['*']
+
+  # The Cockpit SPA. Two PRs a week at most: one for what ships to the browser,
+  # one for the build toolchain.
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: chore(deps)
+      prefix-development: chore(deps-dev)
+    groups:
+      cockpit-runtime: # vue
+        dependency-type: production
+      cockpit-build: # vite, @vitejs/plugin-vue and their transitive binaries
+        dependency-type: development
+
+  # .github/workflows/*.yml pins actions by major tag, so this is what surfaces
+  # the next major (e.g. actions/checkout v4 -> v5).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: ci(deps)
+    groups:
+      actions:
+        patterns: ['*']

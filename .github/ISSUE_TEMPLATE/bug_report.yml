@@ -1,0 +1,197 @@
+name: Bug report
+description: The CLI, the Cockpit, or an orchestrated run does not behave as documented.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things before you write this up.
+
+        **Run the built-in checks.** They are read-only and usually name the problem for you:
+
+        ```bash
+        geekstackflow doctor      # qmd collections + wiki structure, across every registered project
+        geekstackflow drift       # which shipped skills / tool adapters differ from the installed templates
+        ```
+
+        **Redact before you paste.** Run records (`.tcgstackflow/runs/{task-id}/{run-id}.md`) hold real agent
+        transcripts and diffs of your source; `wiki/` and `tasks/` are your project's private notes. Trim to the
+        smallest excerpt that shows the bug, and never paste tokens, keys, customer data, or personal details.
+
+        **Found a security vulnerability?** Do not open a public issue — use
+        [private vulnerability reporting](https://github.com/bibennurbani/geekstack-flow/security/advisories/new),
+        per [`SECURITY.md`](https://github.com/bibennurbani/geekstack-flow/blob/main/SECURITY.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am on Node >= 22 (`engines` requires it) and the excerpts below are redacted.
+          required: true
+
+  - type: dropdown
+    id: entrypoint
+    attributes:
+      label: How did you invoke it?
+      description: The entry point you actually ran, per `geekstackflow --help`.
+      options:
+        - "geekstackflow init (or tcgflow init) — scaffolding a workspace"
+        - "geekstackflow upgrade / drift — existing workspace"
+        - "geekstackflow doctor (or doctor --wiki)"
+        - "geekstackflow register"
+        - "geekstackflow hooks — git post-merge pull digest"
+        - "geekstackflow pr <TASK-ID>"
+        - "geekstackflow ui — the Cockpit would not start or serve"
+        - "An orchestrated run launched from the Cockpit"
+        - "A /tcgflow-* command or agent behaviour inside my AI tool"
+        - "Something else / not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Best guess is fine — pick "Not sure" if you would only be guessing.
+      options:
+        - "init.js — prompts, project detection, template copy"
+        - "init.js — upgrade migrations + tool-owned file refresh (ADR 0042)"
+        - "init.js — doctor (qmd collections, wiki-structure check)"
+        - "Cockpit SPA (ui/src, App.vue)"
+        - "Cockpit server / API (ui/server/index.cjs, read.cjs)"
+        - "Orchestrator run loop (run.cjs, run-manager.cjs — continuation, abort, status safety-net)"
+        - "Runner adapter (ui/server/runners/ — ADR 0035)"
+        - "Governance gate / approvals (governance-mcp.cjs, governance-classify.cjs)"
+        - "Git isolation — branch / worktree / PR (git.cjs, pr.cjs — ADR 0040, 0043)"
+        - "Session report / token + cost accounting (session-report.cjs, pricing.js)"
+        - "Shipped templates (skills, commands, agent profiles, tool adapters)"
+        - "Wiki search (qmd) integration"
+        - "Docs / README / ADRs"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Which AI tool?
+      description: >-
+        Only the `claude` runner is registered today, so only Claude Code can be driven as an orchestrated
+        run (ADR 0035). Codex and Copilot get adapter files and Copy-prompt, not headless runs — a 501 from
+        `POST /api/run` for a Codex-mapped role is expected behaviour, not a bug.
+      options:
+        - "Claude Code"
+        - "Codex"
+        - "GitHub Copilot"
+        - "Not tool-specific"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: geekstackflow version
+      description: Output of `geekstackflow --version` (or `node init.js --version`).
+      placeholder: "0.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`.
+      placeholder: "v22.14.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - "macOS"
+        - "Linux"
+        - "Windows (WSL)"
+        - "Windows (native shell)"
+        - "Other"
+    validations:
+      required: true
+
+  - type: input
+    id: schema
+    attributes:
+      label: workspace_schema
+      description: >-
+        For workspace/upgrade bugs: the `workspace_schema` value in the affected project's
+        `.tcgstackflow/config.yaml`. Latest is 9.
+      placeholder: "8"
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect instead?
+      placeholder: |
+        Ran `geekstackflow upgrade .` on a schema-6 workspace. It reported the migration as done, but
+        commands/tcgflow-review/SKILL.md was left at the old content with no .bak sibling.
+        Expected: refreshed from the template, drifted copy backed up first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered, from a known-clean starting point. State whether the target workspace was fresh or pre-existing.
+      placeholder: |
+        1. mkdir /tmp/demo && cd /tmp/demo && git init
+        2. geekstackflow init .   (single project, Claude Code enabled)
+        3. ...
+        4. Observe: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Terminal output / stack trace
+      description: Redacted. The failing command and its output is usually enough.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`geekstackflow doctor` output"
+      description: Read-only, exits non-zero on any problem. Paste it even if it reports everything healthy.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: run-record
+    attributes:
+      label: Run-record frontmatter
+      description: >-
+        Orchestrated-run bugs only. The YAML frontmatter of
+        `.tcgstackflow/runs/{task-id}/{run-id}.md` — `role`, `tool`, `gate`, `state`, `isolation`,
+        `branch`, `tokens`. Frontmatter only; leave the transcript out.
+      render: yaml
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: extra
+    attributes:
+      label: Anything else that narrows it down
+      options:
+        - label: "It reproduces on a fresh `geekstackflow init` into an empty directory."
+        - label: "It started after an `upgrade` — I have included the `geekstackflow drift` output."
+        - label: "It only happens in a multi-project workspace (`workspace_kind: multi-project`)."

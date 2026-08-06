@@ -13,3 +13,12 @@ ui/dist/
 
 # Local scratch
 /tmp/
+
+# Local AI-tool config — machine-specific absolute paths and permission allowlists.
+# Previously untracked only because of one maintainer's global excludes file.
+.claude/settings.local.json
+.claude/*.local.json
+
+# Secrets — prophylaxis. Nothing in this repo reads .env today; keep it that way.
+.env
+.env.*

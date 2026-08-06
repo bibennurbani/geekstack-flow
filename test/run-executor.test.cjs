@@ -28,7 +28,17 @@ function makeWs() {
   return { proj, ws };
 }
 const cleanup = (p) => fs.rmSync(p, { recursive: true, force: true });
-const tick = (ms = 40) => new Promise((r) => setTimeout(r, ms));
+// These waits are fixed sleeps, so they are load-sensitive: under `node --test`'s parallel
+// file runner — and more so on a shared CI runner — 40-60ms can elapse before the async work
+// being awaited has actually finished, and the assertion below it reads a half-built state.
+// Observed as an intermittent failure in roughly 2 of 10 local full-suite runs.
+//
+// GSF_TEST_TICK_SCALE multiplies every wait, so a loaded machine can be given more slack
+// without touching the ~30 call sites. CI sets it to 3. This widens the window rather than
+// removing the race; the real fix is to poll for the awaited condition instead of sleeping,
+// which is a larger change to this file than it is worth making blind.
+const TICK_SCALE = Number(process.env.GSF_TEST_TICK_SCALE) || 1;
+const tick = (ms = 40) => new Promise((r) => setTimeout(r, Math.ceil(ms * TICK_SCALE)));
 
 // fake spawn: returns a child that replays `lines` then closes with `code`, after listeners attach.
 function fakeSpawn(lines, code = 0) {
