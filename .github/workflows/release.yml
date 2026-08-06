@@ -1,0 +1,58 @@
+# Publish to npm on a version tag, with provenance.
+#
+# Why provenance rather than a local `npm publish`: publishing from a workstation produces an
+# unattested tarball, which turns OpenSSF Scorecard's Signed-Releases check from *inconclusive*
+# (excluded from the score) into a hard 0 at weight 7.5 — actively lowering the score. Publishing
+# from here with --provenance attaches a signed attestation linking the tarball to this workflow
+# run and this commit, so consumers can verify where it came from.
+#
+# ONE-TIME SETUP before the first release: add a repository secret named NPM_TOKEN
+#   npmjs.com -> Access Tokens -> Generate -> Granular, "Read and write" on this package
+#   gh secret set NPM_TOKEN --repo bibennurbani/geekstack-flow
+# Alternatively configure npm Trusted Publishing (OIDC) for the package and drop NODE_AUTH_TOKEN.
+#
+# To release: bump `version` in package.json + ui/package.json, close the CHANGELOG section,
+# commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+#
+# NOTE: this workflow has not been executed end to end — it cannot be until NPM_TOKEN exists.
+# The first tag push is its first real run; check the run output before assuming it published.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to npm (provenance)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm provenance attestation
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: npm ci
+
+      - name: Test before publishing
+        run: npm test
+        env:
+          GSF_TEST_TICK_SCALE: '3'
+
+      # `prepack` (npm --prefix ui ci && npm --prefix ui run build) runs automatically here and
+      # builds ui/dist, which ui/.npmignore then allows into the tarball. Without both, the
+      # published Cockpit serves a fallback stub — see test/npm-package.test.cjs.
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

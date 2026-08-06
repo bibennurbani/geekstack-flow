@@ -9,13 +9,14 @@ security model rather than on process boilerplate.
 
 | Version | Supported |
 |---|---|
-| `0.3.x` (current, from `main`) | ✅ Security fixes |
-| `≤ 0.2.x` | ❌ Upgrade with `geekstackflow upgrade .` |
+| `0.4.x` (current) | ✅ Security fixes |
+| `≤ 0.3.x` | ❌ Upgrade with `geekstackflow upgrade .` |
 
-Pre-1.0 and pre-npm: there are no published releases, no git tags, and no maintenance branches yet
-— `main` **is** the release line, and a fix ships as the next `0.x` bump plus a `CHANGELOG.md` entry.
-Install today is `git clone` + `npm link` ([docs/INSTALL.md](docs/INSTALL.md)), so **updating means
-pulling `main`**. Requires Node ≥ 22 (`engines` in `package.json`).
+Pre-1.0: `v0.4.0` is the first tagged release, and there are no maintenance branches — `main` **is**
+the release line, so a fix ships as the next `0.x` tag plus a `CHANGELOG.md` entry. Install is
+`git clone` + `npm link` ([docs/INSTALL.md](docs/INSTALL.md)); until the package is on npm,
+**updating means pulling `main`** (or fetching the newest tag). Requires Node ≥ 22 (`engines` in
+`package.json`).
 
 Dependency exposure is deliberately near-zero: the CLI (`init.js`) has **no runtime dependencies** —
 built-ins only, and no network calls of its own. Only the Cockpit SPA under `ui/` has dependencies

@@ -429,7 +429,7 @@ This:
 ```
 geekstack-flow/
 ├── init.js                 # the CLI (init / upgrade / register / drift / ui / hooks) — zero dependencies
-├── package.json            # bin: { geekstackflow, tcgflow }, v0.3.0
+├── package.json            # bin: { geekstackflow, tcgflow }, v0.4.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
 ├── docs/adr/               # 44 Architecture Decision Records
 ├── test/                   # node --test suite (run with `npm test`)

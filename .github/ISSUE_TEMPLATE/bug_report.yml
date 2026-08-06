@@ -96,7 +96,7 @@ body:
     attributes:
       label: geekstackflow version
       description: Output of `geekstackflow --version` (or `node init.js --version`).
-      placeholder: "0.3.0"
+      placeholder: "0.4.0"
     validations:
       required: true
 
@@ -129,7 +129,7 @@ body:
       description: >-
         For workspace/upgrade bugs: the `workspace_schema` value in the affected project's
         `.tcgstackflow/config.yaml`. Latest is 9.
-      placeholder: "8"
+      placeholder: "9"
     validations:
       required: false
 

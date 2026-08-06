@@ -4,6 +4,8 @@ All notable changes to Creative GeekStack Flow are recorded here. Format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-06
+
 ### Fixed — OSS-readiness audit: four defects a user would hit before reaching any feature
 
 Found by auditing the repo the way a stranger arriving from a link would read it, rather than the way its author reads it. Every item below was reproduced end-to-end before it was fixed.
