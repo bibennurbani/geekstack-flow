@@ -686,53 +686,62 @@ function writeTaskStatus(projectPath, id, newStatus, opts = {}) {
   return { id, status: normalizeStatus(newStatus), old_status: oldStatus, bucket: found.bucket };
 }
 
-// Settings writes (config.yaml). Surface errors like the other write paths.
-function setRoleTool(workspaceDir, role, tool) {
+// Settings writes (config.yaml). Each field is a PURE text transform; `applySettings` composes them
+// so one Cockpit save = one read + one write. That atomicity is the point: applying the fields one
+// file-write at a time meant a field failing validation left the file HALF-updated (the earlier
+// fields persisted) with the remaining fields silently dropped, under a flat "Save failed".
+function roleToolText(text, role, tool) {
   if (!AGENT_ROLES.includes(role)) throw new Error('unknown-role');
   if (!/^(claude|codex)$/.test(String(tool))) throw new Error('unknown-tool');
-  const file = path.join(workspaceDir, 'config.yaml');
-  let text = fs.readFileSync(file, 'utf8');
-  const re = new RegExp('^(\\s+' + role + ':\\s*)\\S+', 'm'); // the role line under orchestrator.roles
+  const re = new RegExp('^([ \\t]+' + role + '):[ \\t]*\\S+', 'm'); // the role line under orchestrator.roles
   if (!re.test(text)) throw new Error('role-not-in-config');
-  fs.writeFileSync(file, text.replace(re, '$1' + tool));
+  return text.replace(re, (_m, head) => head + ': ' + tool);
 }
-function setAutoAdvance(workspaceDir, on) {
-  // Surgical replace-or-insert INSIDE the orchestrator block (an auto_advance key in another block
-  // must not match) — the editBlockLine primitive owns that idiom now. Throws no-orchestrator-block.
-  const file = path.join(workspaceDir, 'config.yaml');
-  const text = fs.readFileSync(file, 'utf8');
-  fs.writeFileSync(file, cf.editBlockLine(text, 'orchestrator', 'auto_advance', on ? 'true' : 'false'));
-}
-function setBudget(workspaceDir, usd) {
-  const file = path.join(workspaceDir, 'config.yaml');
-  let text = fs.readFileSync(file, 'utf8');
+// A blank budget field in the Cockpit means "no spend guard" → REMOVE the key. Clearing an
+// already-absent budget is a NO-OP, not an error (that gap surfaced as a bogus `no-orchestrator-block`
+// on every save of a config that had never set a budget).
+function budgetText(text, usd) {
+  if (usd == null || usd === '' || Number.isNaN(parseFloat(usd))) return cf.removeBlockLine(text, 'orchestrator', 'budget_usd');
   const n = parseFloat(usd);
-  if (/^\s+budget_usd:/m.test(text)) {
-    text = Number.isFinite(n) ? text.replace(/^(\s+budget_usd:\s*).*$/m, '$1' + n) : text.replace(/^\s+budget_usd:.*\n/m, '');
-  } else if (Number.isFinite(n) && /^orchestrator:/m.test(text)) {
-    text = text.replace(/^orchestrator:.*$/m, (l) => l + '\n  budget_usd: ' + n); // sibling of roles:
-  } else { throw new Error('no-orchestrator-block'); }
-  fs.writeFileSync(file, text);
+  if (!Number.isFinite(n) || n < 0) throw new Error('bad-budget');
+  return cf.editBlockLine(text, 'orchestrator', 'budget_usd', String(n));
 }
-// ADR 0040 — set the per-project git-isolation default. Surgical replace-or-insert inside the
-// orchestrator block (same idiom as setAutoAdvance). Throws unknown-isolation / no-orchestrator-block.
-function setIsolation(workspaceDir, mode) {
+function isolationText(text, mode) {
   if (!ISOLATION_MODES.includes(String(mode))) throw new Error('unknown-isolation');
-  const file = path.join(workspaceDir, 'config.yaml');
-  const text = fs.readFileSync(file, 'utf8');
-  fs.writeFileSync(file, cf.editBlockLine(text, 'orchestrator', 'isolation', mode));
+  return cf.editBlockLine(text, 'orchestrator', 'isolation', String(mode)); // ADR 0040 — per-project default
 }
-// ADR 0043 — the autopilot master switch + the parallel cap (same surgical idiom).
-function setAutopilot(workspaceDir, on) {
-  const file = path.join(workspaceDir, 'config.yaml');
-  fs.writeFileSync(file, cf.editBlockLine(fs.readFileSync(file, 'utf8'), 'orchestrator', 'autopilot', on ? 'true' : 'false'));
-}
-function setMaxParallel(workspaceDir, n) {
+function maxParallelText(text, n) {
   const v = parseInt(n, 10);
   if (!Number.isFinite(v) || v < 1) throw new Error('bad-max-parallel');
-  const file = path.join(workspaceDir, 'config.yaml');
-  fs.writeFileSync(file, cf.editBlockLine(fs.readFileSync(file, 'utf8'), 'orchestrator', 'max_parallel', String(v)));
+  return cf.editBlockLine(text, 'orchestrator', 'max_parallel', String(v));
 }
+
+// The one settings writer. An absent field is "not submitted" and is left alone; every submitted
+// field is validated and applied in memory first, so a throw writes NOTHING. Surgical throughout —
+// the template's comments stay byte-for-byte (ADR 0024: this layer owns the file I/O).
+function applySettings(workspaceDir, patch) {
+  const file = path.join(workspaceDir, 'config.yaml');
+  const before = fs.readFileSync(file, 'utf8');
+  const p = patch || {};
+  let text = before;
+  if (p.roles && typeof p.roles === 'object') for (const [role, tool] of Object.entries(p.roles)) text = roleToolText(text, role, tool);
+  if (p.budget_usd !== undefined) text = budgetText(text, p.budget_usd);
+  if (p.auto_advance !== undefined) text = cf.editBlockLine(text, 'orchestrator', 'auto_advance', p.auto_advance ? 'true' : 'false');
+  if (p.isolation !== undefined) text = isolationText(text, p.isolation);
+  if (p.autopilot !== undefined) text = cf.editBlockLine(text, 'orchestrator', 'autopilot', p.autopilot ? 'true' : 'false'); // ADR 0043
+  if (p.max_parallel !== undefined) text = maxParallelText(text, p.max_parallel);
+  if (text !== before) fs.writeFileSync(file, text); // a no-change save must not touch the file
+  return { changed: text !== before };
+}
+
+// The per-field setters stay the named entry points (callers + tests use them); each is now a
+// single-field applySettings, so they inherit the same validate-then-write guarantee.
+function setRoleTool(workspaceDir, role, tool) { applySettings(workspaceDir, { roles: { [role]: tool } }); }
+function setBudget(workspaceDir, usd) { applySettings(workspaceDir, { budget_usd: usd }); }
+function setAutoAdvance(workspaceDir, on) { applySettings(workspaceDir, { auto_advance: !!on }); }
+function setIsolation(workspaceDir, mode) { applySettings(workspaceDir, { isolation: mode }); }
+function setAutopilot(workspaceDir, on) { applySettings(workspaceDir, { autopilot: !!on }); }
+function setMaxParallel(workspaceDir, n) { applySettings(workspaceDir, { max_parallel: n }); }
 
 // --- Agents overview (cross-project, grouped by role) ---
 const AGENT_ROLES = ['planner', 'coder', 'reviewer', 'tester', 'ingester', 'refactorer'];
@@ -829,7 +838,7 @@ module.exports = {
   // Orchestrator (schema 4): reads
   findTaskFolder, parseFrontmatter, serializeRunRecord, parseRunRecord, readRunsForTask, readRunTranscript, parseTaskLogTimeline, buildTaskDetail,
   // Orchestrator: the one canonical task-file writer + settings writes
-  appendLogEntry, writeTaskStatus, setRoleTool, setBudget, setAutoAdvance, setIsolation, setAutopilot, setMaxParallel,
+  appendLogEntry, writeTaskStatus, applySettings, setRoleTool, setBudget, setAutoAdvance, setIsolation, setAutopilot, setMaxParallel,
   // Agents overview + run history
   buildAgentsOverview, parseAgentProfile, AGENT_ROLES, ISOLATION_MODES, buildRunsHistory,
 };

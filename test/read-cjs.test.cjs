@@ -471,3 +471,100 @@ test('serializeRunRecord: write_attempts round-trips and is omitted when absent 
   assert.strictEqual(noTools.write_attempts.count, 1);
   assert.strictEqual(noTools.write_attempts.tools, undefined);
 });
+
+// --- the settings save path: clearing an absent budget + atomicity -------------------------------
+// The user-visible bug: the Cockpit's Settings tab failed with "Save failed: no-orchestrator-block"
+// on a config that HAS an orchestrator block. A blank budget field posts null → setBudget was asked
+// to clear a key that was never there, matched neither of its branches, and threw the block-missing
+// error. Worse, the route applied each field with its OWN file write, so the fields before the throw
+// had already persisted and the fields after it were silently dropped.
+
+function makeSettingsWs(extraOrchestratorLines = []) {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-apply-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'config.yaml'), [
+    'workspace_schema: 9', 'project:', '  name: "x"',
+    'orchestrator:',
+    '  autopilot: false',
+    '  max_parallel: 3                   # cap on concurrent worktree runs',
+    '  pr:', '    remote: origin', '    base: ""', '    draft: true',
+    '  isolation: in-place               # in-place | branch',
+    ...extraOrchestratorLines,
+    '  roles:', '    planner: claude', '    coder: claude', '    reviewer: claude',
+    '    tester: claude', '    ingester: claude', '    refactorer: claude',
+    'governance:', '  mode: strict', '',
+  ].join('\n'));
+  return { proj, ws, file: path.join(ws, 'config.yaml') };
+}
+
+test('settings: clearing an ALREADY-ABSENT budget is a byte-identical no-op (not no-orchestrator-block)', () => {
+  const { proj, ws, file } = makeSettingsWs();
+  try {
+    const before = fs.readFileSync(file, 'utf8');
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.budget_usd, null, 'starts with no budget');
+    read.setBudget(ws, NaN);   // what the route passes for a blank Cockpit budget field
+    read.setBudget(ws, null);
+    read.setBudget(ws, '');
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), before, 'nothing written at all');
+    // and clearing a budget that IS set still removes it
+    read.setBudget(ws, 40);
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.budget_usd, 40);
+    read.setBudget(ws, null);
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.budget_usd, null);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), before, 'set-then-clear round-trips byte-for-byte');
+    assert.throws(() => read.setBudget(ws, -5), /bad-budget/, 'a negative spend guard is refused');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('applySettings: every submitted field lands in ONE write; comments + nested pr: survive', () => {
+  const { proj, ws, file } = makeSettingsWs();
+  try {
+    read.applySettings(ws, {
+      roles: { coder: 'codex' }, budget_usd: null, auto_advance: true,
+      isolation: 'branch', autopilot: true, max_parallel: '7',
+    });
+    const o = read.buildProjectDetail(proj).config.orchestrator;
+    assert.strictEqual(o.roles.coder, 'codex');
+    assert.strictEqual(o.roles.planner, 'claude', 'an unlisted role is left alone');
+    assert.strictEqual(o.budget_usd, null);
+    assert.strictEqual(o.auto_advance, true);
+    assert.strictEqual(o.isolation, 'branch');
+    assert.strictEqual(o.autopilot, true);
+    assert.strictEqual(o.max_parallel, 7);
+    const text = fs.readFileSync(file, 'utf8');
+    assert.match(text, /# cap on concurrent worktree runs/, 'load-bearing comments preserved');
+    assert.match(text, /^  pr:\n    remote: origin\n    base: ""\n    draft: true$/m, 'nested pr: block untouched');
+    assert.strictEqual((text.match(/^\s+isolation:/gm) || []).length, 1, 'exactly one isolation key');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('applySettings: a rejected field writes NOTHING (no half-updated config)', () => {
+  const { proj, ws, file } = makeSettingsWs();
+  try {
+    const before = fs.readFileSync(file, 'utf8');
+    // Each of these throws AFTER at least one valid field has been applied in memory.
+    for (const [patch, err] of [
+      [{ roles: { coder: 'codex' }, isolation: 'bogus' }, /unknown-isolation/],
+      [{ auto_advance: true, max_parallel: 0 }, /bad-max-parallel/],
+      [{ autopilot: true, roles: { wizard: 'claude' } }, /unknown-role/],
+      [{ autopilot: true, roles: { coder: 'gpt' } }, /unknown-tool/],
+      [{ isolation: 'branch', budget_usd: -1 }, /bad-budget/],
+    ]) {
+      assert.throws(() => read.applySettings(ws, patch), err);
+      assert.strictEqual(fs.readFileSync(file, 'utf8'), before, `no partial write for ${JSON.stringify(patch)}`);
+    }
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('applySettings: an omitted field is left alone; a no-change save does not rewrite the file', () => {
+  const { proj, ws, file } = makeSettingsWs();
+  try {
+    read.applySettings(ws, { isolation: 'branch' });
+    const after = fs.readFileSync(file, 'utf8');
+    assert.strictEqual(read.applySettings(ws, {}).changed, false, 'empty patch = no change');
+    assert.strictEqual(read.applySettings(ws, { isolation: 'branch' }).changed, false, 'same value = no change');
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), after, 'byte-identical');
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.autopilot, false, 'omitted field untouched');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});

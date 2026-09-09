@@ -280,21 +280,25 @@ function handleRequest(req, res) {
         } catch (e) { return sendJSON(res, 502, { error: 'remove-failed', detail: String((e && e.message) || e).slice(0, 400) }); }
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
     }
-    // Settings write: orchestrator role→tool map + spend budget (config.yaml).
+    // Settings write: orchestrator role→tool map + spend budget + the ADR 0040/0043 toggles.
+    // ONE applySettings call on purpose: the fields are validated and applied in memory, then written
+    // once, so a rejected field can no longer persist the fields before it and drop the fields after it.
     if (p === '/api/project/settings') {
       if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method-not-allowed' });
       return readJsonBody(req).then((body) => {
-        const { path: proj, roles, budget_usd, isolation } = body || {};
-        if (!proj) return sendJSON(res, 400, { error: 'missing path' });
-        const ws = path.join(proj, '.tcgstackflow');
+        const b = body || {};
+        if (!b.path) return sendJSON(res, 400, { error: 'missing path' });
+        const ws = path.join(b.path, '.tcgstackflow');
         if (!fs.existsSync(path.join(ws, 'config.yaml'))) return sendJSON(res, 400, { error: 'not-a-workspace' });
         try {
-          if (roles && typeof roles === 'object') for (const [role, tool] of Object.entries(roles)) read.setRoleTool(ws, role, tool);
-          if (budget_usd !== undefined) read.setBudget(ws, budget_usd === null || budget_usd === '' ? NaN : budget_usd);
-          if (body.auto_advance !== undefined) read.setAutoAdvance(ws, !!body.auto_advance);
-          if (isolation !== undefined) read.setIsolation(ws, isolation); // ADR 0040 — per-project default
-          if (body.autopilot !== undefined) read.setAutopilot(ws, !!body.autopilot); // ADR 0043
-          if (body.max_parallel !== undefined && body.max_parallel !== '' && body.max_parallel !== null) read.setMaxParallel(ws, body.max_parallel);
+          read.applySettings(ws, {
+            roles: b.roles,
+            budget_usd: b.budget_usd,   // null / '' = clear the spend guard (a blank Cockpit field)
+            auto_advance: b.auto_advance,
+            isolation: b.isolation,     // ADR 0040 — per-project default
+            autopilot: b.autopilot,     // ADR 0043
+            max_parallel: b.max_parallel === '' || b.max_parallel === null ? undefined : b.max_parallel,
+          });
           return sendJSON(res, 200, { ok: true });
         } catch (e) { return sendJSON(res, 400, { error: String((e && e.message) || e) }); }
       }).catch((e) => sendJSON(res, 400, { error: String((e && e.message) || e) }));
