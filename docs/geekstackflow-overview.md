@@ -13,12 +13,12 @@ This document is the written companion to the slide deck. It's pitched for a **m
 | | |
 |---|---|
 | **What it is** | A zero-dependency Node CLI (`geekstackflow` / `tcgflow`) that scaffolds and *orchestrates* a file-based AI-development workflow |
-| **Version** | v0.5.0 — adds the discovery stage before planning |
+| **Version** | v0.5.1 — fixes the Cockpit settings save |
 | **Runtime** | Pure Node ≥ 22, **0 runtime CLI dependencies** (qmd search adds ~2 GB of local models) |
 | **Works with** | Claude Code, Codex, GitHub Copilot — one workflow, any tool |
 | **The workspace** | `6` agent roles · `19` skills · `20` `tcgflow-*` commands · `4` risk levels · workspace schema `9` |
 | **The Cockpit** | Local browser dashboard at `127.0.0.1:4729` — zero-dependency Node `http` server (~3,330 lines) + a single Vue 3 SPA (`App.vue`, 1,517 lines) |
-| **Maturity** | 5 releases (0.1.0 → 0.5.0), **45 ADRs**, **316** passing tests |
+| **Maturity** | 6 releases (0.1.0 → 0.5.1), **45 ADRs**, **345** passing tests |
 | **Architecture** | No database — plain files are the single source of truth; nothing leaves your machine |
 
 ---
@@ -239,7 +239,7 @@ geekstackflow ui        # open the Cockpit at 127.0.0.1:4729, then press ▶ Run
 
 | Term | Definition |
 |------|------------|
-| **geekstackflow / tcgflow** | Creative GeekStack Flow — a zero-dependency Node CLI (v0.5.0, two bin names) that scaffolds and orchestrates a file-based AI-development workflow. |
+| **geekstackflow / tcgflow** | Creative GeekStack Flow — a zero-dependency Node CLI (v0.5.1, two bin names) that scaffolds and orchestrates a file-based AI-development workflow. |
 | **`.tcgstackflow/`** | The per-project workspace folder `init` scaffolds (agents, skills, commands, tasks, wiki, runs, governance.md, config.yaml) — doubling as an Obsidian vault. |
 | **LLM-wiki** | The AI-maintained, token-efficient project memory: flat Obsidian-flavoured Markdown with `[[wikilinks]]` and a Map-of-Content `index.md`, following Karpathy's pattern. The Ingester is its writer, with one bounded exception — intent-marked discovery writes (ADR 0045). |
 | **qmd** | The mandatory hybrid wiki-search layer (keyword + vector + LLM re-rank, ~2 GB local models) every agent uses to find pages; complements `index.md`. |
@@ -268,7 +268,7 @@ All figures verified against the working tree on 2026-07-14; the skills, command
 
 | Claim | Value | Source |
 |-------|-------|--------|
-| Version | 0.5.0 | `package.json` |
+| Version | 0.5.1 | `package.json` |
 | Runtime | Node ≥ 22.0.0 | `package.json` engines |
 | Agent roles | 6 | `templates/workspace/.tcgstackflow/agents/` |
 | Skills | 19 | `templates/workspace/.tcgstackflow/skills/` |

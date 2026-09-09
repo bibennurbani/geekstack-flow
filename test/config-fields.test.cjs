@@ -84,3 +84,120 @@ test('editBlockLine(): a re-edit is stable (idempotent value set)', () => {
   const twice = cf.editBlockLine(once, 'orchestrator', 'auto_advance', 'false');
   assert.strictEqual(once, twice);
 });
+
+// --- removeBlockLine: the CLEAR counterpart to editBlockLine ------------------------------------
+// Its no-op-when-absent contract is load-bearing: the Cockpit's blank budget field means "no spend
+// guard", so blanking an already-absent budget must not fail the save (that gap surfaced to the user
+// as "Save failed: no-orchestrator-block" on a config that HAS an orchestrator block).
+
+test('removeBlockLine(): drops the key and leaves the rest byte-for-byte', () => {
+  const out = cf.removeBlockLine(SAMPLE, 'orchestrator', 'budget_usd');
+  assert.doesNotMatch(out, /budget_usd/);
+  assert.match(out, /auto_advance: true/, 'sibling key kept');
+  assert.match(out, /embed_on_ingest: false      # disabled here/, 'other blocks + comments kept');
+  assert.strictEqual(out, SAMPLE.replace('  budget_usd: 50              # spend guard\n', ''));
+});
+
+test('removeBlockLine(): an absent key OR an absent block is a byte-identical no-op, not a throw', () => {
+  assert.strictEqual(cf.removeBlockLine(SAMPLE, 'orchestrator', 'budget_usd').includes('budget_usd'), false);
+  assert.strictEqual(cf.removeBlockLine(SAMPLE, 'orchestrator', 'max_bounces'), SAMPLE, 'absent key → unchanged');
+  assert.strictEqual(cf.removeBlockLine(SAMPLE, 'nope', 'budget_usd'), SAMPLE, 'absent block → unchanged');
+  assert.strictEqual(cf.removeBlockLine('foo: 1\n', 'orchestrator', 'budget_usd'), 'foo: 1\n', 'no orchestrator block → unchanged');
+});
+
+test('removeBlockLine(): a same-named key in another block is not touched', () => {
+  const t = 'orchestrator:\n  budget_usd: 5\ntempo:\n  budget_usd: 9\n';
+  assert.strictEqual(cf.removeBlockLine(t, 'tempo', 'budget_usd'), 'orchestrator:\n  budget_usd: 5\ntempo:\n');
+  assert.strictEqual(cf.removeBlockLine(t, 'orchestrator', 'budget_usd'), 'orchestrator:\ntempo:\n  budget_usd: 9\n');
+});
+
+test('removeBlockLine(): remove-then-edit round-trips back to the original value', () => {
+  const cleared = cf.removeBlockLine(SAMPLE, 'orchestrator', 'budget_usd');
+  const back = cf.editBlockLine(cleared, 'orchestrator', 'budget_usd', '50');
+  assert.match(back, /^\s+budget_usd: 50$/m, 're-set lands inside the orchestrator block');
+  assert.strictEqual((back.match(/budget_usd/g) || []).length, 1, 'exactly one budget_usd key');
+});
+
+// --- editBlockLine hardening (found while fixing the save path) ---------------------------------
+
+test('editBlockLine(): a key with an EMPTY value is replaced, not duplicated', () => {
+  const t = 'orchestrator:\n  budget_usd:\n  auto_advance: true\n';
+  const out = cf.editBlockLine(t, 'orchestrator', 'budget_usd', '25');
+  assert.match(out, /^  budget_usd: 25$/m, 'gets a value (with the space)');
+  assert.strictEqual((out.match(/budget_usd/g) || []).length, 1, 'not duplicated by a failed match');
+});
+
+test('editBlockLine(): a $ in the value is written literally (not a replacement pattern)', () => {
+  const out = cf.editBlockLine(SAMPLE, 'orchestrator', 'auto_advance', "'$1$&'");
+  assert.match(out, /^\s+auto_advance: '\$1\$&'$/m);
+});
+
+test('editBlockLine(): a duplicated block header does not truncate the file', () => {
+  const t = 'orchestrator:\n  auto_advance: true\nwiki_search:\n  engine: qmd\norchestrator:\n  autopilot: false\n';
+  const out = cf.editBlockLine(t, 'orchestrator', 'auto_advance', 'false');
+  assert.match(out, /engine: qmd/, 'the block after the first header survives');
+  assert.match(out, /autopilot: false/, 'the second header + its body survive');
+});
+
+test('block(): a header with an INLINE value keeps that value out of the body', () => {
+  // The shipped template writes `projects: []`, and the pre-index-based implementation split on
+  // `^projects:` — leaking " []" into the block body. The `- name:` scan in readConfig ignored it
+  // either way (both yield 0 sub-projects), but the body of a block is not its header's own value.
+  assert.strictEqual(cf.block('projects: []\nmemory:\n  mode: local-first\n', 'projects'), '\n');
+  assert.strictEqual(cf.block('workspace_schema: 9\nproject:\n  name: "x"\n', 'workspace_schema'), '\n');
+  // the normal case — a header with no inline value — is unaffected
+  assert.match(cf.block('projects:\n  - name: api\n    path: Api\nmemory:\n', 'projects'), /^\n  - name: api\n    path: Api\n$/);
+});
+
+// --- comment / CRLF / indent preservation ------------------------------------------------------
+// The config's trailing comments are ALIGNED with runs of spaces, and this module's header promises
+// they survive byte-for-byte. A value pattern allowed to reach the `#` breaks that promise on a line
+// whose value is blank: it eats the marker and splices the comment text into the YAML scalar.
+
+test('editBlockLine(): a blank value with an ALIGNED trailing comment keeps the comment', () => {
+  const t = 'orchestrator:\n  isolation:                        # in-place | branch | worktree\n';
+  const out = cf.editBlockLine(t, 'orchestrator', 'isolation', 'branch');
+  assert.match(out, /# in-place \| branch \| worktree$/m, 'the comment marker + text survive');
+  assert.match(out, /^  isolation: branch\s+# in-place \| branch \| worktree$/m);
+  assert.doesNotMatch(out, /isolation: branch in-place/, 'the comment must not become part of the value');
+});
+
+test('editBlockLine(): a trailing comment survives on a non-blank value too, keeping its padding', () => {
+  const out = cf.editBlockLine(SAMPLE, 'orchestrator', 'budget_usd', '25');
+  assert.match(out, /^  budget_usd: 25              # spend guard$/m, 'padding kept byte-for-byte');
+});
+
+test('editBlockLine(): a CRLF file stays CRLF; removeBlockLine drops the whole CRLF line', () => {
+  const crlf = 'orchestrator:\r\n  budget_usd: 50\r\n  roles:\r\n    coder: claude\r\n';
+  const ins = cf.editBlockLine(crlf, 'orchestrator', 'autopilot', 'true');
+  assert.doesNotMatch(ins, /[^\r]\n/, 'no bare LF introduced into a CRLF file');
+  assert.match(ins, /^  autopilot: true\r$/m);
+  assert.strictEqual(cf.removeBlockLine(crlf, 'orchestrator', 'budget_usd'),
+    'orchestrator:\r\n  roles:\r\n    coder: claude\r\n', 'removed with its own CRLF, no blank line left');
+});
+
+test('editBlockLine(): an inserted line takes the block\'s own indent, not a hard-coded two spaces', () => {
+  assert.match(cf.editBlockLine('orchestrator:\n    autopilot: false\n', 'orchestrator', 'max_parallel', '5'),
+    /^    max_parallel: 5$/m, 'a 4-space block gets a 4-space insert (mixed indent is invalid YAML)');
+  assert.match(cf.editBlockLine('orchestrator:\n', 'orchestrator', 'autopilot', 'true'),
+    /^  autopilot: true$/m, 'an empty block falls back to two spaces');
+});
+
+test('blockScalar()/blockHasTrue(): a BLANK value falls back instead of reporting # or the next key', () => {
+  // `\s` crosses newlines, so the old readers answered a blank `planner:` with the NEXT line's key.
+  const roles = 'orchestrator:\n  roles:\n    planner:\n    coder: codex\n';
+  assert.strictEqual(cf.blockScalar(roles, 'orchestrator', 'planner', 'claude'), 'claude', 'blank → fallback, not "coder:"');
+  assert.strictEqual(cf.blockScalar(roles, 'orchestrator', 'coder', 'claude'), 'codex');
+  assert.strictEqual(cf.blockScalar('orchestrator:\n  isolation:      # note\n', 'orchestrator', 'isolation', 'in-place'),
+    'in-place', 'a blank value must not read back as "#"');
+  assert.strictEqual(cf.blockHasTrue('orchestrator:\n  autopilot:\n  x: true\n', 'orchestrator', 'autopilot'), false);
+});
+
+test('orchestratorRolesBounds(): scopes to the roles: entries and derives their indent', () => {
+  const t = 'orchestrator:\n  roles:\n    coder: claude\n  pr:\n    remote: origin\ngovernance:\n';
+  const b = cf.orchestratorRolesBounds(t);
+  assert.strictEqual(t.slice(b.start, b.end), '    coder: claude\n', 'stops before the pr: sibling');
+  assert.strictEqual(b.indent, '    ');
+  assert.strictEqual(cf.orchestratorRolesBounds('orchestrator:\n  isolation: in-place\n'), null, 'no roles: → null');
+  assert.strictEqual(cf.orchestratorRolesBounds('foo: 1\n'), null, 'no orchestrator: → null');
+});

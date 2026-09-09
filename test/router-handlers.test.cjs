@@ -270,3 +270,92 @@ test('POST /api/run/write-attempt: 405 on GET, 404 on an unknown run', async () 
   // The token path is covered by the executor-level tests; enqueueing a real run here would spawn an
   // agent, so this endpoint test stops at the auth boundary it can exercise without one.
 });
+
+// --- POST /api/project/settings — the endpoint the Cockpit's Settings tab posts to ---------------
+// Regression for the reported "Save failed: no-orchestrator-block": a blank budget field posts
+// budget_usd:null, which asked the writer to clear a key the config never had. The whole save 400'd,
+// AND (because each field used to be its own file write) the role change before the throw persisted
+// while every field after it was silently dropped. This is the end-to-end guard for both halves.
+
+function makeSettingsProj() {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-settings-router-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'config.yaml'), [
+    'workspace_schema: 9', 'project:', '  name: "demo"',
+    'orchestrator:',
+    '  autopilot: false',
+    '  max_parallel: 3                   # cap on concurrent worktree runs',
+    '  isolation: in-place               # in-place | branch',
+    '  roles:', '    planner: claude', '    coder: claude', '    reviewer: claude',
+    '    tester: claude', '    ingester: claude', '    refactorer: claude',
+    'governance:', '  mode: strict', '',
+  ].join('\n'));
+  return { proj, file: path.join(ws, 'config.yaml') };
+}
+
+test('POST /api/project/settings: the SPA payload with a blank budget saves (was no-orchestrator-block)', async () => {
+  const { proj, file } = makeSettingsProj();
+  try {
+    // Byte-for-byte what ui/src/App.vue saveSettings() posts when the $ budget input is empty.
+    const res = await call('POST', '/api/project/settings', {
+      path: proj,
+      roles: { planner: 'claude', coder: 'codex', reviewer: 'claude', tester: 'claude', ingester: 'claude', refactorer: 'claude' },
+      budget_usd: null, auto_advance: true, isolation: 'branch', autopilot: true, max_parallel: '7',
+    });
+    assert.strictEqual(res.statusCode, 200, res.body);
+    assert.deepStrictEqual(json(res), { ok: true });
+    const text = fs.readFileSync(file, 'utf8');
+    assert.match(text, /^\s+coder: codex$/m);
+    assert.match(text, /^\s+auto_advance: true$/m, 'a field AFTER the budget is no longer dropped');
+    assert.match(text, /^\s+isolation: branch/m);
+    assert.match(text, /^\s+autopilot: true$/m);
+    assert.match(text, /^\s+max_parallel: 7/m);
+    assert.doesNotMatch(text, /budget_usd/, 'a blank budget stays absent');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('POST /api/project/settings: a rejected field 400s and leaves config.yaml untouched', async () => {
+  const { proj, file } = makeSettingsProj();
+  try {
+    const before = fs.readFileSync(file, 'utf8');
+    const res = await call('POST', '/api/project/settings', { path: proj, roles: { coder: 'codex' }, isolation: 'bogus', autopilot: true });
+    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(json(res).error, 'unknown-isolation');
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), before, 'the valid fields must NOT have persisted');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('POST /api/project/settings validates path + workspace', async () => {
+  assert.strictEqual(json(await call('POST', '/api/project/settings', {})).error, 'missing path');
+  const res = await call('POST', '/api/project/settings', { path: os.tmpdir() });
+  assert.strictEqual(res.statusCode, 400);
+  assert.strictEqual(json(res).error, 'not-a-workspace');
+});
+
+test('POST /api/project/settings: role-not-in-config refuses the WHOLE save (no half-apply)', async () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-noroles-router-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  const file = path.join(ws, 'config.yaml');
+  fs.writeFileSync(file, 'workspace_schema: 9\nproject:\n  name: "demo"\norchestrator:\n  isolation: in-place\ngovernance:\n  mode: strict\n');
+  try {
+    const res = await call('POST', '/api/project/settings', { path: proj, roles: { coder: 'codex' }, isolation: 'branch' });
+    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(json(res).error, 'role-not-in-config');
+    assert.match(fs.readFileSync(file, 'utf8'), /^  isolation: in-place$/m, 'isolation must still be in-place');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('POST /api/project/settings: a budget the reader could not read back is refused, not written', async () => {
+  const { proj, file } = makeSettingsProj();
+  try {
+    const before = fs.readFileSync(file, 'utf8');
+    for (const budget_usd of [1e-7, 1e21, -5]) {
+      const res = await call('POST', '/api/project/settings', { path: proj, budget_usd, autopilot: true });
+      assert.strictEqual(res.statusCode, 400, `budget ${budget_usd} should 400`);
+      assert.strictEqual(json(res).error, 'bad-budget');
+    }
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), before, 'nothing written for any of them');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});

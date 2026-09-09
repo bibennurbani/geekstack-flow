@@ -117,3 +117,63 @@ test('shipped governance.md documents the parseable rule form users must actuall
   // docs/USAGE.md taught prose that parsed to nothing.
   assert.match(shipped(), /-\s*<glob>\s*->\s*LEVEL/, 'the parseable rule form is not documented in the template');
 });
+
+// --- config.yaml: the shipped template IS the precondition for the reported settings bug ---------
+// The template ships `budget_usd` only as an inert comment, so every workspace init has ever
+// produced starts with no budget_usd line — which is exactly the state that made a blank-budget
+// save throw no-orchestrator-block. These tests pin the template's shape and prove a Cockpit save
+// against a workspace initialized from it keeps the file's documentation intact.
+
+const os = require('node:os');
+const cfLib = require('../ui/server/config-fields.cjs');
+const readLib = require('../ui/server/read.cjs');
+const CFG_PATH = path.join(WS, 'config.yaml');
+const shippedConfig = () => fs.readFileSync(CFG_PATH, 'utf8');
+
+function templateWorkspace() {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-tmpl-cfg-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, 'config.yaml'), shippedConfig());
+  return { proj, ws, file: path.join(ws, 'config.yaml') };
+}
+
+test('shipped config.yaml ships budget_usd only as an inert comment', () => {
+  const orch = cfLib.block(shippedConfig(), 'orchestrator');
+  assert.ok(orch, 'the template has an orchestrator: block');
+  assert.strictEqual(/^[ \t]+budget_usd:/m.test(orch), false,
+    'no live budget_usd key — this is the precondition that made a blank-budget save throw');
+});
+
+test('a blank-budget save on a workspace from the shipped template succeeds and writes nothing', () => {
+  const { proj, ws, file } = templateWorkspace();
+  try {
+    const before = fs.readFileSync(file, 'utf8');
+    readLib.applySettings(ws, { budget_usd: null }); // must not throw no-orchestrator-block
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), before, 'clearing an absent budget writes nothing');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('a full Cockpit save keeps the shipped template\'s comments and nested pr: block byte-for-byte', () => {
+  const { proj, ws, file } = templateWorkspace();
+  try {
+    const before = fs.readFileSync(file, 'utf8');
+    readLib.applySettings(ws, {
+      roles: { coder: 'codex' }, budget_usd: 50, auto_advance: true,
+      isolation: 'branch', autopilot: true, max_parallel: 5,
+    });
+    const after = fs.readFileSync(file, 'utf8');
+    assert.strictEqual((after.match(/#/g) || []).length, (before.match(/#/g) || []).length,
+      'every comment marker in the template survives the save');
+    for (const key of ['budget_usd', 'auto_advance', 'isolation', 'autopilot', 'max_parallel']) {
+      assert.strictEqual((cfLib.block(after, 'orchestrator').match(new RegExp('^[ \\t]+' + key + ':', 'gm')) || []).length, 1,
+        `${key} occurs exactly once — never duplicated by a failed match`);
+    }
+    const o = readLib.buildProjectDetail(proj).config.orchestrator;
+    assert.deepStrictEqual(o.pr, { remote: 'origin', base: '', draft: true }, 'the nested pr: sub-block is untouched');
+    assert.strictEqual(o.budget_usd, 50);
+    assert.strictEqual(o.isolation, 'branch');
+    assert.strictEqual(o.max_parallel, 5);
+    assert.strictEqual(o.roles.coder, 'codex');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
