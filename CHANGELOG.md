@@ -2,7 +2,7 @@
 
 All notable changes to Creative GeekStack Flow are recorded here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-09-09
 
 ### Added — A discovery stage before the ticket: `/tcgflow-new-feature` + the `frame-feature` skill (ADR 0045)
 

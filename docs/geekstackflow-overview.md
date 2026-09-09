@@ -13,12 +13,12 @@ This document is the written companion to the slide deck. It's pitched for a **m
 | | |
 |---|---|
 | **What it is** | A zero-dependency Node CLI (`geekstackflow` / `tcgflow`) that scaffolds and *orchestrates* a file-based AI-development workflow |
-| **Version** | v0.4.0 — the "Orchestrator" line, first tagged release |
+| **Version** | v0.5.0 — adds the discovery stage before planning |
 | **Runtime** | Pure Node ≥ 22, **0 runtime CLI dependencies** (qmd search adds ~2 GB of local models) |
 | **Works with** | Claude Code, Codex, GitHub Copilot — one workflow, any tool |
 | **The workspace** | `6` agent roles · `19` skills · `20` `tcgflow-*` commands · `4` risk levels · workspace schema `9` |
 | **The Cockpit** | Local browser dashboard at `127.0.0.1:4729` — zero-dependency Node `http` server (~3,330 lines) + a single Vue 3 SPA (`App.vue`, 1,517 lines) |
-| **Maturity** | 4 releases (0.1.0 → 0.4.0), **45 ADRs**, **315** passing tests |
+| **Maturity** | 5 releases (0.1.0 → 0.5.0), **45 ADRs**, **316** passing tests |
 | **Architecture** | No database — plain files are the single source of truth; nothing leaves your machine |
 
 ---
@@ -211,7 +211,7 @@ Governance went from an informally-followed doc (ADR 0008) to **machine-enforced
 
 ### Test rigor — the safety story is tested
 
-- **315** `node --test` tests (315 pass, 0 fail) across the server/CLI · **29** test files · **4,903** test lines.
+- **317** `node --test` tests (316 pass, 0 fail, 1 skipped) across the server/CLI · **29** test files · **5,083** test lines.
 - One runner: `node --test` (server + CLI). The Vue SPA has no unit tests yet; the Cockpit is covered indirectly via the server-side handler tests and is verified in the browser.
 - **Governance is the most-tested area** — 4 dedicated files (approvals, classify, integration, MCP).
 - The largest test file exercises the highest-risk path: `run-executor.test.cjs` (~42 KB — the continuation loop).
@@ -239,7 +239,7 @@ geekstackflow ui        # open the Cockpit at 127.0.0.1:4729, then press ▶ Run
 
 | Term | Definition |
 |------|------------|
-| **geekstackflow / tcgflow** | Creative GeekStack Flow — a zero-dependency Node CLI (v0.4.0, two bin names) that scaffolds and orchestrates a file-based AI-development workflow. |
+| **geekstackflow / tcgflow** | Creative GeekStack Flow — a zero-dependency Node CLI (v0.5.0, two bin names) that scaffolds and orchestrates a file-based AI-development workflow. |
 | **`.tcgstackflow/`** | The per-project workspace folder `init` scaffolds (agents, skills, commands, tasks, wiki, runs, governance.md, config.yaml) — doubling as an Obsidian vault. |
 | **LLM-wiki** | The AI-maintained, token-efficient project memory: flat Obsidian-flavoured Markdown with `[[wikilinks]]` and a Map-of-Content `index.md`, following Karpathy's pattern. The Ingester is its writer, with one bounded exception — intent-marked discovery writes (ADR 0045). |
 | **qmd** | The mandatory hybrid wiki-search layer (keyword + vector + LLM re-rank, ~2 GB local models) every agent uses to find pages; complements `index.md`. |
@@ -268,7 +268,7 @@ All figures verified against the working tree on 2026-07-14; the skills, command
 
 | Claim | Value | Source |
 |-------|-------|--------|
-| Version | 0.4.0 | `package.json` |
+| Version | 0.5.0 | `package.json` |
 | Runtime | Node ≥ 22.0.0 | `package.json` engines |
 | Agent roles | 6 | `templates/workspace/.tcgstackflow/agents/` |
 | Skills | 19 | `templates/workspace/.tcgstackflow/skills/` |
@@ -276,8 +276,8 @@ All figures verified against the working tree on 2026-07-14; the skills, command
 | Workspace schema | 9 | `init.js` `LATEST_SCHEMA = 9` — stamped into `config.yaml` at init/upgrade |
 | Template config.yaml schema | 8 | `templates/workspace/.tcgstackflow/config.yaml` (literal; overwritten by the stamp) |
 | ADRs | 45 | `docs/adr/*.md` (up to 0045) |
-| Tests | 315 pass, 0 fail, 1 skipped | `npm test` |
-| Test files / lines | 29 files / 5,036 lines | `test/` (`wc -l test/*`) |
+| Tests | 316 pass, 0 fail, 1 skipped | `npm test` |
+| Test files / lines | 29 files / 5,083 lines | `test/` (`wc -l test/*`) |
 | Cockpit server | zero-dependency built-in Node `http`, ~3,330 lines, 13 `.cjs` files | `ui/server/` (**not** Hono, despite ADR 0022) |
 | Cockpit SPA | Vue 3 + Vite, `App.vue` = 1,517 lines | `ui/src/App.vue`, `ui/package.json` |
 | Cockpit port | `127.0.0.1:4729` | `ui/server/index.cjs` `DEFAULT_PORT`; binds localhost only |

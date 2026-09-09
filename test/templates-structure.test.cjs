@@ -138,6 +138,53 @@ const COUNT_CLAIMS = [
   ['templates/workspace/.tcgstackflow/tools/github/copilot-instructions.md', 'commands', /ships ([A-Za-z-]+) workflow commands/g],
 ];
 
+// ── Documented version ───────────────────────────────────────────────────────────────────────
+// Same drift class as the counts: the release number is restated across the README tree comment,
+// the SECURITY support table, the overview's three rows and ui/package.json, and every one of them
+// is patched by hand at release time. package.json is the truth; everything else is checked
+// against it. The docs/*-script.md and *-deck.html presentation assets are deliberately excluded —
+// they carry dated "numbers verified against vX" snapshots, which are claims about a moment, not
+// about HEAD.
+const VERSION_CLAIMS = [
+  ['ui/package.json', /"version":\s*"(\d+\.\d+\.\d+)"/g],
+  ['README.md', /bin: \{ geekstackflow, tcgflow \}, v(\d+\.\d+\.\d+)/g],
+  ['docs/geekstackflow-overview.md', /\| \*\*Version\*\* \| v(\d+\.\d+\.\d+)/g],
+  ['docs/geekstackflow-overview.md', /zero-dependency Node CLI \(v(\d+\.\d+\.\d+),/g],
+  ['docs/geekstackflow-overview.md', /^\|\s*Version\s*\|\s*(\d+\.\d+\.\d+)\s*\|/gm],
+  ['docs/geekstackflow-overview.md', /releases \(0\.1\.0 → (\d+\.\d+\.\d+)\)/g],
+];
+
+test('every documented version matches package.json', () => {
+  const version = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  const seen = new Map();
+  for (const [file, re] of VERSION_CLAIMS) {
+    const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    for (const m of text.matchAll(re)) {
+      seen.set(file, (seen.get(file) || 0) + 1);
+      assert.strictEqual(m[1], version,
+        `${file}: "${m[0].trim()}" documents version ${m[1]}; package.json says ${version}. Update the document, not this test.`);
+    }
+  }
+  for (const file of new Set(VERSION_CLAIMS.map(([f]) => f))) {
+    assert.ok(seen.get(file), `${file}: no version claim matched — a claim was reworded past its pattern, or removed`);
+  }
+
+  // CHANGELOG carries every historical heading, so only the TOPMOST one is the release being cut.
+  const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
+  const firstHeading = changelog.match(/^## \[(\d+\.\d+\.\d+|Unreleased)\]/m);
+  assert.ok(firstHeading, 'CHANGELOG.md has no `## [version]` heading');
+  assert.strictEqual(firstHeading[1], version,
+    `CHANGELOG.md's newest heading is "${firstHeading[1]}"; package.json says ${version}. Cut the release heading, or bump package.json.`);
+
+  // SECURITY.md tracks the supported series, not the exact patch: `0.5.x` current, `<= 0.4.x` EOL.
+  const [maj, min] = version.split('.').map(Number);
+  const sec = fs.readFileSync(path.join(ROOT, 'SECURITY.md'), 'utf8');
+  assert.match(sec, new RegExp(`\\\`${maj}\\.${min}\\.x\\\` \\(current\\)`),
+    `SECURITY.md does not list \`${maj}.${min}.x\` as the current supported series (package.json is ${version})`);
+  assert.match(sec, new RegExp(`≤ \\\`?${maj}\\.${min - 1}\\.x`),
+    `SECURITY.md's end-of-life row is not \`<= ${maj}.${min - 1}.x\` (package.json is ${version})`);
+});
+
 test('every documented skill / command / ADR / schema count matches what ships', () => {
   const config = fs.readFileSync(path.join(WS, 'config.yaml'), 'utf8');
   const templateSchema = config.match(/^workspace_schema:\s*(\d+)/m);

@@ -9,8 +9,8 @@ security model rather than on process boilerplate.
 
 | Version | Supported |
 |---|---|
-| `0.4.x` (current) | ✅ Security fixes |
-| `≤ 0.3.x` | ❌ Upgrade with `geekstackflow upgrade .` |
+| `0.5.x` (current) | ✅ Security fixes |
+| `≤ 0.4.x` | ❌ Upgrade with `geekstackflow upgrade .` |
 
 Pre-1.0: `v0.4.0` is the first tagged release, and there are no maintenance branches — `main` **is**
 the release line, so a fix ships as the next `0.x` tag plus a `CHANGELOG.md` entry. Update with
