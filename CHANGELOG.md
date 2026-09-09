@@ -2,7 +2,7 @@
 
 All notable changes to Creative GeekStack Flow are recorded here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - 2026-09-09
+## [0.5.2] - 2026-09-09
 
 ### Fixed — the Cockpit Settings tab could not save, and every failed save half-wrote config.yaml
 
