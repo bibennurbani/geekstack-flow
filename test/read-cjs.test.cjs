@@ -615,3 +615,22 @@ test('settings: every budget the writer ACCEPTS round-trips through readConfig (
     }
   } finally { fs.rmSync(proj, { recursive: true, force: true }); }
 });
+
+test('readConfig: a project name in ANY YAML scalar form is read (not only double quotes)', () => {
+  // A hand-written `name: 'INX'` read back as '' and left the Cockpit's project page untitled.
+  for (const [line, want] of [
+    ['  name: "Quoted"', 'Quoted'],
+    ["  name: 'Single'", 'Single'],
+    ['  name: Bare', 'Bare'],
+    ['  name: Bare With Spaces   # and a comment', 'Bare With Spaces'],
+    ['  name: "With # Hash"', 'With # Hash'],
+  ]) {
+    const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-name-'));
+    const ws = path.join(proj, '.tcgstackflow');
+    fs.mkdirSync(ws, { recursive: true });
+    fs.writeFileSync(path.join(ws, 'config.yaml'), `workspace_schema: 9\nproject:\n${line}\ngovernance:\n  mode: strict\n`);
+    try {
+      assert.strictEqual(read.buildProjectDetail(proj).config.name, want, `failed for ${line}`);
+    } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+  }
+});

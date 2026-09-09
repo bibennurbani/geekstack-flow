@@ -59,15 +59,24 @@ function firstMatch(text, re) {
   return m ? m[1].trim() : '';
 }
 
+// A two-space-indented YAML scalar in either quote style or bare. A bare value stops before a
+// trailing `#` comment; a quoted one is taken strictly from inside the quotes.
+function yamlScalar(text, key) {
+  const m = String(text).match(new RegExp('^[ \\t]{2}' + key + ':[ \\t]*(?:"([^"]*)"|\'([^\']*)\'|([^#\\r\\n]*))', 'm'));
+  if (!m) return '';
+  return (m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : (m[3] || '')).trim();
+}
+
 // --- config.yaml (targeted parse of the fields the Cockpit panels need) ---
 function readConfig(workspaceDir) {
   const text = safeRead(path.join(workspaceDir, 'config.yaml'));
   const cfg = {
-    // Quoted values may be followed by a trailing comment (e.g. `name: "X"  # filled by init`),
-    // so capture strictly inside the quotes. Unquoted scalars stop at whitespace (ignores comment).
-    name: firstMatch(text, /^\s{2}name:\s*"([^"]*)"/m),
+    // A quoted value may be followed by a trailing comment (e.g. `name: "X"  # filled by init`), so
+    // capture strictly inside the quotes — but accept ALL THREE YAML scalar forms. Accepting only
+    // double quotes read a hand-written `name: 'INX'` as empty and left the project page untitled.
+    name: yamlScalar(text, 'name'),
     workspace_kind: firstMatch(text, /^\s{2}workspace_kind:\s*(\S+)/m) || 'single',
-    primary_stack: firstMatch(text, /^\s{2}primary_stack:\s*"([^"]*)"/m),
+    primary_stack: yamlScalar(text, 'primary_stack'),
     tcgflow_version: firstMatch(text, /^tcgflow_version:\s*"([^"]*)"/m),
     workspace_schema: parseInt(firstMatch(text, /^workspace_schema:\s*(\d+)/m) || '1', 10),
     tempo_enabled: /^\s{2}enabled:\s*true/m.test(text),
