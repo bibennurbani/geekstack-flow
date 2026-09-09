@@ -19,7 +19,8 @@ Append-only chronological record of wiki maintenance operations.
 grep "^## \[" log.md | tail -5
 ```
 
-Where `{operation}` is one of: `ingest` · `lint` · `query` · `restructure`.
+Where `{operation}` is one of: `ingest` · `lint` · `query` · `restructure` · `frame-feature`
+(discovery's intent writes, ADR 0045).
 
 Each entry has Context / Created / Modified / Deleted / Decision sections. See [ingester.md](../agents/ingester.md) for the procedure.
 

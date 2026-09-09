@@ -59,8 +59,8 @@ After `geekstackflow init`, your project has a `.tcgstackflow/` folder containin
 - **LLM wiki** (`wiki/`) — flat, Obsidian-flavoured Markdown maintained by AI, following [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Searched via the mandatory **wiki-search (qmd)** layer — a **project-local** hybrid keyword + vector + re-rank index (`qmd init` → `.qmd/`, so projects never collide on collection names — ADR 0038) that complements the `index.md` Map of Content (ADR 0030). `geekstackflow doctor` verifies the index is real per project *and* checks the wiki's Karpathy/qmd structure (ADR 0039). This is the project's memory.
 - **Tasks** (`tasks/`) — every task is exactly two files (`TASK {ID}.md` log + `TASK details {ID}.md` plan), moving through `active/ → completed/ → archive/`. (One exception: `{ID} web-test-summary.md`, written only when a browser web test ran — ADR 0041.)
 - **6 agent roles** (`agents/`) — the linear `planner → coder → reviewer → tester → ingester`, plus the manually-invoked **`refactorer`** (a peer to the Coder, re-entering at Review), each a tool-agnostic Markdown profile.
-- **18 skills** (`skills/`) — atomic capabilities in Claude Code `SKILL.md` format (mattpocock-compatible).
-- **19 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
+- **19 skills** (`skills/`) — atomic capabilities in Claude Code `SKILL.md` format (mattpocock-compatible).
+- **20 commands** (`commands/`) — `tcgflow-*` workflow dispatchers, usable as Claude Code slash commands *or* natural-language triggers in any tool.
 - **Governance** (`governance.md`) — four risk levels (LOW/MEDIUM/HIGH/CRITICAL) + a permission-request recipe + your project-specific rules. Enforced live during orchestrated runs (approve/deny in the browser).
 - **Tool adapters** (`tools/`) — generated `CLAUDE.md`, `AGENTS.md` (Codex), and `.github/copilot-instructions.md` (Copilot), all pointing back at `.tcgstackflow/` as the single source of truth.
 - **Run records** (`runs/`) — every orchestrated run is stored at `runs/{task-id}/{run-id}.md` with its transcript, tokens, session id, the runner `tool`/`gate`, the qmd re-embed outcome, and (for branch-isolated runs) the `isolation`/`branch` it used (workspace schema 9).
@@ -151,13 +151,15 @@ geekstackflow upgrade /path/to/project    # or: /tcgflow-upgrade in your AI tool
 geekstackflow hooks   /path/to/project    # (re)wire the git pull-digest hook into .git/hooks
 ```
 
-`upgrade` is **non-destructive**: it runs the schema migrations (now up to **schema 8**), refreshes the tool-owned commands + agent profiles (backing up any drift to `.bak`), additively adds new skills, and prints a **drift report**. It never overwrites your work — tasks, wiki, existing skills, and tool adapters are left untouched, and `config.yaml`/`governance.md` are only *additively extended* by migrations (new blocks/sections appended), never clobbered. Restart Claude Code afterward to pick up the refreshed slash commands. Full details: [Upgrading a workspace](#upgrading-a-workspace).
+`upgrade` is **non-destructive**: it runs the schema migrations (now up to **schema 9**), refreshes the tool-owned commands + agent profiles (backing up any drift to `.bak`), additively adds new skills, and prints a **drift report**. It never overwrites your work — tasks, wiki, existing skills, and tool adapters are left untouched, and `config.yaml`/`governance.md` are only *additively extended* by migrations (new blocks/sections appended), never clobbered. Restart Claude Code afterward to pick up the refreshed slash commands. Full details: [Upgrading a workspace](#upgrading-a-workspace).
 
 ---
 
 ## How to use it
 
 The core loop is **plan → code → review → test → ingest**, each driven by a command (Claude Code) or a natural-language phrase (any tool). Every step writes to the two task files, so the work is always documented.
+
+When there is no ticket yet — just an idea — start one step earlier with `/tcgflow-new-feature`: the Planner frames the problem, checks your wording against the wiki's own vocabulary, forces an explicit out-of-scope list, then creates the Jira issue (HIGH, approval-gated) and writes the two files straight at `PLANNED`, so the loop below picks up at step 2 (ADR 0045).
 
 ### 1. Plan a task
 
@@ -324,13 +326,14 @@ Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `reg
 
 ## Commands reference
 
-19 commands. In Claude Code, type `/tcgflow-<name>`. In other tools, use the trigger phrase.
+20 commands. In Claude Code, type `/tcgflow-<name>`. In other tools, use the trigger phrase.
 
 | Command | Does |
 |---|---|
 | `/tcgflow-init` | Initialise `.tcgstackflow/` in the current project (and install + index qmd) |
 | `/tcgflow-upgrade` | Upgrade an existing workspace to the current layout + refresh tool-owned files |
 | `/tcgflow-migrate` | Migrate a project off ad-hoc AI infra (`.taskRef/`, `ai-mem/`, …) — 4-phase clean cutover |
+| `/tcgflow-new-feature` | Discovery: frame a feature before a ticket exists, then write the task |
 | `/tcgflow-plan [ID]` | Planner: grill + write the two-file task |
 | `/tcgflow-code [ID]` | Coder: implement the planned task |
 | `/tcgflow-review [ID]` | Reviewer: static review of the diff |
@@ -352,10 +355,11 @@ Both binaries are identical. `upgrade` also exists as the `--upgrade` flag; `reg
 
 ## Skills reference
 
-18 atomic skills under `.tcgstackflow/skills/`. Commands dispatch these; agents compose them.
+19 atomic skills under `.tcgstackflow/skills/`. Commands dispatch these; agents compose them.
 
 | Skill | Role | Purpose |
 |---|---|---|
+| `frame-feature` | planner | Frame a feature before a ticket exists — problem, terminology, in/out of scope, success measure |
 | `grill-task` | planner | Interview on ambiguous areas before planning |
 | `plan-task` | planner | Write the two-file task structure + acceptance criteria |
 | `update-task-log` | coder | Append a YAML entry to the task log |
@@ -437,7 +441,7 @@ geekstack-flow/
 ├── init.js                 # the CLI (init / upgrade / register / drift / ui / hooks) — zero dependencies
 ├── package.json            # bin: { geekstackflow, tcgflow }, v0.4.0
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
-├── docs/adr/               # 44 Architecture Decision Records
+├── docs/adr/               # 45 Architecture Decision Records
 ├── test/                   # node --test suite (run with `npm test`)
 ├── ui/                     # the Cockpit/Orchestrator (Vue 3 + Vite SPA + zero-dep Node server)
 │   ├── server/             #   read.cjs (data) · index.cjs (http) · run.cjs (agent executor)
@@ -450,8 +454,8 @@ geekstack-flow/
     ├── workspace/.tcgstackflow/   # copied into each project
     │   ├── config.yaml  governance.md  README.md
     │   ├── agents/        # 6 role profiles
-    │   ├── skills/        # 18 skills
-    │   ├── commands/      # 19 tcgflow-* commands
+    │   ├── skills/        # 19 skills
+    │   ├── commands/      # 20 tcgflow-* commands
     │   ├── hooks/         # post-merge pull-digest hook (wired by `geekstackflow hooks`)
     │   ├── wiki/          # starter pages + adr/
     │   ├── tasks/         # README + weekly/ + active/completed/archive/
@@ -468,7 +472,7 @@ geekstack-flow/
 > **Scope ladder:** personal-first → team-usable → OSS-ready. Built by one author against real daily work, designed so a teammate can adopt it on day one, and structured so it can become a public tool without re-architecting. See [docs/adr/0001](docs/adr/0001-personal-first-team-usable-oss-ready.md).
 
 - **[CONTEXT.md](CONTEXT.md)** — the project's domain language (Wiki, Raw, Ingest/Query/Lint, Agent, Skill, Command, Cockpit, Orchestrator, Workspace vs Jira status, …).
-- **[docs/adr/](docs/adr/)** — 44 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation in-place/branch/worktree (0040), worktree autopilot → parallel runs + PR command (0043), browser web-test as a Tester skill, interactive-only (0041), `upgrade` owns the adapter head + root copies (0042).
+- **[docs/adr/](docs/adr/)** — 45 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation in-place/branch/worktree (0040), worktree autopilot → parallel runs + PR command (0043), browser web-test as a Tester skill, interactive-only (0041), `upgrade` owns the adapter head + root copies (0042), discovery stage + intent writes to the wiki (0045).
 
 ## Inspirations
 

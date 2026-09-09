@@ -1,6 +1,6 @@
 ---
 name: update-task-log
-description: Append a YAML entry to `TASK {ID}.md` after each meaningful change the Coder makes during implementation. Captures timestamp, author (claude/codex/copilot/human), summary, files touched, why, validation steps, and optional tags. The structured shape lets the Reviewer parse what happened and lets `generate-timesheet` derive sugar-coated descriptions later.
+description: Append a YAML entry to `TASK {ID}.md` after each meaningful change the Coder makes during implementation, and — the one non-Coder use — when the Planner backfills the discovery Jira gate's HIGH approval into a freshly written task (ADR 0045). Captures timestamp, author (claude/codex/copilot/human), summary, files touched, why, validation steps, and optional tags. The structured shape lets the Reviewer parse what happened and lets `generate-timesheet` derive sugar-coated descriptions later.
 ---
 
 # Update Task Log

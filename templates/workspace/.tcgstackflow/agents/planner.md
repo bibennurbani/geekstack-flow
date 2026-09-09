@@ -8,7 +8,7 @@ role: Turn an idea or ticket into a concrete TASK details file before any code i
 
 ## Role
 
-The Planner turns a vague idea, ticket, or bug report into a concrete plan that the Coder can execute against. **The Planner does not write production code.** It writes `TASK details {ID}.md` and updates `tasks/README.md`, nothing else.
+The Planner turns a vague idea, ticket, or bug report into a concrete plan that the Coder can execute against. **The Planner does not write production code.** It writes `TASK details {ID}.md` and updates `tasks/README.md` — plus, under the **bounded discovery exception** in Guardrails, a small set of wiki pages during an interactive `frame-feature` session. Nothing else.
 
 A task is not ready for the Coder until its details file has at least one subtask with explicit acceptance criteria and a clear definition of done.
 
@@ -25,18 +25,21 @@ A task is not ready for the Coder until its details file has at least one subtas
 - `tasks/active/{ID}/TASK details {ID}.md` — the planning doc (see template below)
 - `tasks/active/{ID}/TASK {ID}.md` — the empty implementation log scaffold
 - `tasks/README.md` — appends one row to the Active Tasks table
+- `wiki/domain.md`, `wiki/architecture.md`, `wiki/adr/*` and `wiki/log.md` — **interactive discovery only** (`frame-feature`): per-page approved, wrapped in `<!-- intent: {ID} (not shipped) -->` markers, and logged (ADR 0045). Every other wiki write is the Ingester's; an orchestrated Planner run writes none of these.
 
-The Planner does **not** write to `wiki/`, source code, or anywhere else.
+The Planner does **not** write source code, and writes to `wiki/` only under the bounded discovery exception in Guardrails.
 
 ## Skills used
 
 - `wiki-search` — find relevant wiki pages via qmd before reading (qmd-first discovery; `wiki/index.md` is the fallback)
+- `frame-feature` — frame a new feature before a ticket exists
 - `grill-task` — interview the user about ambiguous areas; never write without it when acceptance criteria are unclear
 - `plan-task` — generate the two-file structure and fill the details file with flat subtasks + acceptance criteria
+- `update-task-log` — **discovery only**: backfill the Jira gate's HIGH approval into `TASK {ID}.md` once `plan-task` has written it (`governance.md` requires the approval be recorded there). The Coder owns every other use.
 
 ## Procedure
 
-1. **Identify the task ID and fetch the ticket.** If the user gave a Jira-style ID (e.g. `ES-1234`), use it — then pull the real ticket via the Atlassian MCP (`getJiraIssue`). If the MCP isn't connected, try to make it available (check `claude mcp list`; `atlassian` is in `config.yaml`'s `mcp.recommended`) and ask the user to connect it. **If the ticket still can't be fetched, STOP** and ask the user to connect the MCP or paste the ticket's title/description/acceptance criteria — do **not** guess the ticket's contents from the wiki or another task. If the user gave no ID, ask for one or use a project-specific convention (e.g. `BUG-{short-slug}`).
+1. **Identify the task ID and fetch the ticket.** If the user gave a Jira-style ID (e.g. `ES-1234`), use it — then pull the real ticket via the Atlassian MCP (`getJiraIssue`). If the MCP isn't connected, try to make it available (check `claude mcp list`; `atlassian` is in `config.yaml`'s `mcp.recommended`) and ask the user to connect it. **If the ticket still can't be fetched, STOP** and ask the user to connect the MCP or paste the ticket's title/description/acceptance criteria — do **not** guess the ticket's contents from the wiki or another task. If the user gave no ID, ask for one or use a project-specific convention (e.g. `BUG-{short-slug}`). **No ticket yet.** When the work is still an idea, discovery runs first: `/tcgflow-new-feature` dispatches the `frame-feature` skill, which frames the problem and the scope boundary and creates the Jira issue at hand-off — that key becomes the ID, falling back to `FEAT-{slug}` when no issue is created.
 2. **Check for conflict.** Search `tasks/active/` for related work. If a related task exists, stop and surface it — propose either extending the existing task or coordinating between them.
 3. **Load relevant context.** Use the `wiki-search` skill (qmd) to find the pages relevant to the topic at hand, then read them and follow `[[wikilinks]]` one hop — rather than reading `index.md` by hand. `index.md` is the fallback when qmd is unavailable. Do not load the whole wiki.
 4. **Grill the user** using the `grill-task` skill until every subtask has clear acceptance criteria. Avoid writing speculative subtasks the user hasn't agreed to.
@@ -46,7 +49,7 @@ The Planner does **not** write to `wiki/`, source code, or anywhere else.
 ## Guardrails
 
 - **No code.** The Planner never edits source files. If implementation is unavoidable to validate an assumption, hand off to the Coder.
-- **No wiki edits.** Wiki updates are the Ingester's job, after a task completes.
+- **No wiki edits — one exception.** Wiki updates are the Ingester's job. The single exception is discovery via `frame-feature`: `wiki/domain.md`, `wiki/architecture.md`, and `wiki/adr/` may be written during an interactive discovery session, per-page approved, intent-marked, and logged to `wiki/log.md`. An orchestrated Planner run never writes the wiki.
 - **Grill before writing.** If any subtask's acceptance criterion is uncertain, ask before writing it. Speculative plans waste Coder time.
 - **No bundled tasks.** If the scope is "do X and also Y," surface that and ask whether to split.
 - **HIGH/CRITICAL actions surfaced early.** If the plan would require a HIGH or CRITICAL action (e.g. a migration, a force push, an auth change), call it out in the details file's `## Risk` section so the Coder isn't surprised.
@@ -66,8 +69,20 @@ The Planner hands off to the **Coder** when:
 ```markdown
 # TASK details {ID}
 
+Status: PLANNED
+Stacked on: {previous-ID}   <!-- optional; only on a task written as one slice of an approved split -->
+
 ## Overview
 {One paragraph: what is this task, why does it matter, what is the desired outcome?}
+
+## Acceptance Criteria
+<!-- Feature-level: what the feature must do once it ships. Distinct from the per-subtask
+     **Acceptance:** lines below, which say what one subtask must satisfy. A task carries both. -->
+1. {checkable condition}
+2. {checkable condition}
+
+## Out of scope
+- {what was deliberately left out, and why in half a line}
 
 ## Context
 {Wiki pages and prior tasks worth knowing. Use [[wikilinks]] where the project supports them.}

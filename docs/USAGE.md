@@ -32,8 +32,8 @@ your-project/
     ├── config.yaml      # project config: stack, sub-projects, Tempo, tools, version stamp
     ├── governance.md    # risk levels + permission recipe + your project rules
     ├── agents/          # planner, coder, reviewer, tester, ingester, refactorer (role profiles)
-    ├── skills/          # 18 workflow skills (SKILL.md each)
-    ├── commands/        # 19 tcgflow-* command dispatchers
+    ├── skills/          # 19 workflow skills (SKILL.md each)
+    ├── commands/        # 20 tcgflow-* command dispatchers
     ├── wiki/            # the LLM wiki (index.md, log.md, project-overview.md, …) + adr/
     ├── tasks/           # README + active/ completed/ archive/ weekly/  (+ jira-cache.json)
     ├── runs/            # per-task run transcripts written by the Cockpit Orchestrator ({task-id}/{run-id}.md)
@@ -60,6 +60,24 @@ Each task is **exactly two files** in `tasks/active/{ID}/`:
 - `TASK details {ID}.md` — the **plan** (overview, subtasks, acceptance criteria, status).
 
 > **The two-file rule is strict.** Never split into `TASK {ID}-FE-1.md` etc. Append to the two files. This keeps task history machine-readable. (One exception: `{ID} web-test-summary.md`, written only when a browser web test ran — ADR 0041.)
+
+### Discover — `/tcgflow-new-feature`
+
+The stage before a ticket exists — *"we should let people bulk-export reports"*, and nothing in Jira yet. The **Planner** frames the idea first, then decomposes it in the same invocation:
+
+1. **Reads before it asks** — searches the wiki (`wiki-search`), reads `governance.md`, and scans `tasks/active/` for overlapping work, surfacing any overlap before going on. It never asks you what the wiki already answers.
+2. **Frames the problem** — what problem, for whom, why now. One topic per turn, every question carrying a recommended answer so you can confirm and move on.
+3. **Checks your wording against `wiki/domain.md`.** Where the project already has a word for the thing, it proposes that word and names the page it came from; a genuinely new term is flagged as a `domain.md` candidate.
+4. **Draws the boundary** — an explicit IN list and an explicit OUT list. **The out-of-scope list is required output**: if nothing was excluded, the scope was never examined.
+5. **Fixes one success measure** — a single statement you could actually check after the feature ships.
+6. **Offers to create the Jira issue** — once the brief is settled and grilled into per-subtask detail. Creating a ticket is HIGH, so it shows you the issue and asks; **the returned key becomes the task ID**, which is why the gate comes before anything is filed under that ID. Decline, or an unreachable Atlassian MCP, and it falls back to `FEAT-{slug}` and notes in the task's Context that no Jira key is attached. **It never invents a key** and never claims an issue was created when the call didn't succeed.
+7. **Offers the wiki writes.** Decisions the framing settled can be recorded in `wiki/domain.md`, `wiki/architecture.md`, or a new page under `wiki/adr/` while the reasoning is fresh — drafted during the interview, applied once the ID exists, because every inserted block is wrapped in `<!-- intent: {ID} (not shipped) -->`. **One approval per page**, and one `wiki/log.md` entry for the session. Governance rates a wiki edit LOW; this is deliberately stricter, because discovery records intent rather than observed fact. The Ingester reconciles those blocks at `/tcgflow-ingest` — drops the marker where what shipped matches what was framed, corrects the page where it doesn't.
+
+What lands on disk: the usual two files in `tasks/active/{ID}/` at status `PLANNED` — carrying a feature-level `## Acceptance Criteria` and the `## Out of scope` list alongside the normal subtasks — a row in `tasks/README.md`, and whatever wiki blocks you approved. Where discovery turns up independently shippable slices it proposes the split rather than taking it, and on approval writes N sibling tasks, each after the first carrying a `Stacked on: {previous-ID}` line under `Status:`.
+
+**`/tcgflow-plan` is not a required follow-up** — the task comes out `PLANNED` and ready for the Coder. `/tcgflow-plan {ID}` still works on it afterwards: it refines the existing details file in place instead of creating a second task.
+
+**Interactive sessions only.** Discovery is a conversation and needs a human to answer the questions, so it is not exposed as an orchestrated role action and the Cockpit's queue never launches it. (`DRAFT` still has no producer.) Already have a ticket? Start below instead.
 
 ### Plan — `/tcgflow-plan ES-1234`
 
@@ -363,6 +381,8 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 - **prints a drift report** — the existing skills + tool adapters that differ from the new templates (the files it won't auto-merge),
 - re-registers the project and stamps the version.
 
+**A release that edits an existing skill only half-installs itself.** Discovery is the worked example: `upgrade` gives an existing workspace the new `frame-feature` skill and the new `/tcgflow-new-feature` command — absent skills are added, and `commands/` and `agents/` are refreshed wholesale — but the same release's **edits to `ingest` and `plan-task` do not overwrite the copies you already have**, so `geekstackflow drift` lists those two and you merge them by hand. Until you do, discovery writes `<!-- intent: {ID} (not shipped) -->` blocks that your Ingester has no step to reconcile.
+
 **Your customizations are never clobbered** — `governance.md`, `config.yaml`, existing skills, and tool-adapter content are left for you to merge. The drift report tells you which of those drifted; re-run it anytime with `geekstackflow drift /path/to/project` (read-only — it normalises the `{{project-name}}` placeholder and ignores your below-the-marker overrides, so it won't cry wolf). Restart Claude Code afterward to pick up refreshed slash commands. (Then `cd ui && npm run build` if the tool's UI changed.)
 
 ---
@@ -407,13 +427,13 @@ geekstackflow upgrade /path/to/project     # or /tcgflow-upgrade in the AI tool
 | VALIDATED | ingester |
 | INGESTED / COMPLETED | — |
 
-### Commands (19)
+### Commands (20)
 
-`init` · `upgrade` · `migrate` · `plan` · `code` · `review` · `test` · `web-test` · `ingest` · `refactor` · `sync-jira` · `lint` · `audit` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `timesheet-generate` · `timesheet-submit` · `session-report` — all prefixed `/tcgflow-`. Full table in [../README.md](../README.md#commands-reference).
+`init` · `upgrade` · `migrate` · `new-feature` · `plan` · `code` · `review` · `test` · `web-test` · `ingest` · `refactor` · `sync-jira` · `lint` · `audit` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `timesheet-generate` · `timesheet-submit` · `session-report` — all prefixed `/tcgflow-`. Full table in [../README.md](../README.md#commands-reference).
 
-### Skills (18)
+### Skills (19)
 
-`grill-task` · `plan-task` · `update-task-log` · `review-diff` · `verify` · `web-test` · `ingest` · `lint-wiki` · `audit-workspace` · `migrate-to-gsf` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `sync-jira` · `generate-timesheet` · `submit-timesheet` · `wiki-search` · `best-practice-refactor`. Full table in [../README.md](../README.md#skills-reference).
+`frame-feature` · `grill-task` · `plan-task` · `update-task-log` · `review-diff` · `verify` · `web-test` · `ingest` · `lint-wiki` · `audit-workspace` · `migrate-to-gsf` · `task-from-snyk` · `task-from-cypress` · `task-from-datadog` · `sync-jira` · `generate-timesheet` · `submit-timesheet` · `wiki-search` · `best-practice-refactor`. Full table in [../README.md](../README.md#skills-reference).
 
 ### CLI flags
 
@@ -437,4 +457,4 @@ An unrecognised flag exits non-zero rather than being read as `target`.
 
 ### Design rationale
 
-Every decision is recorded in [adr/](adr/) (44 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).
+Every decision is recorded in [adr/](adr/) (45 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).

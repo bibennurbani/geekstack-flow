@@ -16,7 +16,7 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 
 | Role | When the user invokes it | Profile |
 |---|---|---|
-| `planner` | "plan ES-1234", "design …", "task for …" | [agents/planner.md](.tcgstackflow/agents/planner.md) |
+| `planner` | "plan ES-1234", "design …", "task for …", "new feature …", "frame this idea" | [agents/planner.md](.tcgstackflow/agents/planner.md) |
 | `coder` | "implement ES-1234", "start coding" | [agents/coder.md](.tcgstackflow/agents/coder.md) |
 | `reviewer` | "review the diff", "is this ready?" | [agents/reviewer.md](.tcgstackflow/agents/reviewer.md) |
 | `tester` | "test ES-1234", "verify this works", "run the E2E", "web test ES-1234", "check it in the browser" | [agents/tester.md](.tcgstackflow/agents/tester.md) |
@@ -37,14 +37,15 @@ You may be invoked because **Claude wrote the plan** and **you are executing it*
 
 ## Skills
 
-Under `.tcgstackflow/skills/`. Same eighteen starter skills as Claude — the format is portable (`SKILL.md` with frontmatter `name` and `description`). Read them as if they were specifications written for you.
+Under `.tcgstackflow/skills/`. Same nineteen starter skills as Claude — the format is portable (`SKILL.md` with frontmatter `name` and `description`). Read them as if they were specifications written for you.
 
 | Skill | Used by | One-line purpose |
 |---|---|---|
 | `wiki-search` | any | Find relevant wiki/`docs/` pages via qmd before reading/editing — the discovery layer |
+| `frame-feature` | planner | Frame a feature before a ticket exists — problem, terminology, scope boundary, success measure |
 | `grill-task` | planner | Interview the user on ambiguous areas |
 | `plan-task` | planner | Write the two-file task structure |
-| `update-task-log` | coder | Append YAML entry to `TASK {ID}.md` |
+| `update-task-log` | coder · planner (discovery approval backfill) | Append YAML entry to `TASK {ID}.md` |
 | `review-diff` | reviewer | Walk diff against acceptance + governance |
 | `best-practice-refactor` | coder / refactorer | Cleanup pass (Coder, diff-scoped) + broad behavior-preserving refactor (Refactorer) |
 | `verify` | tester | Build a test plan, run tests/E2E/app, record pass/fail verdict |
@@ -62,8 +63,9 @@ Under `.tcgstackflow/skills/`. Same eighteen starter skills as Claude — the fo
 
 ## Commands (invocation in this tool)
 
-The workspace ships nineteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
+The workspace ships twenty workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases — Codex (and any other AI tool reading this AGENTS.md) **dispatches by natural language**, not by slash command. Example triggers:
 
+- *"new feature X"*, *"start a new feature"*, *"I want to build X"*, *"frame this idea"* → invoke the `tcgflow-new-feature` workflow → adopt planner role + use `frame-feature`, `grill-task` and `plan-task` skills (interactive only — the user answers the discovery questions)
 - *"plan ES-1234"*, *"design the new payment flow"* → invoke the `tcgflow-plan` workflow → adopt planner role + use `grill-task` and `plan-task` skills
 - *"implement ES-1234"*, *"start coding"* → `tcgflow-code` workflow → coder role + `update-task-log`
 - *"review the diff"*, *"is ES-1234 ready?"* → `tcgflow-review` workflow → reviewer role + `review-diff`
@@ -91,6 +93,7 @@ When you (Codex) receive any of these phrases, read the relevant `.tcgstackflow/
 - **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never split. The **one exception** is the Tester's `{ID} web-test-summary.md` (ADR 0041) — a single fixed-name browser-evidence report per task, appended to across runs and referenced from the log. It is not a second log and is never split further.
 - **Log-first ingestion.** No wiki page edit happens before the `wiki/log.md` entry is drafted.
 - **New pages and deletions are gated.** Existing-page updates flow; structural wiki changes always ask.
+- **The Ingester is the wiki's only writer — one exception.** `frame-feature` may write `wiki/domain.md`, `wiki/architecture.md` and `wiki/adr/` during an interactive discovery session, per-page approved, wrapped in `<!-- intent: {ID} (not shipped) -->` markers and logged to `wiki/log.md`; the Ingester reconciles those blocks at `INGESTED` (ADR 0045).
 - **Raw is immutable.** Codebase, completed task files, MCP outputs — read-only.
 - **Stable file paths.** Renames require `aliases:` frontmatter so backlinks resolve.
 - **HIGH/CRITICAL actions need recorded approval.** Permission-request recipe in `governance.md`; approval captured in the task log.

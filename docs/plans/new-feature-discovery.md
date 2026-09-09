@@ -49,22 +49,51 @@ Nothing in this spec reads `Stacked on:`.
 | `templates/workspace/.tcgstackflow/skills/plan-task/SKILL.md` | New output sections; refine-existing branch |
 | `templates/workspace/.tcgstackflow/skills/ingest/SKILL.md` | Intent-marker reconciliation step |
 | `templates/workspace/.tcgstackflow/agents/planner.md` | `frame-feature` in Skills used; bounded wiki exception; details template |
+| `templates/workspace/.tcgstackflow/agents/ingester.md` | Intent-marker reconciliation in `## Procedure (Ingest)`; the "only wiki writer" claim qualified |
 | `templates/workspace/.tcgstackflow/tools/claude/CLAUDE.md` | Skill list + count; command list |
 | `templates/workspace/.tcgstackflow/tools/codex/AGENTS.md` | Trigger list + count |
 | `templates/workspace/.tcgstackflow/tools/github/copilot-instructions.md` | Skill list + count; trigger list + count |
+| `templates/workspace/.tcgstackflow/README.md` | Command count (tool-owned; refreshed into every workspace) |
 | `README.md` | Counts; commands table row; skills table row |
+| `docs/README.md` | ADR count |
 | `CONTEXT.md` | Count; term entry for the discovery stage |
 | `docs/USAGE.md` | Counts; a discovery section before Plan |
 | `docs/QUICKSTART.md` | The first-feature path |
 | `docs/geekstackflow-overview.md` | Counts (and the stale `workspace schema` numeral) |
+| `package.json` | The npm `description`'s starter-skill count |
 | `test/templates-structure.test.cjs` | Count-consistency test |
 | `CHANGELOG.md` | Entry |
 
-**Untouched by design:** `init.js` (both `commands/` and `skills/` are copied wholesale —
-`init.js:754` for the workspace copy, `init.js:785` for the `~/.claude/skills/` install, so a new
-folder installs itself on both `init` and `upgrade`); `config.yaml` and `workspace_schema` (no new
-field); `ui/` (discovery is interactive-only and is not an orchestrated role action); both decks in
-`docs/` (they carry no skill/command counts, and the v0.3.0 deck is frozen).
+The last four were not in this inventory when it was written. Review found each one carrying a
+claim this change invalidates: the command count that `init` pushes into every workspace, the ADR
+count on the docs index, the skill count in the published npm description, and the Ingester
+profile's own "the only agent that writes to `wiki/`" line. Four count-bearing files missed by hand
+is itself the argument for the count-consistency test below.
+
+**Untouched by design:** `init.js` (no installer change is needed for the new folders to ship — see
+the upgrade path below); `config.yaml` and `workspace_schema` (no new field); `ui/` (discovery is
+interactive-only and is not an orchestrated role action); both decks in `docs/` (they carry no
+skill/command counts, and the v0.3.0 deck is frozen).
+
+### Upgrade path
+
+A fresh `init` ships everything in the inventory above. An `upgrade` of an existing workspace does
+not. `init.js:753-756` refreshes `commands/` and `agents/` wholesale, so `/tcgflow-new-feature` and
+the planner and ingester profile changes arrive; `init.js:758-763` refreshes `skills/` with
+`{ additiveOnly: true }`, under the comment *"NEVER overwrite an existing skill (customization
+surface)"*, so the **new** `frame-feature` skill arrives too — but the **edits** to
+`skills/plan-task` and `skills/ingest` do not overwrite the project's existing copies.
+`geekstackflow drift`, the existing mechanism for exactly this, reports them for a manual merge.
+Nothing about that merge is automatic.
+
+The consequence, stated plainly: until the merge happens, an existing workspace can run discovery —
+`frame-feature` is new, so it lands — while its Ingester still has no reconciliation step and its
+`plan-task` still emits neither `## Acceptance Criteria` nor `## Out of scope`. Intent markers would
+accumulate with nobody instructed to clear them, and by D4 there is no `lint-wiki` detector to catch
+them. What covers the gap ships inside `frame-feature`: its `wiki/log.md` entry ends with a
+**Reconciliation:** line stating the obligation, in the log an Ingester reads first, so the markers
+stay recoverable in a workspace whose `ingest` skill is stale. That is a note in the log, not an
+enforced step — the merge is still required, and this spec adds no migration to stand in for it.
 
 ## `frame-feature` skill contract
 
@@ -190,13 +219,15 @@ It may not write any other path under `wiki/`, and it may not write source code.
    <!-- /intent: ES-7132 -->
    ```
 
-   An ADR written during discovery carries `Status: proposed` in its body plus the same marker.
+   An ADR written during discovery carries `status: stub` in its frontmatter plus the same marker.
+   The wiki taxonomy is `current | stub | archived` (`init.js:1661`) — there is no `proposed`.
 3. **Log it.** One `wiki/log.md` entry per discovery session, in the same shape an ingest writes:
    the date, `frame-feature {ID}`, and one line per page touched saying what was added.
 4. **Ingester reconciles.** `skills/ingest/SKILL.md` gains a step: when ingesting task `{ID}`, find
-   every `<!-- intent: {ID} -->` block, and either drop the markers (what shipped matches what was
-   framed) or correct the page to what actually shipped. An ADR marked `proposed` becomes
-   `accepted`. Report what was reconciled in the ingest's `wiki/log.md` entry.
+   every intent block — `grep -rn "intent: {ID}" wiki/`, unanchored so it matches the opener's
+   `(not shipped)` suffix as well as the closer — and either drop the markers (what shipped matches
+   what was framed) or correct the page to what actually shipped. An ADR marked `status: stub`
+   becomes `status: current`. Report what was reconciled in the ingest's `wiki/log.md` entry.
 5. **No new detector.** `lint-wiki` is untouched.
 
 ## Jira hand-off protocol
@@ -245,8 +276,9 @@ Counts move from **18 skills → 19** and **19 commands → 20** everywhere they
 `tools/codex/AGENTS.md`, `tools/github/copilot-instructions.md`. The word-form claims
 ("Eighteen starter skills", "nineteen workflow commands") change with them.
 
-`docs/geekstackflow-overview.md`'s summary row also claims `workspace schema 7`; `config.yaml` says
-`8`. Correct it in the same edit. `README.md`'s ADR line claims 44 records and must become 45, with
+`docs/geekstackflow-overview.md`'s summary row also claims `workspace schema 7`. A real workspace is
+stamped at `9` (`init.js:92` `LATEST_SCHEMA`, written by `init.js:720`); the template `config.yaml`
+literal `8` is the rung that stamp overwrites. Record both, and correct the summary row to 9. `README.md`'s ADR line claims 44 records and must become 45, with
 ADR 0045 added to its highlights list.
 
 Beyond the counts: a commands-table row and a skills-table row in `README.md`; a `frame-feature`
@@ -258,17 +290,18 @@ section; the `docs/QUICKSTART.md` first-feature path starting at `/tcgflow-new-f
 ## Tests
 
 One new test in `test/templates-structure.test.cjs`: **documented counts match what ships.** It
-reads the real directory counts for `commands/`, `skills/` and `docs/adr/`, reads
-`workspace_schema` from `config.yaml`, and asserts that every numeral and word-form claim in
+reads the real directory counts for `commands/`, `skills/` and `docs/adr/`, reads `LATEST_SCHEMA`
+from `init.js` (and the template literal from `config.yaml` separately), and asserts that every numeral and word-form claim in
 `README.md`, `CONTEXT.md`, `docs/USAGE.md`, `docs/geekstackflow-overview.md`, and the three tool
 adapters agrees with them. These counts drift by hand today — `docs/geekstackflow-overview.md`
-currently claims `workspace schema 7` against a `config.yaml` that says `8`, and `README.md` claims
+currently claims `workspace schema 7` against a `LATEST_SCHEMA` of `9`, and `README.md` claims
 44 ADRs — so the fix is to assert them, not to patch them again.
 
 The test must be written so a new skill, command or ADR fails it loudly with a message naming the
 file and the stale numeral. Word-forms in scope: the numerals `18`/`19`/`44`/`7` in those files
 where they denote these counts, and the word-forms "Eighteen starter skills" and "nineteen workflow
-commands".
+commands". The workspace's own `README.md`, `docs/README.md` and `package.json` carry the same
+claims and are in scope too.
 
 The existing structural tests cover the rest for free: frontmatter shape, `name` matching the
 directory, description length, the `tcgflow-` prefix, and every skill an agent profile references
@@ -287,4 +320,5 @@ existing.
 5. `ingest` documents the intent-marker reconciliation step.
 6. Every documented skill, command and ADR count in the seven files above equals what is really on
    disk, and the new count-consistency test fails if any of them drifts.
-7. `node --test test/` passes.
+7. `npm test` passes. That is the invocable form: `node --test test/` fails on Node 24, which
+   resolves the positional as a module rather than recursing into the directory.

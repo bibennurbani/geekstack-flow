@@ -32,8 +32,11 @@ was not examined.
 `wiki/architecture.md`, and `wiki/adr/` during discovery, under four constraints: per-page
 approval, an inline `<!-- intent: {ID} (not shipped) -->` marker around every inserted block, a
 `wiki/log.md` entry per session, and reconciliation by the Ingester at `INGESTED` — drop the marker
-where what shipped matches what was framed, correct the page where it does not, flip a `proposed`
-ADR to `accepted`.
+where what shipped matches what was framed, correct the page where it does not, and flip a
+discovery ADR's frontmatter from `status: stub` to `status: current` — or take it through the
+deletion gate if the decision was abandoned. The wiki taxonomy is `current | stub | archived`
+(`init.js:1661`); `proposed`/`accepted` is this repo's `docs/adr/` body convention and has no
+meaning inside a workspace wiki.
 
 **The Jira issue is created at hand-off,** after the brief is settled and before any file is
 written; its key becomes the task ID. Creating it is HIGH and uses the standard permission request.
@@ -93,9 +96,28 @@ observability first, and add the guard when the log shows orphaned intent is act
   `Stacked on:` field line under `Status:`. Existing task files without them stay valid.
 - `skills/ingest/SKILL.md` gains the intent reconciliation step; `agents/planner.md` gains
   `frame-feature` and the bounded wiki exception.
-- No `init.js`, `config.yaml` or `workspace_schema` change — `commands/` and `skills/` are copied
-  wholesale by both `init` and `upgrade`, so the new folders install themselves.
+- No `init.js`, `config.yaml` or `workspace_schema` change — but installation is **not uniform
+  across `init` and `upgrade`**. A fresh `init` ships everything. `upgrade` refreshes `commands/`
+  and `agents/` wholesale (`init.js:753-756`), so `/tcgflow-new-feature` and the planner and
+  ingester profile changes install themselves; it refreshes `skills/` with `{ additiveOnly: true }`
+  (`init.js:758-763`, *"NEVER overwrite an existing skill (customization surface)"*), so the **new**
+  `frame-feature` skill installs itself as well — but the **edits** to `skills/plan-task` and
+  `skills/ingest` never overwrite a project's existing copies. `geekstackflow drift`, the existing
+  mechanism, reports them for a manual merge. Nothing about that merge is automatic.
+- **The gap that leaves, and what covers it.** Between the upgrade and that merge, an existing
+  workspace can run discovery — `frame-feature` is new, so it lands — while its Ingester still has
+  no reconciliation step and its `plan-task` still emits neither `## Acceptance Criteria` nor
+  `## Out of scope`. Intent markers would accumulate in the wiki with nobody instructed to clear
+  them, in a design that deliberately has no `lint-wiki` detector to catch them. The mitigation
+  shipped with this decision lives inside `frame-feature`: its `wiki/log.md` entry ends with a
+  **Reconciliation:** line stating the obligation, written into the log an Ingester reads first, so
+  the markers stay recoverable in a workspace whose `ingest` skill is stale. That is a note in the
+  log, not an enforced step — the merge is still required, and no migration is added to stand in
+  for it.
 - Discovery is **interactive only**, like the browser web test (ADR 0041). It is not an
   orchestrated role action and adds nothing to the Cockpit.
+- **ADR 0030 is amended.** Its "index freshness = the writer re-indexes" bullet called the Ingester
+  the only wiki writer. Discovery is a second writer, and it re-indexes itself: `frame-feature`
+  bumps `updated:` on every page it touches and runs an incremental `qmd embed` after its log entry.
 - A follow-up spec consumes `Stacked on:`: a `stack-pr` skill, `pr.cjs` using the slice below as the
   PR base (`openPr` already accepts one), and restack-after-merge. Deliberately out of scope here.

@@ -49,7 +49,7 @@ Same six as Claude / Codex — defined in `.tcgstackflow/agents/`:
 
 | Role | When invoked | Profile |
 |---|---|---|
-| `planner` | "plan ES-1234", "design …", "task for …" | `.tcgstackflow/agents/planner.md` |
+| `planner` | "plan ES-1234", "design …", "task for …", "new feature …", "frame this idea" | `.tcgstackflow/agents/planner.md` |
 | `coder` | "implement ES-1234", "start coding" | `.tcgstackflow/agents/coder.md` |
 | `reviewer` | "review the diff", "is this ready?" | `.tcgstackflow/agents/reviewer.md` |
 | `tester` | "test ES-1234", "verify this works", "run the E2E", "web test ES-1234" | `.tcgstackflow/agents/tester.md` |
@@ -75,7 +75,7 @@ These complement — they do not duplicate — the agent profiles in `.tcgstackf
 
 Two locations:
 
-- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Eighteen ship in V1 (`grill-task`, `plan-task`, `update-task-log`, `review-diff`, `verify`, `web-test`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `task-from-snyk`, `task-from-cypress`, `task-from-datadog`, `sync-jira`, `generate-timesheet`, `submit-timesheet`, `wiki-search`, `best-practice-refactor`).
+- **Workflow skills** live at `.tcgstackflow/skills/` — project-versioned, conventions specific to this project. Nineteen ship in V1 (`frame-feature`, `grill-task`, `plan-task`, `update-task-log`, `review-diff`, `verify`, `web-test`, `ingest`, `lint-wiki`, `audit-workspace`, `migrate-to-gsf`, `task-from-snyk`, `task-from-cypress`, `task-from-datadog`, `sync-jira`, `generate-timesheet`, `submit-timesheet`, `wiki-search`, `best-practice-refactor`).
 - **Tech skills** live at `~/.tcgstackflow/skills/` — global library, cross-project. Vue, Vuetify, Pinia, Cypress, .NET, Pulumi, Auth0, etc. Install with `cd ~/.tcgstackflow/skills && npx skills add <owner/repo@skill>`.
 
 Both locations are readable to Copilot. Tech-skill content is referenced from project guidance but not duplicated into the project.
@@ -92,11 +92,12 @@ Both locations are readable to Copilot. Tech-skill content is referenced from pr
 
 ## Commands (invocation in Copilot)
 
-The workspace ships nineteen workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
+The workspace ships twenty workflow commands at `.tcgstackflow/commands/{name}/SKILL.md`. Each command file describes its trigger phrases. Copilot dispatches by natural language — type the trigger into Copilot Chat or describe the action; Copilot reads the matching command file and follows its procedure. Example triggers:
 
 | Workflow | Trigger phrases |
 |---|---|
-| `tcgflow-plan` | "plan ES-1234", "design the new feature", "task for X" |
+| `tcgflow-new-feature` | "new feature X", "start a new feature", "I want to build X", "frame this idea" (interactive only) |
+| `tcgflow-plan` | "plan ES-1234", "design ES-1234", "let's break down this work" |
 | `tcgflow-code` | "implement ES-1234", "start coding the planned task" |
 | `tcgflow-review` | "review the diff", "is ES-1234 ready?" |
 | `tcgflow-test` | "test ES-1234", "verify this works", "run the E2E", "write a test plan" |
@@ -127,6 +128,7 @@ Agents may be launched headlessly by the **Cockpit Orchestrator** (ADR 0032) ins
 - **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`. The **one exception** is the Tester's `{ID} web-test-summary.md` (ADR 0041) — a single fixed-name browser-evidence report per task, appended to across runs and referenced from the log. It is not a second log and is never split further.
 - **Log-first ingestion.** No wiki page edit happens before the `wiki/log.md` entry is drafted. Locked prefix: `## [YYYY-MM-DD] {operation} | {title}`.
 - **New pages and deletions are gated.** Existing-page updates flow; structural wiki changes always ask.
+- **The Ingester is the wiki's only writer — one exception.** `frame-feature` may write `wiki/domain.md`, `wiki/architecture.md` and `wiki/adr/` during an interactive discovery session, per-page approved, wrapped in `<!-- intent: {ID} (not shipped) -->` markers and logged to `wiki/log.md`; the Ingester reconciles those blocks at `INGESTED` (ADR 0045).
 - **Raw is immutable.** Codebase, completed task files, MCP outputs — read-only.
 - **Stable file paths.** Renames preserve backlinks via `aliases:` frontmatter.
 - **HIGH/CRITICAL actions need recorded approval.** Permission-request recipe in `governance.md`; approval captured in the task log.

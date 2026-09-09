@@ -16,7 +16,7 @@ Then read **`~/.tcgstackflow/memory/*.md`** for the user's cross-project prefere
 
 | Role | When the user invokes it | Profile |
 |---|---|---|
-| `planner` | "plan ES-1234", "let's design …", "we need a task for …" | [agents/planner.md](.tcgstackflow/agents/planner.md) |
+| `planner` | "plan ES-1234", "let's design …", "we need a task for …", "new feature …", "frame this idea" | [agents/planner.md](.tcgstackflow/agents/planner.md) |
 | `coder` | "implement ES-1234", "work on the planned task", "start coding" | [agents/coder.md](.tcgstackflow/agents/coder.md) |
 | `reviewer` | "review the diff", "is this ready?", "check ES-1234" | [agents/reviewer.md](.tcgstackflow/agents/reviewer.md) |
 | `tester` | "test ES-1234", "verify this works", "run the E2E", "write a test plan", "web test ES-1234", "check this in the browser" | [agents/tester.md](.tcgstackflow/agents/tester.md) |
@@ -29,15 +29,16 @@ Each profile lists which files it reads, which it writes, which skills it uses, 
 
 ## Skills available
 
-Under `.tcgstackflow/skills/`. Eighteen starter skills ship with V1:
+Under `.tcgstackflow/skills/`. Nineteen starter skills ship with V1:
 
 | Skill | Role | Purpose |
 |---|---|---|
 | [`wiki-search`](.tcgstackflow/skills/wiki-search/SKILL.md) | any | qmd discovery over the wiki/docs — find which pages are relevant before reading or ingesting |
 | [`best-practice-refactor`](.tcgstackflow/skills/best-practice-refactor/SKILL.md) | coder (cleanup scope) / refactorer (broad scope) | Behavior-preserving structure cleanup — diff-scoped Coder pass or broad Refactorer task |
+| [`frame-feature`](.tcgstackflow/skills/frame-feature/SKILL.md) | planner | Frame a feature before a ticket exists — problem, terminology, scope boundary, success measure |
 | [`grill-task`](.tcgstackflow/skills/grill-task/SKILL.md) | planner | Interview the user before writing the plan |
 | [`plan-task`](.tcgstackflow/skills/plan-task/SKILL.md) | planner | Write the two-file task structure |
-| [`update-task-log`](.tcgstackflow/skills/update-task-log/SKILL.md) | coder | Append YAML entry to `TASK {ID}.md` |
+| [`update-task-log`](.tcgstackflow/skills/update-task-log/SKILL.md) | coder · planner (discovery approval backfill) | Append YAML entry to `TASK {ID}.md` |
 | [`review-diff`](.tcgstackflow/skills/review-diff/SKILL.md) | reviewer | Walk diff against acceptance + governance |
 | [`verify`](.tcgstackflow/skills/verify/SKILL.md) | tester | Build a test plan, run tests/E2E/app, record a pass/fail verdict |
 | [`web-test`](.tcgstackflow/skills/web-test/SKILL.md) | tester / standalone | Drive a real browser (Claude in Chrome) for UI criteria the suites can't settle — interactive sessions only |
@@ -58,7 +59,7 @@ Skills are atomic — one capability per skill. Compose them via agent profiles.
 
 Same workflows, shipped in two forms — both live at `.tcgstackflow/commands/{name}/SKILL.md`:
 
-- **Claude Code** (this tool) reads them as global slash commands from `~/.claude/skills/` (installed by `init.js`). Type `/tcgflow-init`, `/tcgflow-plan`, etc.
+- **Claude Code** (this tool) reads them as global slash commands from `~/.claude/skills/` (installed by `init.js`). Type `/tcgflow-init`, `/tcgflow-new-feature`, `/tcgflow-plan`, etc.
 - **Other AI tools** (Codex, GitHub Copilot, Antigravity, Continue, etc.) read the SAME files at the workspace location `.tcgstackflow/commands/`. They are dispatched via natural-language phrases listed in each command's `description` — e.g. *"plan ES-1234"* invokes the same workflow `/tcgflow-plan` does for Claude.
 
 A command is a thin dispatcher: each `commands/{name}/SKILL.md` describes when to invoke and which workspace skill or agent role to use. The actual behaviour lives in `.tcgstackflow/skills/` and `.tcgstackflow/agents/`. Result: workflows are **tool-portable**; the slash-command UX is **Claude-specific**.
@@ -77,6 +78,7 @@ You may be launched headlessly by the **Cockpit Orchestrator** (`geekstackflow u
 - **Two-file task rule.** Every task is exactly `TASK {ID}.md` + `TASK details {ID}.md`. Never `TASK {ID}-FE-1.md`, never `FIXES.md`. Append to the existing two files. The **one exception** is the Tester's `{ID} web-test-summary.md` (ADR 0041) — a single fixed-name browser-evidence report per task, appended to across runs and referenced from the log. It is not a second log and is never split further.
 - **Log-first ingestion.** No wiki page edit happens before the `wiki/log.md` entry is drafted. Locked entry prefix: `## [YYYY-MM-DD] {operation} | {title}`.
 - **New pages and deletions are gated.** Existing-page updates flow; structural wiki changes always ask for explicit approval.
+- **The Ingester is the wiki's only writer — one exception.** `frame-feature` may write `wiki/domain.md`, `wiki/architecture.md` and `wiki/adr/` during an interactive discovery session, per-page approved, wrapped in `<!-- intent: {ID} (not shipped) -->` markers and logged to `wiki/log.md`; the Ingester reconciles those blocks at `INGESTED` (ADR 0045).
 - **Raw is immutable.** Codebase, completed task files, MCP outputs — read-only. Never edit Raw.
 - **Stable file paths.** Wiki pages are addressed by path; renames must add `aliases:` frontmatter so backlinks resolve.
 - **HIGH/CRITICAL actions need recorded approval.** Inline permission request format in `governance.md`; approval string captured in the task log's `governance:` field.

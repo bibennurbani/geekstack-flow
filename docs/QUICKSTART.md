@@ -60,14 +60,18 @@ The wiki ships as stubs. Fill it from the actual codebase:
 ## 5. Run your first real task
 
 ```
-/tcgflow-plan ES-1234      # Planner grills you, writes the two task files (status PLANNED)
+/tcgflow-new-feature       # No ticket yet: Planner frames problem/scope/success, offers to
+                           #   raise the Jira issue, writes the two task files (status PLANNED)
+/tcgflow-plan ES-1234      # Ticket in hand: Planner grills you, writes the two files (status PLANNED)
 /tcgflow-code ES-1234      # Coder implements + writes tests, logs each change
 /tcgflow-review ES-1234    # Reviewer checks the diff (→ IN_TEST)
 /tcgflow-test ES-1234      # Tester runs verification (→ VALIDATED)
 /tcgflow-ingest ES-1234    # Ingester folds it into the wiki (→ INGESTED, moves to completed/)
 ```
 
-Not on Claude Code? Use natural language — *"plan ES-1234"*, *"implement it"*, *"review the diff"*, *"test it"*, *"ingest it"* — every tool reads the same workflow from the workspace.
+The first two lines are alternatives, not steps: start at discovery when the work has no ticket, at the Planner when it does. Discovery leaves the task `PLANNED` on its own — `/tcgflow-plan` afterwards is optional, and refines that task in place.
+
+Not on Claude Code? Use natural language — *"start a new feature"*, *"plan ES-1234"*, *"implement it"*, *"review the diff"*, *"test it"*, *"ingest it"* — every tool reads the same workflow from the workspace.
 
 Need a broad, behaviour-preserving tidy of an existing area (not tied to one feature)? Try `/tcgflow-refactor <target>` — the **Refactorer** surveys read-only, proposes a refactor task, then executes it through the same Review → Test → Ingest gates.
 
