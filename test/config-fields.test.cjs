@@ -138,3 +138,13 @@ test('editBlockLine(): a duplicated block header does not truncate the file', ()
   assert.match(out, /engine: qmd/, 'the block after the first header survives');
   assert.match(out, /autopilot: false/, 'the second header + its body survive');
 });
+
+test('block(): a header with an INLINE value keeps that value out of the body', () => {
+  // The shipped template writes `projects: []`, and the pre-index-based implementation split on
+  // `^projects:` — leaking " []" into the block body. The `- name:` scan in readConfig ignored it
+  // either way (both yield 0 sub-projects), but the body of a block is not its header's own value.
+  assert.strictEqual(cf.block('projects: []\nmemory:\n  mode: local-first\n', 'projects'), '\n');
+  assert.strictEqual(cf.block('workspace_schema: 9\nproject:\n  name: "x"\n', 'workspace_schema'), '\n');
+  // the normal case — a header with no inline value — is unaffected
+  assert.match(cf.block('projects:\n  - name: api\n    path: Api\nmemory:\n', 'projects'), /^\n  - name: api\n    path: Api\n$/);
+});
