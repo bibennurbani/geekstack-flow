@@ -862,6 +862,18 @@ const settingsIsolation = ref('in-place'); // ADR 0040 — per-project default g
 const settingsAutopilot = ref(false); // ADR 0043 — worktree + chain-to-reviewer + parallel
 const settingsMaxParallel = ref('3');
 const settingsBusy = ref(false);
+// Server error codes → what the user can actually do about them. Without this a rejected save
+// reported a bare code ("bad-max-parallel") that names no field.
+const SETTINGS_ERRORS = {
+  'bad-budget': 'Budget must be a plain number, 0 or more',
+  'bad-max-parallel': 'Max parallel must be a whole number, 1 or more',
+  'unknown-isolation': 'Unknown git isolation mode',
+  'unknown-tool': 'Unknown runner tool for that role',
+  'unknown-role': 'Unknown agent role',
+  'role-not-in-config': 'config.yaml has no orchestrator.roles: block to write into',
+  'no-orchestrator-block': 'config.yaml has no orchestrator: block',
+  'not-a-workspace': 'That folder has no .tcgstackflow/config.yaml',
+};
 const PRICING_TABLE = computed(() => pricingRows(pricing.value)); // derived from the single source
 function initSettings() {
   const o = (detail.value && detail.value.config && detail.value.config.orchestrator) || {
@@ -875,26 +887,35 @@ function initSettings() {
   settingsAutopilot.value = !!o.autopilot;
   settingsMaxParallel.value = o.max_parallel == null ? '3' : String(o.max_parallel);
 }
+// The server validates then writes ONCE, so a non-ok response means nothing changed on disk — hence
+// the re-read in both outcomes, which puts the form back in step with the file either way. The
+// try/finally is load-bearing: settingsBusy gates the Save button, so a thrown fetch (server
+// stopped, laptop asleep) used to leave it disabled for the rest of the session with no error shown.
 async function saveSettings() {
   settingsBusy.value = true;
-  const res = await postJSON('/api/project/settings', {
-    path: selected.value,
-    roles: settingsRoles.value,
-    budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value),
-    auto_advance: settingsAutoAdvance.value,
-    isolation: settingsIsolation.value,
-    autopilot: settingsAutopilot.value,
-    max_parallel: settingsMaxParallel.value,
-  });
-  settingsBusy.value = false;
-  if (res.ok) {
-    toast('Settings saved', 'ok');
+  try {
+    const res = await postJSON('/api/project/settings', {
+      path: selected.value,
+      roles: settingsRoles.value,
+      budget_usd: settingsBudget.value === '' ? null : Number(settingsBudget.value),
+      auto_advance: settingsAutoAdvance.value,
+      isolation: settingsIsolation.value,
+      autopilot: settingsAutopilot.value,
+      max_parallel: settingsMaxParallel.value,
+    });
+    if (res.ok) {
+      toast('Settings saved', 'ok');
+    } else {
+      const j = await res.json().catch(() => ({}));
+      toast('Save failed: ' + (SETTINGS_ERRORS[j.error] || j.error || res.status), 'err');
+    }
     const p = projects.value.find((x) => x.path === selected.value);
     await loadProject(p);
     projectTab.value = 'settings';
-  } else {
-    const j = await res.json().catch(() => ({}));
-    toast('Save failed: ' + (j.error || res.status), 'err');
+  } catch (e) {
+    toast('Save failed: ' + ((e && e.message) || 'network error'), 'err');
+  } finally {
+    settingsBusy.value = false;
   }
 }
 

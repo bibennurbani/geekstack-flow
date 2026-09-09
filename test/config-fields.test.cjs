@@ -148,3 +148,56 @@ test('block(): a header with an INLINE value keeps that value out of the body', 
   // the normal case — a header with no inline value — is unaffected
   assert.match(cf.block('projects:\n  - name: api\n    path: Api\nmemory:\n', 'projects'), /^\n  - name: api\n    path: Api\n$/);
 });
+
+// --- comment / CRLF / indent preservation ------------------------------------------------------
+// The config's trailing comments are ALIGNED with runs of spaces, and this module's header promises
+// they survive byte-for-byte. A value pattern allowed to reach the `#` breaks that promise on a line
+// whose value is blank: it eats the marker and splices the comment text into the YAML scalar.
+
+test('editBlockLine(): a blank value with an ALIGNED trailing comment keeps the comment', () => {
+  const t = 'orchestrator:\n  isolation:                        # in-place | branch | worktree\n';
+  const out = cf.editBlockLine(t, 'orchestrator', 'isolation', 'branch');
+  assert.match(out, /# in-place \| branch \| worktree$/m, 'the comment marker + text survive');
+  assert.match(out, /^  isolation: branch\s+# in-place \| branch \| worktree$/m);
+  assert.doesNotMatch(out, /isolation: branch in-place/, 'the comment must not become part of the value');
+});
+
+test('editBlockLine(): a trailing comment survives on a non-blank value too, keeping its padding', () => {
+  const out = cf.editBlockLine(SAMPLE, 'orchestrator', 'budget_usd', '25');
+  assert.match(out, /^  budget_usd: 25              # spend guard$/m, 'padding kept byte-for-byte');
+});
+
+test('editBlockLine(): a CRLF file stays CRLF; removeBlockLine drops the whole CRLF line', () => {
+  const crlf = 'orchestrator:\r\n  budget_usd: 50\r\n  roles:\r\n    coder: claude\r\n';
+  const ins = cf.editBlockLine(crlf, 'orchestrator', 'autopilot', 'true');
+  assert.doesNotMatch(ins, /[^\r]\n/, 'no bare LF introduced into a CRLF file');
+  assert.match(ins, /^  autopilot: true\r$/m);
+  assert.strictEqual(cf.removeBlockLine(crlf, 'orchestrator', 'budget_usd'),
+    'orchestrator:\r\n  roles:\r\n    coder: claude\r\n', 'removed with its own CRLF, no blank line left');
+});
+
+test('editBlockLine(): an inserted line takes the block\'s own indent, not a hard-coded two spaces', () => {
+  assert.match(cf.editBlockLine('orchestrator:\n    autopilot: false\n', 'orchestrator', 'max_parallel', '5'),
+    /^    max_parallel: 5$/m, 'a 4-space block gets a 4-space insert (mixed indent is invalid YAML)');
+  assert.match(cf.editBlockLine('orchestrator:\n', 'orchestrator', 'autopilot', 'true'),
+    /^  autopilot: true$/m, 'an empty block falls back to two spaces');
+});
+
+test('blockScalar()/blockHasTrue(): a BLANK value falls back instead of reporting # or the next key', () => {
+  // `\s` crosses newlines, so the old readers answered a blank `planner:` with the NEXT line's key.
+  const roles = 'orchestrator:\n  roles:\n    planner:\n    coder: codex\n';
+  assert.strictEqual(cf.blockScalar(roles, 'orchestrator', 'planner', 'claude'), 'claude', 'blank → fallback, not "coder:"');
+  assert.strictEqual(cf.blockScalar(roles, 'orchestrator', 'coder', 'claude'), 'codex');
+  assert.strictEqual(cf.blockScalar('orchestrator:\n  isolation:      # note\n', 'orchestrator', 'isolation', 'in-place'),
+    'in-place', 'a blank value must not read back as "#"');
+  assert.strictEqual(cf.blockHasTrue('orchestrator:\n  autopilot:\n  x: true\n', 'orchestrator', 'autopilot'), false);
+});
+
+test('orchestratorRolesBounds(): scopes to the roles: entries and derives their indent', () => {
+  const t = 'orchestrator:\n  roles:\n    coder: claude\n  pr:\n    remote: origin\ngovernance:\n';
+  const b = cf.orchestratorRolesBounds(t);
+  assert.strictEqual(t.slice(b.start, b.end), '    coder: claude\n', 'stops before the pr: sibling');
+  assert.strictEqual(b.indent, '    ');
+  assert.strictEqual(cf.orchestratorRolesBounds('orchestrator:\n  isolation: in-place\n'), null, 'no roles: → null');
+  assert.strictEqual(cf.orchestratorRolesBounds('foo: 1\n'), null, 'no orchestrator: → null');
+});

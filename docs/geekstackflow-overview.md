@@ -18,7 +18,7 @@ This document is the written companion to the slide deck. It's pitched for a **m
 | **Works with** | Claude Code, Codex, GitHub Copilot — one workflow, any tool |
 | **The workspace** | `6` agent roles · `19` skills · `20` `tcgflow-*` commands · `4` risk levels · workspace schema `9` |
 | **The Cockpit** | Local browser dashboard at `127.0.0.1:4729` — zero-dependency Node `http` server (~3,330 lines) + a single Vue 3 SPA (`App.vue`, 1,517 lines) |
-| **Maturity** | 6 releases (0.1.0 → 0.5.1), **45 ADRs**, **331** passing tests |
+| **Maturity** | 6 releases (0.1.0 → 0.5.1), **45 ADRs**, **345** passing tests |
 | **Architecture** | No database — plain files are the single source of truth; nothing leaves your machine |
 
 ---

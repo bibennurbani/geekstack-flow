@@ -30,31 +30,51 @@ function block(text, name) {
 
 // A scalar field (`key: value`, value taken up to whitespace) inside a block, or `fallback`.
 function blockScalar(text, name, key, fallback = null) {
-  const m = block(text, name).match(new RegExp('^\\s+' + key + ':\\s*(\\S+)', 'm'));
+  const m = block(text, name).match(new RegExp('^[ \\t]+' + key + ':[ \\t]*(?!#)(\\S+)', 'm'));
   return m ? m[1].trim() : fallback;
 }
 
 // Whether a block contains `key: true` — the idiom for the orchestrator's boolean toggles.
 function blockHasTrue(text, name, key) {
-  return new RegExp('^\\s+' + key + ':\\s*true', 'm').test(block(text, name));
+  return new RegExp('^[ \\t]+' + key + ':[ \\t]*true', 'm').test(block(text, name));
 }
 
-// A `key:` line inside a block, indent-anchored so `\s` can never swallow a newline and start the
-// match on the line above.
-const lineRe = (key) => new RegExp('^([ \\t]+' + key + '):[ \\t]*\\S*', 'm');
+// A `key:` line inside a block, captured as head (indent + key) / value-region / trailing comment.
+// Indent-anchored (`[ \t]`, never `\s`) so the match can't start on the line above by swallowing a
+// newline, and COMMENT-AWARE: the config's trailing comments are aligned with runs of spaces, so a
+// value pattern allowed to reach the `#` would eat the comment marker on a line whose value is
+// blank and splice the comment text into the value.
+const lineRe = (key) => new RegExp('^([ \\t]+' + key + '):([^#\\r\\n]*)(#[^\\r\\n]*)?(\\r?)$', 'm');
+
+// The indentation a block's body actually uses, so an inserted line matches its neighbours instead
+// of hard-coding two spaces (mixed indentation inside one mapping is not valid YAML).
+function bodyIndent(body) {
+  const m = body.match(/^([ \t]+)\S/m);
+  return m ? m[1] : '  ';
+}
 
 // Surgically set `key: value` inside a top-level block: replace the line if present, else insert it
-// right after the block header (two-space indent). Everything else — comments included — is kept
-// byte-for-byte. Throws `no-<name>-block` when the block is missing (callers map this to a 400).
+// right after the block header. Everything else — comments included — is kept byte-for-byte, and a
+// trailing comment keeps the whitespace that aligns it. Throws `no-<name>-block` when the block is
+// missing (callers map this to a 400).
 function editBlockLine(text, name, key, value) {
   const s = String(text);
   const b = blockBounds(s, name);
   if (!b) throw new Error('no-' + name + '-block');
   const body = s.slice(b.headEnd, b.bodyEnd);
-  // Function replacement, so a `$1`/`$&` inside `value` is written literally rather than expanded.
-  const edited = lineRe(key).test(body)
-    ? body.replace(lineRe(key), (_m, head) => head + ': ' + value)
-    : '\n  ' + key + ': ' + value + body;
+  let edited;
+  if (lineRe(key).test(body)) {
+    // A function replacement, so a `$1`/`$&` inside `value` is written literally, not expanded.
+    edited = body.replace(lineRe(key), (_m, head, mid, comment, cr) => {
+      // `mid` is the old value plus the run of spaces that aligns any trailing comment; keep that
+      // run byte-for-byte so the comment stays where the author put it.
+      const pad = comment ? (mid.match(/[ \t]*$/) || [''])[0] : '';
+      return head + ': ' + value + pad + (comment || '') + cr;
+    });
+  } else {
+    const nl = /\r\n/.test(s) ? '\r\n' : '\n'; // never mix line endings into a CRLF file
+    edited = nl + bodyIndent(body) + key + ': ' + value + body;
+  }
   return s.slice(0, b.headEnd) + edited + s.slice(b.bodyEnd);
 }
 
@@ -67,9 +87,34 @@ function removeBlockLine(text, name, key) {
   const b = blockBounds(s, name);
   if (!b) return s;
   const body = s.slice(b.headEnd, b.bodyEnd);
-  const dropRe = new RegExp('^[ \\t]+' + key + ':.*\\n?', 'm');
+  const dropRe = new RegExp('^[ \\t]+' + key + ':[^\\r\\n]*\\r?\\n?', 'm');
   if (!dropRe.test(body)) return s;
   return s.slice(0, b.headEnd) + body.replace(dropRe, '') + s.slice(b.bodyEnd);
 }
 
-module.exports = { block, blockScalar, blockHasTrue, editBlockLine, removeBlockLine };
+// The `roles:` sub-block inside `orchestrator:` — where its entries start and end, and the indent
+// they use. The role map is the one setting nested two levels deep, so it can't use editBlockLine
+// (which writes at the block's own indent); this gives its writer the same scoped, indent-derived
+// footing. null when there is no `roles:` sub-block to write into.
+function orchestratorRolesBounds(text) {
+  const s = String(text);
+  const b = blockBounds(s, 'orchestrator');
+  if (!b) return null;
+  const body = s.slice(b.headEnd, b.bodyEnd);
+  const header = body.match(/^([ \t]+)roles:[ \t]*(?:#[^\r\n]*)?\r?$/m);
+  if (!header) return null;
+  const start = b.headEnd + header.index + header[0].length + 1; // just past the `roles:` line
+  const after = s.slice(start, b.bodyEnd);
+  // The entries are the lines indented DEEPER than `roles:` itself; a shallower line is a sibling
+  // key (`pr:`, `isolation:`) and ends the sub-block.
+  const stop = after.search(new RegExp('^(?![ \\t]{' + (header[1].length + 1) + ',})', 'm'));
+  const entries = stop >= 0 ? after.slice(0, stop) : after;
+  const firstEntry = entries.match(/^([ \t]+)\S/m);
+  return {
+    start,
+    end: stop >= 0 ? start + stop : b.bodyEnd,
+    indent: firstEntry ? firstEntry[1] : header[1] + '  ',
+  };
+}
+
+module.exports = { block, blockScalar, blockHasTrue, editBlockLine, removeBlockLine, orchestratorRolesBounds };

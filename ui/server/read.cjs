@@ -690,12 +690,22 @@ function writeTaskStatus(projectPath, id, newStatus, opts = {}) {
 // so one Cockpit save = one read + one write. That atomicity is the point: applying the fields one
 // file-write at a time meant a field failing validation left the file HALF-updated (the earlier
 // fields persisted) with the remaining fields silently dropped, under a flat "Save failed".
+// Replace-or-insert, like every other field: a role line that is missing or blank used to throw
+// `role-not-in-config` and fail the ENTIRE save, with nothing in the Cockpit able to fix it — the
+// same dead end as the reported bug. A legacy or hand-trimmed workspace is now repaired by the save
+// that needs the line. `role-not-in-config` is reserved for a config with no `roles:` sub-block,
+// which IS a config the Cockpit cannot repair.
 function roleToolText(text, role, tool) {
   if (!AGENT_ROLES.includes(role)) throw new Error('unknown-role');
   if (!/^(claude|codex)$/.test(String(tool))) throw new Error('unknown-tool');
-  const re = new RegExp('^([ \\t]+' + role + '):[ \\t]*\\S+', 'm'); // the role line under orchestrator.roles
-  if (!re.test(text)) throw new Error('role-not-in-config');
-  return text.replace(re, (_m, head) => head + ': ' + tool);
+  const bounds = cf.orchestratorRolesBounds(text);
+  if (!bounds) throw new Error('role-not-in-config');
+  const roles = text.slice(bounds.start, bounds.end);
+  const re = new RegExp('^([ \\t]+' + role + '):[^#\\r\\n]*(#[^\\r\\n]*)?(\\r?)$', 'm');
+  const edited = re.test(roles)
+    ? roles.replace(re, (_m, head, comment, cr) => head + ': ' + tool + (comment ? ' ' + comment : '') + cr)
+    : bounds.indent + role + ': ' + tool + (/\r\n/.test(text) ? '\r\n' : '\n') + roles;
+  return text.slice(0, bounds.start) + edited + text.slice(bounds.end);
 }
 // A blank budget field in the Cockpit means "no spend guard" → REMOVE the key. Clearing an
 // already-absent budget is a NO-OP, not an error (that gap surfaced as a bogus `no-orchestrator-block`
@@ -704,7 +714,12 @@ function budgetText(text, usd) {
   if (usd == null || usd === '' || Number.isNaN(parseFloat(usd))) return cf.removeBlockLine(text, 'orchestrator', 'budget_usd');
   const n = parseFloat(usd);
   if (!Number.isFinite(n) || n < 0) throw new Error('bad-budget');
-  return cf.editBlockLine(text, 'orchestrator', 'budget_usd', String(n));
+  // Refuse what the reader cannot read back: readConfig's `([\d.]+)` stops at the `e`, so a budget
+  // JS renders in exponent notation (< 1e-6, or >= 1e21) would round-trip to a $1 spend guard and
+  // refuse every launch. Rejecting beats silently arming the wrong number.
+  const out = String(n);
+  if (/e/i.test(out)) throw new Error('bad-budget');
+  return cf.editBlockLine(text, 'orchestrator', 'budget_usd', out);
 }
 function isolationText(text, mode) {
   if (!ISOLATION_MODES.includes(String(mode))) throw new Error('unknown-isolation');

@@ -568,3 +568,50 @@ test('applySettings: an omitted field is left alone; a no-change save does not r
     assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.autopilot, false, 'omitted field untouched');
   } finally { fs.rmSync(proj, { recursive: true, force: true }); }
 });
+
+test('settings: a missing or blank role line is REPAIRED by the save, not fatal to it', () => {
+  // A role line that was absent or hand-blanked used to throw role-not-in-config and fail the whole
+  // save, with nothing in the Cockpit able to fix it — the same dead end as the reported bug.
+  const { proj, ws, file } = makeSettingsWs();
+  try {
+    read.applySettings(ws, { roles: { reviewer: 'codex' }, isolation: 'branch' });
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.roles.reviewer, 'codex');
+    // blank the line by hand, then save over it — the trailing comment must survive
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^(\s+)planner: claude$/m, '$1planner:            # blanked'));
+    read.applySettings(ws, { roles: { planner: 'codex' } });
+    const text = fs.readFileSync(file, 'utf8');
+    assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.roles.planner, 'codex');
+    assert.match(text, /# blanked$/m, 'the trailing comment survives the repair');
+    assert.strictEqual((text.match(/^\s+planner:/gm) || []).length, 1, 'repaired in place, not duplicated');
+    // the write stays inside roles: — a pr: sibling is never touched
+    assert.match(text, /^  pr:\n    remote: origin\n    base: ""\n    draft: true$/m);
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('settings: with no roles: sub-block at all, role-not-in-config is thrown and NOTHING is written', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-noroles-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  const file = path.join(ws, 'config.yaml');
+  fs.writeFileSync(file, 'workspace_schema: 9\norchestrator:\n  isolation: in-place\ngovernance:\n  mode: strict\n');
+  try {
+    const before = fs.readFileSync(file, 'utf8');
+    assert.throws(() => read.applySettings(ws, { roles: { coder: 'codex' }, isolation: 'branch' }), /role-not-in-config/);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), before, 'the isolation change must not have persisted');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('settings: every budget the writer ACCEPTS round-trips through readConfig (writer and reader agree)', () => {
+  // readConfig reads budget_usd with `([\d.]+)`, which stops at an `e` — so a budget JS renders in
+  // exponent notation used to round-trip to a $1 spend guard and refuse every launch, silently.
+  const { proj, ws } = makeSettingsWs();
+  try {
+    for (const n of [0, 0.5, 1, 25, 50, 1e-6, 999999999, Number.MAX_SAFE_INTEGER]) {
+      read.setBudget(ws, n);
+      assert.strictEqual(read.buildProjectDetail(proj).config.orchestrator.budget_usd, n, `budget ${n} did not survive the round-trip`);
+    }
+    for (const n of [1e-7, 1e21, -5, 'abc-not-a-number-but-not-blank' && -1]) {
+      assert.throws(() => read.setBudget(ws, n), /bad-budget/, `${n} should be refused, not silently rewritten`);
+    }
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});

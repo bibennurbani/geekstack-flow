@@ -332,3 +332,30 @@ test('POST /api/project/settings validates path + workspace', async () => {
   assert.strictEqual(res.statusCode, 400);
   assert.strictEqual(json(res).error, 'not-a-workspace');
 });
+
+test('POST /api/project/settings: role-not-in-config refuses the WHOLE save (no half-apply)', async () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gsf-noroles-router-'));
+  const ws = path.join(proj, '.tcgstackflow');
+  fs.mkdirSync(ws, { recursive: true });
+  const file = path.join(ws, 'config.yaml');
+  fs.writeFileSync(file, 'workspace_schema: 9\nproject:\n  name: "demo"\norchestrator:\n  isolation: in-place\ngovernance:\n  mode: strict\n');
+  try {
+    const res = await call('POST', '/api/project/settings', { path: proj, roles: { coder: 'codex' }, isolation: 'branch' });
+    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(json(res).error, 'role-not-in-config');
+    assert.match(fs.readFileSync(file, 'utf8'), /^  isolation: in-place$/m, 'isolation must still be in-place');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
+
+test('POST /api/project/settings: a budget the reader could not read back is refused, not written', async () => {
+  const { proj, file } = makeSettingsProj();
+  try {
+    const before = fs.readFileSync(file, 'utf8');
+    for (const budget_usd of [1e-7, 1e21, -5]) {
+      const res = await call('POST', '/api/project/settings', { path: proj, budget_usd, autopilot: true });
+      assert.strictEqual(res.statusCode, 400, `budget ${budget_usd} should 400`);
+      assert.strictEqual(json(res).error, 'bad-budget');
+    }
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), before, 'nothing written for any of them');
+  } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+});
