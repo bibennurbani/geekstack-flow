@@ -18,7 +18,7 @@ This document is the written companion to the slide deck. It's pitched for a **m
 | **Works with** | Claude Code, Codex, GitHub Copilot — one workflow, any tool |
 | **The workspace** | `6` agent roles · `19` skills · `20` `tcgflow-*` commands · `4` risk levels · workspace schema `9` |
 | **The Cockpit** | Local browser dashboard at `127.0.0.1:4729` — zero-dependency Node `http` server (~3,330 lines) + a single Vue 3 SPA (`App.vue`, 1,517 lines) |
-| **Maturity** | 6 releases (0.1.0 → 0.5.2), **46 ADRs**, **346** passing tests |
+| **Maturity** | 6 releases (0.1.0 → 0.5.2), **47 ADRs**, **346** passing tests |
 | **Architecture** | No database — plain files are the single source of truth; nothing leaves your machine |
 
 ---
@@ -204,7 +204,7 @@ Governance went from an informally-followed doc (ADR 0008) to **machine-enforced
 ### Maturity — three releases, disciplined decisions
 
 - **3 releases in under a month:** 0.1.0 (2026-05-31) → 0.2.0 (2026-06-01) → 0.3.0 (2026-06-25, the Orchestrator pivot) — with active development since.
-- **46 ADRs** — every substantive call recorded; a living log that openly amends and reverses itself.
+- **47 ADRs** — every substantive call recorded; a living log that openly amends and reverses itself.
 - **Evidence-first:** the wiki structure, task layout, and three-bucket model were reverse-engineered from real working AI workspaces, not theory.
 - **Complexity deferred until earned:** manual handoff before automated, sequential before parallel, read-only before Orchestrator.
 - **Non-destructive upgrades:** `.bak` backups, a drift report, and a CRITICAL gate before deleting old scaffolding.
@@ -258,7 +258,7 @@ geekstackflow ui        # open the Cockpit at 127.0.0.1:4729, then press ▶ Run
 | **Session report** | A per-task post-mortem parsing the real Claude Code session JSONL into a token trace and a dollar-cost waterfall — the one place $ cost is shown; never fabricated. |
 | **Workspace status vs Jira status** | Two statuses per task — our lifecycle vs the client's Jira business state — with the Cockpit flagging drift; Jira arrives via a credential-free local cache. |
 | **Pull digest** | A Raw file the git hook writes after every `git pull` so the Ingester keeps the wiki current automatically. |
-| **ADR** | Architecture Decision Record — 46 of them trace the tool's evidence-first evolution; later ADRs openly amend earlier ones. |
+| **ADR** | Architecture Decision Record — 47 of them trace the tool's evidence-first evolution; later ADRs openly amend earlier ones. |
 
 ---
 
@@ -275,7 +275,7 @@ All figures verified against the working tree on 2026-07-14; the skills, command
 | Commands | 20 | `templates/workspace/.tcgstackflow/commands/` |
 | Workspace schema | 9 | `init.js` `LATEST_SCHEMA = 9` — stamped into `config.yaml` at init/upgrade |
 | Template config.yaml schema | 8 | `templates/workspace/.tcgstackflow/config.yaml` (literal; overwritten by the stamp) |
-| ADRs | 46 | `docs/adr/*.md` (up to 0045) |
+| ADRs | 47 | `docs/adr/*.md` (up to 0047) |
 | Tests | 316 pass, 0 fail, 1 skipped | `npm test` |
 | Test files / lines | 29 files / 5,083 lines | `test/` (`wc -l test/*`) |
 | Cockpit server | zero-dependency built-in Node `http`, ~3,330 lines, 13 `.cjs` files | `ui/server/` (**not** Hono, despite ADR 0022) |
