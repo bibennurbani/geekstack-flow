@@ -19,6 +19,21 @@ see a delegate even in principle: `findSessionLog` (`session-report.cjs:60`) ope
 
 So the feature that exists to save money would, shipped as scoped, produce no evidence that it did.
 
+## What "efficient" means here
+
+**Efficient is capability matched to the task, not price minimised.** The two coincide for a 40-file grep,
+where a small model returns the same answer for a fraction of the spend — and they diverge exactly where
+the work is judgment. Running a Reviewer's verdict, a Planner's subtask split or a governance decision on
+a smaller model is *cheaper and less efficient*: it buys a discount on the one output whose quality the
+whole lifecycle depends on, and pays for it in a bounce, a re-plan, or a defect that reaches the diff.
+
+This cuts both ways, and the second direction is the one a cost-framed design gets wrong: where a harder
+model measurably does the work in fewer turns, the efficient choice is the **more** expensive one, because
+the dominant cost term is parent turns, not per-token price (§Consequences). So the rubric selects on the
+shape of the work — mechanical retrieval, synthesis, judgment — and price is the tiebreaker within a
+shape, never the selector across shapes. The same principle draws the line under "what is never
+delegated" below: judgment is not a shape that gets delegated at all.
+
 ## Decision
 
 **1 — Measurement lands before the first delegate can spawn.** Everything needed is already arriving in
