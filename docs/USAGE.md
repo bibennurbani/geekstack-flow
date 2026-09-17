@@ -457,4 +457,4 @@ An unrecognised flag exits non-zero rather than being read as `target`.
 
 ### Design rationale
 
-Every decision is recorded in [adr/](adr/) (45 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).
+Every decision is recorded in [adr/](adr/) (46 ADRs). The glossary is [../CONTEXT.md](../CONTEXT.md).

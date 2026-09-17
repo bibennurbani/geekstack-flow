@@ -441,7 +441,7 @@ geekstack-flow/
 ├── init.js                 # the CLI (init / upgrade / register / drift / ui / hooks) — zero dependencies
 ├── package.json            # bin: { geekstackflow, tcgflow }, v0.5.2
 ├── README.md  CONTEXT.md  CONTRIBUTING.md  CHANGELOG.md  LICENSE (MIT)
-├── docs/adr/               # 45 Architecture Decision Records
+├── docs/adr/               # 46 Architecture Decision Records
 ├── test/                   # node --test suite (run with `npm test`)
 ├── ui/                     # the Cockpit/Orchestrator (Vue 3 + Vite SPA + zero-dep Node server)
 │   ├── server/             #   read.cjs (data) · index.cjs (http) · run.cjs (agent executor)
@@ -472,7 +472,7 @@ geekstack-flow/
 > **Scope ladder:** personal-first → team-usable → OSS-ready. Built by one author against real daily work, designed so a teammate can adopt it on day one, and structured so it can become a public tool without re-architecting. See [docs/adr/0001](docs/adr/0001-personal-first-team-usable-oss-ready.md).
 
 - **[CONTEXT.md](CONTEXT.md)** — the project's domain language (Wiki, Raw, Ingest/Query/Lint, Agent, Skill, Command, Cockpit, Orchestrator, Workspace vs Jira status, …).
-- **[docs/adr/](docs/adr/)** — 45 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation in-place/branch/worktree (0040), worktree autopilot → parallel runs + PR command (0043), browser web-test as a Tester skill, interactive-only (0041), `upgrade` owns the adapter head + root copies (0042), discovery stage + intent writes to the wiki (0045).
+- **[docs/adr/](docs/adr/)** — 46 Architecture Decision Records. Highlights: scope ladder (0001), manual cross-tool handoff (0002), wiki structure (0003), two-file tasks (0004), skill/agent/adapter model (0005), governance (0008), the Cockpit & Orchestrator design (0020–0027), tester role (0028), Jira-via-cache (0029), qmd-mandatory wiki search (0030), refactorer role + cleanup-pass doctrine (0031), **Cockpit becomes the Orchestrator — read-only retired (0032)**, per-run token capture (0033), $-cost session reports (0034), per-tool runner-adapter seam + fidelity tiers (0035), deterministic qmd re-embed after ingest (0036), qmd discovery-path recording + project-local index + deterministic wiki-structure check (0037–0039), per-run git isolation in-place/branch/worktree (0040), worktree autopilot → parallel runs + PR command (0043), browser web-test as a Tester skill, interactive-only (0041), `upgrade` owns the adapter head + root copies (0042), discovery stage + intent writes to the wiki (0045), eval is a manual skill and only the capture is automatic (0046).
 
 ## Inspirations
 
